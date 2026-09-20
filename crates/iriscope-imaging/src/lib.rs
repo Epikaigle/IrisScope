@@ -167,6 +167,51 @@ pub fn resize_rgb8_to_fit(
     Ok((out_width, out_height, resized.into_raw()))
 }
 
+/// Converts packed BGRA8 bytes into packed RGB8 bytes.
+pub fn convert_bgra8_to_rgb8(
+    bgra: &[u8],
+    width: u32,
+    height: u32,
+) -> Result<Vec<u8>, ImagingError> {
+    let pixel_count = usize::try_from(u64::from(width) * u64::from(height))
+        .map_err(|_| ImagingError::InvalidBufferSize)?;
+    let expected = pixel_count
+        .checked_mul(4)
+        .ok_or(ImagingError::InvalidBufferSize)?;
+    if bgra.len() < expected {
+        return Err(ImagingError::InvalidBufferSize);
+    }
+
+    let mut rgb = Vec::with_capacity(pixel_count * 3);
+    for pixel in bgra[..expected].chunks_exact(4) {
+        rgb.extend_from_slice(&[pixel[2], pixel[1], pixel[0]]);
+    }
+    Ok(rgb)
+}
+
+/// Encodes an RGB8 frame as a lossless PNG.
+///
+/// # Errors
+///
+/// Returns an ImagingError when the RGB buffer size is invalid or encoding fails.
+pub fn encode_rgb8_png(
+    rgb: &[u8],
+    width: u32,
+    height: u32,
+) -> Result<Vec<u8>, ImagingError> {
+    let expected = usize::try_from(u64::from(width) * u64::from(height) * 3)
+        .map_err(|_| ImagingError::InvalidBufferSize)?;
+    if rgb.len() != expected {
+        return Err(ImagingError::InvalidBufferSize);
+    }
+
+    let mut encoded = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut encoded)
+        .write_image(rgb, width, height, ColorType::Rgb8.into())
+        .map_err(|error| ImagingError::ImageEncode(format!("{error:?}")))?;
+    Ok(encoded)
+}
+
 /// Converts packed YUYV (YUY2) 4:2:2 bytes into packed RGB8 bytes.
 #[must_use]
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]

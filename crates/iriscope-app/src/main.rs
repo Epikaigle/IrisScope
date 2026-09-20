@@ -19,8 +19,8 @@ use iriscope_core::{
     video::AviMjpegWriter,
 };
 use iriscope_imaging::{
-    apply_transforms, convert_yuyv_to_rgb8, decode_image_to_rgb8, decode_mjpeg_to_rgb8,
-    ensure_jpeg_has_dht, resize_rgb8_to_fit,
+    apply_transforms, convert_bgra8_to_rgb8, convert_yuyv_to_rgb8, decode_image_to_rgb8,
+    decode_mjpeg_to_rgb8, encode_rgb8_png, ensure_jpeg_has_dht, resize_rgb8_to_fit,
 };
 use slint::{ComponentHandle, ModelRc, Rgb8Pixel, SharedPixelBuffer, VecModel};
 
@@ -434,6 +434,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
 
                         // Lossless video recording if active
                         if is_rec_clone.load(Ordering::Relaxed)
+                            && matches!(frame.pixel_format, PixelFormat::Mjpeg)
                             && let Ok(mut writer_guard) = video_writer_clone.lock()
                             && let Some(writer) = writer_guard.as_mut()
                         {
@@ -454,6 +455,15 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                                 );
                                 Some((frame.resolution.width, frame.resolution.height, rgb))
                             }
+                            PixelFormat::Bgra8 => convert_bgra8_to_rgb8(
+                                &frame.data,
+                                frame.resolution.width,
+                                frame.resolution.height,
+                            )
+                            .ok()
+                            .map(|rgb| {
+                                (frame.resolution.width, frame.resolution.height, rgb)
+                            }),
                             _ => None,
                         };
                         let decode_dur = decode_start.elapsed();
@@ -589,16 +599,70 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         }
         let timestamp = CaptureTimestamp::now();
         let policy = CaptureNamingPolicy::new(&settings_cap.filename_template);
-        let ext = match frame.pixel_format {
-            PixelFormat::Mjpeg => "jpg",
-            _ => "bin",
+        let (ext, data_to_save) = match frame.pixel_format {
+            PixelFormat::Mjpeg => ("jpg", ensure_jpeg_has_dht(&frame.data)),
+            PixelFormat::Yuyv => {
+                let rgb = convert_yuyv_to_rgb8(
+                    &frame.data,
+                    frame.resolution.width,
+                    frame.resolution.height,
+                );
+                let png = match encode_rgb8_png(
+                    &rgb,
+                    frame.resolution.width,
+                    frame.resolution.height,
+                ) {
+                    Ok(png) => png,
+                    Err(error) => {
+                        win.set_last_capture_message(
+                            format!("Erreur de conversion photo : {error}").into(),
+                        );
+                        win.set_show_last_capture(true);
+                        return;
+                    }
+                };
+                ("png", std::borrow::Cow::Owned(png))
+            }
+            PixelFormat::Bgra8 => {
+                let rgb = match convert_bgra8_to_rgb8(
+                    &frame.data,
+                    frame.resolution.width,
+                    frame.resolution.height,
+                ) {
+                    Ok(rgb) => rgb,
+                    Err(error) => {
+                        win.set_last_capture_message(
+                            format!("Erreur de conversion photo : {error}").into(),
+                        );
+                        win.set_show_last_capture(true);
+                        return;
+                    }
+                };
+                let png = match encode_rgb8_png(
+                    &rgb,
+                    frame.resolution.width,
+                    frame.resolution.height,
+                ) {
+                    Ok(png) => png,
+                    Err(error) => {
+                        win.set_last_capture_message(
+                            format!("Erreur de conversion photo : {error}").into(),
+                        );
+                        win.set_show_last_capture(true);
+                        return;
+                    }
+                };
+                ("png", std::borrow::Cow::Owned(png))
+            }
+            _ => {
+                win.set_last_capture_message(
+                    "Le format caméra actif ne peut pas encore être enregistré en photo.".into(),
+                );
+                win.set_show_last_capture(true);
+                return;
+            }
         };
         let file_name = policy.filename(&session, timestamp, ext);
-
-        let data_to_save = match frame.pixel_format {
-            PixelFormat::Mjpeg => ensure_jpeg_has_dht(&frame.data),
-            _ => std::borrow::Cow::Borrowed(&frame.data[..]),
-        };
 
         match save_new_capture(
             &settings_cap.capture_directory,
@@ -677,6 +741,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     let rec_start_rec = Arc::clone(&recording_start);
     let toast_rec = Arc::clone(&last_toast_time);
     let active_stream_configuration_rec = Arc::clone(&active_stream_configuration);
+    let latest_frame_rec = Arc::clone(&latest_frame);
 
     main_window.on_toggle_recording(move || {
         let Some(win) = weak_rec.upgrade() else {
@@ -727,8 +792,17 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 return;
             };
 
-            if !matches!(configuration.pixel_format, PixelFormat::Mjpeg) {
-                win.set_last_capture_message("Erreur vidéo : le mode actif n'est pas MJPEG".into());
+            let Some(current_frame) = latest_frame_rec.snapshot() else {
+                win.set_last_capture_message(
+                    "Erreur vidéo : aucune frame caméra disponible".into(),
+                );
+                win.set_show_last_capture(true);
+                return;
+            };
+            if !matches!(current_frame.pixel_format, PixelFormat::Mjpeg) {
+                win.set_last_capture_message(
+                    "Enregistrement vidéo disponible lorsque le flux livré est MJPEG.".into(),
+                );
                 win.set_show_last_capture(true);
                 return;
             }
@@ -740,8 +814,8 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             match AviMjpegWriter::create_unique(
                 &settings_rec.capture_directory,
                 &file_name,
-                configuration.resolution.width,
-                configuration.resolution.height,
+                current_frame.resolution.width,
+                current_frame.resolution.height,
                 configuration.frame_rate,
             ) {
                 Ok((writer, saved_path)) => {
