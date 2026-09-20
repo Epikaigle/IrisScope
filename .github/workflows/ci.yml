@@ -18,7 +18,7 @@ env:
 jobs:
   quality:
     name: Formatting and lints
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Check out the repository
         uses: actions/checkout@v7
@@ -40,7 +40,7 @@ jobs:
       matrix:
         include:
           - name: Linux x86_64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
           - name: Windows x86_64
             runner: windows-latest
           - name: macOS Intel
