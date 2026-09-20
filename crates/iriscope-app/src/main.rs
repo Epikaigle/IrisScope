@@ -1350,7 +1350,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         }
         let directory = std::path::PathBuf::from(value);
         if let Ok(mut guard) = settings_directory.lock() {
-            guard.capture_directory = directory.clone();
+            guard.capture_directory.clone_from(&directory);
         }
         persist_settings(&settings_directory, &settings_path_directory);
         win.set_settings_capture_directory(directory.to_string_lossy().to_string().into());
@@ -1369,7 +1369,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             return;
         }
         if let Ok(mut guard) = settings_template.lock() {
-            guard.filename_template = value.to_owned();
+            value.clone_into(&mut guard.filename_template);
         }
         persist_settings(&settings_template, &settings_path_template);
         win.set_settings_filename_template(value.into());
