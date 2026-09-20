@@ -984,10 +984,11 @@ export component MainWindow inherits Window {
                     min-height: 400px;
                     VerticalBox {
                         spacing: 8px;
-                        for item in root.library-items: if root.library-filter == 0
-                            || (root.library-filter == 1 && !item.is-video)
-                            || (root.library-filter == 2 && item.is-video): Rectangle {
-                            height: 92px;
+                        for item in root.library-items: Rectangle {
+                            visible: root.library-filter == 0
+                                || (root.library-filter == 1 && !item.is-video)
+                                || (root.library-filter == 2 && item.is-video);
+                            height: self.visible ? 92px : 0px;
                             border-radius: 8px;
                             background: item.is-current-session ? #1c2738 : #181d23;
                             border-width: 1px;
