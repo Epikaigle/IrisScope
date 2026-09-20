@@ -15,6 +15,8 @@ pub enum ImagingError {
     JpegDecode(String),
     /// Frame buffer size does not match expected resolution.
     InvalidBufferSize,
+    /// Generic image decoding error.
+    ImageDecode(String),
     /// Image encoding error.
     ImageEncode(String),
 }
@@ -24,6 +26,7 @@ impl fmt::Display for ImagingError {
         match self {
             Self::JpegDecode(msg) => write!(f, "JPEG decode error: {msg}"),
             Self::InvalidBufferSize => write!(f, "Invalid image buffer size"),
+            Self::ImageDecode(msg) => write!(f, "Image decode error: {msg}"),
             Self::ImageEncode(msg) => write!(f, "Image encode error: {msg}"),
         }
     }
@@ -126,6 +129,35 @@ pub fn decode_mjpeg_to_rgb8(jpeg_data: &[u8]) -> Result<(u32, u32, Vec<u8>), Ima
     };
 
     Ok((width, height, rgb_bytes))
+}
+
+/// Decodes a supported still-image file (JPEG or PNG) into RGB8.
+pub fn decode_image_to_rgb8(
+    image_data: &[u8],
+) -> Result<(u32, u32, Vec<u8>), ImagingError> {
+    let decoded = image::load_from_memory(image_data)
+        .map_err(|error| ImagingError::ImageDecode(error.to_string()))?;
+    let rgb = decoded.to_rgb8();
+    let width = rgb.width();
+    let height = rgb.height();
+    Ok((width, height, rgb.into_raw()))
+}
+
+/// Resizes an RGB8 image to fit inside a square thumbnail while preserving aspect ratio.
+pub fn resize_rgb8_to_fit(
+    rgb: &[u8],
+    width: u32,
+    height: u32,
+    max_dimension: u32,
+) -> Result<(u32, u32, Vec<u8>), ImagingError> {
+    let image = image::RgbImage::from_raw(width, height, rgb.to_vec())
+        .ok_or(ImagingError::InvalidBufferSize)?;
+    let resized = image::DynamicImage::ImageRgb8(image)
+        .resize(max_dimension, max_dimension, FilterType::Triangle)
+        .to_rgb8();
+    let out_width = resized.width();
+    let out_height = resized.height();
+    Ok((out_width, out_height, resized.into_raw()))
 }
 
 /// Converts packed YUYV (YUY2) 4:2:2 bytes into packed RGB8 bytes.

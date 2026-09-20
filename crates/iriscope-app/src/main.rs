@@ -19,7 +19,8 @@ use iriscope_core::{
     video::AviMjpegWriter,
 };
 use iriscope_imaging::{
-    apply_transforms, convert_yuyv_to_rgb8, decode_mjpeg_to_rgb8, ensure_jpeg_has_dht,
+    apply_transforms, convert_yuyv_to_rgb8, decode_image_to_rgb8, decode_mjpeg_to_rgb8,
+    ensure_jpeg_has_dht, resize_rgb8_to_fit,
 };
 use slint::{ComponentHandle, ModelRc, Rgb8Pixel, SharedPixelBuffer, VecModel};
 
@@ -251,6 +252,16 @@ fn run_diagnose() {
     );
 }
 
+fn load_thumbnail(path: &std::path::Path) -> Option<slint::Image> {
+    let bytes = std::fs::read(path).ok()?;
+    let (width, height, rgb) = decode_image_to_rgb8(&bytes).ok()?;
+    let (thumb_width, thumb_height, thumbnail) =
+        resize_rgb8_to_fit(&rgb, width, height, 240).ok()?;
+    let pixels =
+        SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(&thumbnail, thumb_width, thumb_height);
+    Some(slint::Image::from_rgb8(pixels))
+}
+
 fn load_library_items(
     dir: &std::path::Path,
     active_session: &CaptureSession,
@@ -260,14 +271,24 @@ fn load_library_items(
     presented
         .into_iter()
         .enumerate()
-        .map(|(idx, item)| LibraryItemData {
-            date_time: item.date_time.into(),
-            eye_label: item.eye_label.into(),
-            file_path: item.file_path.to_string_lossy().to_string().into(),
-            id: idx.to_string().into(),
-            is_current_session: item.is_current_session,
-            is_video: matches!(item.kind, CaptureKind::Video),
-            title: item.display_title.into(),
+        .map(|(idx, item)| {
+            let thumbnail = if matches!(item.kind, CaptureKind::Photo) {
+                load_thumbnail(&item.file_path)
+            } else {
+                None
+            };
+
+            LibraryItemData {
+                date_time: item.date_time.into(),
+                eye_label: item.eye_label.into(),
+                file_path: item.file_path.to_string_lossy().to_string().into(),
+                has_thumbnail: thumbnail.is_some(),
+                id: idx.to_string().into(),
+                is_current_session: item.is_current_session,
+                is_video: matches!(item.kind, CaptureKind::Video),
+                thumbnail: thumbnail.unwrap_or_default(),
+                title: item.display_title.into(),
+            }
         })
         .collect()
 }
@@ -776,17 +797,43 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         refresh_lib_for_win(&win, &settings_refresh.capture_directory, &session_refresh);
     });
 
-    // Open capture file
+    // Open still captures inside IrisScope so historical filenames remain private.
+    let weak_viewer = main_window.as_weak();
     main_window.on_open_capture_file(move |file_path_str| {
+        let Some(win) = weak_viewer.upgrade() else {
+            return;
+        };
         let path = std::path::Path::new(file_path_str.as_str());
-        if path.exists() {
-            #[cfg(target_os = "linux")]
-            let _ = std::process::Command::new("xdg-open").arg(path).spawn();
-            #[cfg(target_os = "windows")]
-            let _ = std::process::Command::new("explorer").arg(path).spawn();
-            #[cfg(target_os = "macos")]
-            let _ = std::process::Command::new("open").arg(path).spawn();
+        if !path.exists() {
+            return;
         }
+
+        let is_image = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| {
+                matches!(
+                    extension.to_ascii_lowercase().as_str(),
+                    "jpg" | "jpeg" | "png"
+                )
+            });
+
+        if is_image {
+            if let Ok(bytes) = std::fs::read(path)
+                && let Ok((width, height, rgb)) = decode_image_to_rgb8(&bytes)
+            {
+                let pixels =
+                    SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(&rgb, width, height);
+                win.set_viewer_image(slint::Image::from_rgb8(pixels));
+                win.set_viewer_open(true);
+            }
+            return;
+        }
+
+        win.set_last_capture_message(
+            "La lecture vidéo intégrée sera ajoutée dans une prochaine étape.".into(),
+        );
+        win.set_show_last_capture(true);
     });
 
     // Freeze frame
