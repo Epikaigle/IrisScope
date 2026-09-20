@@ -1594,55 +1594,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         let _ = std::process::Command::new("open").arg(&dir).spawn();
     });
 
-    #[cfg(target_os = "linux")]
-    spawn_hardware_button_listener(main_window.as_weak(), Arc::clone(&settings));
-
     main_window.run()?;
     let _ = cmd_tx.send(WorkerCommand::Stop);
     Ok(())
-}
-
-#[cfg(target_os = "linux")]
-fn spawn_hardware_button_listener(
-    weak_win: slint::Weak<MainWindow>,
-    settings: Arc<Mutex<AppSettings>>,
-) {
-    thread::spawn(move || {
-        use std::io::{BufRead, BufReader};
-        use std::process::{Command, Stdio};
-
-        let Ok(mut child) = Command::new("dmesg")
-            .arg("-w")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-        else {
-            return;
-        };
-
-        let Some(stdout) = child.stdout.take() else {
-            return;
-        };
-        let reader = BufReader::new(stdout);
-        let mut last_trigger = Instant::now()
-            .checked_sub(Duration::from_secs(5))
-            .unwrap_or_else(Instant::now);
-
-        for line in reader.lines().map_while(Result::ok) {
-            let is_button_event = (line.contains("Button") && line.contains("pressed"))
-                || line.contains("KEY_CAMERA")
-                || (line.contains("Digital Microscope") && line.contains("button"));
-
-            if is_button_event && last_trigger.elapsed() >= Duration::from_millis(600) {
-                last_trigger = Instant::now();
-                let settings_event = Arc::clone(&settings);
-                let _ = weak_win.upgrade_in_event_loop(move |win| {
-                    dispatch_hardware_button(
-                        &win,
-                        settings_snapshot(&settings_event).physical_button_behavior,
-                    );
-                });
-            }
-        }
-    });
 }
