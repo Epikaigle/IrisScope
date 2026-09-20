@@ -23,7 +23,7 @@ Au lancement, IrisScope doit :
 
 Aucune étape technique de type « ouvrir la caméra », « choisir /dev/video0 » ou « sélectionner un codec » ne doit être nécessaire en usage normal.
 
-## Fonctions prévues
+## Fonctions disponibles et en cours
 
 ### Caméra et live
 
@@ -31,8 +31,8 @@ Aucune étape technique de type « ouvrir la caméra », « choisir /dev/video0 
 - affichage live dès l'ouverture de l'application ;
 - mode **Photo** ou **Vidéo** clairement sélectionnable ;
 - gros bouton logiciel de capture ;
-- bouton physique du DE400 utilisable pour déclencher la capture ;
-- en mode vidéo, le même bouton démarre puis arrête l'enregistrement ;
+- abstraction prévue pour le bouton physique du DE400 ; son intégration fiable reste à finaliser selon la plateforme ;
+- comportement du bouton configurable : suivre le mode courant, toujours Photo ou toujours Vidéo ;
 - indicateur **REC** et durée d'enregistrement ;
 - dernière capture visible immédiatement ;
 - détection de déconnexion / reconnexion de la caméra ;
@@ -55,10 +55,13 @@ Jean_Dupont_Droit_2026-09-20_18-42-16.jpg
 
 ### Vidéos
 
-- enregistrement depuis le flux du DE400 ;
-- priorité à une solution évitant le réencodage lorsque le flux MJPEG natif est disponible ;
-- démarrage / arrêt depuis l'interface ou le bouton physique ;
+- enregistrement MJPEG AVI depuis le flux du DE400 ;
+- conservation directe des frames quand le backend fournit du MJPEG natif ;
+- encodage JPEG uniquement lorsque le backend fournit du YUYV/BGRA, notamment sur macOS ;
+- démarrage / arrêt depuis l'interface ;
+- finalisation propre du fichier en cas de déconnexion de la caméra ;
 - classement dans la même bibliothèque que les photos ;
+- lecteur vidéo privé intégré avec lecture / pause ;
 - affichage du temps d'enregistrement.
 
 ### Session et nommage
@@ -82,16 +85,17 @@ Les fichiers sont automatiquement nommés avec :
 
 IrisScope doit permettre de retrouver les captures sans devoir parcourir les dossiers du système.
 
-La bibliothèque prévoit :
+La bibliothèque propose actuellement :
 
 - photos et vidéos réunies au même endroit ;
-- miniatures ;
-- recherche par personne ;
-- regroupement par personne et/ou date ;
-- visualisation d'une photo dans l'application ;
-- ouverture des fichiers enregistrés ;
-- accès rapide au dossier de stockage ;
-- anonymisation des anciennes sessions lorsque nécessaire.
+- miniatures pour les photos ;
+- filtres Tous / Photos / Vidéos / Session actuelle ;
+- ouverture par défaut sur la session courante lorsqu'une personne est renseignée ;
+- anonymisation du titre des captures appartenant à d'autres personnes ;
+- index local caché de métadonnées, indépendant du modèle de nom de fichier ;
+- visionneuse photo privée intégrée avec zoom / déplacement ;
+- lecteur vidéo MJPEG privé intégré ;
+- accès rapide au dossier de stockage.
 
 Le stockage reste local à l'ordinateur. Aucun compte ou cloud n'est requis.
 
@@ -134,24 +138,25 @@ Ces éléments sont uniquement des aides visuelles de consultation.
 
 ### Réglages généraux
 
-Une page **Réglages** doit permettre notamment de consulter ou modifier :
+La page **Réglages** permet notamment de consulter ou modifier :
 
-- état de connexion du DE400 ;
-- mode par défaut Photo / Vidéo ;
-- action du bouton physique ;
+- état de connexion et diagnostic du DE400 ;
+- action prévue du bouton physique ;
 - dossier d'enregistrement ;
-- modèle de nommage ;
-- réglages caméra ;
-- thème de l'application.
+- modèle de nommage, avec `{prenom}`, `{nom}` et `{oeil}` obligatoires ;
+- chemins des deux images de référence d'iridologie.
+
+Les contrôles image réellement exposés par le backend sont générés dynamiquement dans l'onglet **Réglages Image**.
 
 ## Interface volontairement simple
 
-L'application doit rester limitée à quatre zones principales :
+L'application reste limitée à cinq zones principales :
 
 1. **Caméra**
-2. **Bibliothèque**
-3. **Références iris**
-4. **Réglages**
+2. **Réglages Image**
+3. **Bibliothèque**
+4. **Références iris**
+5. **Paramètres & Diagnostic**
 
 IrisScope n'a pas vocation à devenir un logiciel de cabinet médical complet. Le projet évite volontairement les fonctions qui compliqueraient inutilement l'usage : comptes utilisateurs, cloud obligatoire, agenda, facturation, dossiers médicaux complexes, diagnostic automatique ou IA médicale.
 
@@ -221,15 +226,23 @@ Le backend Media Foundation sait :
 - ouvrir le périphérique ;
 - découvrir les media types natifs ;
 - sélectionner un mode ;
-- recevoir les frames via Media Foundation.
+- recevoir les frames via Media Foundation ;
+- participer au suivi connexion / déconnexion ;
+- alimenter le même pipeline photo, vidéo et bibliothèque que les autres plateformes.
 
-Les tests physiques avec le DE400, les contrôles caméra, le hotplug et le bouton physique restent à finaliser.
+Les tests physiques avec le DE400 et l'intégration du bouton Snapshot restent à finaliser.
 
 ### macOS
 
-Le backend AVFoundation est en cours de raccordement complet au même pipeline de frames que Linux et Windows.
+Le backend AVFoundation sait :
 
-Les tests physiques sur Mac avec le DE400, les contrôles caméra, le hotplug et le bouton physique restent à finaliser.
+- énumérer et ouvrir les caméras ;
+- démarrer le flux vidéo natif ;
+- recevoir les frames BGRA/YUYV ;
+- participer au suivi connexion / déconnexion ;
+- alimenter le même pipeline photo, vidéo et bibliothèque que les autres plateformes.
+
+Les tests physiques avec le DE400 et l'intégration du bouton Snapshot restent à finaliser.
 
 ## Principes de performance
 
@@ -239,8 +252,10 @@ Le projet donne la priorité à la qualité d'image et à la faible latence :
 - pas de WebView dans le chemin vidéo ;
 - pas de conversion d'image inutile ;
 - conservation du JPEG natif quand il existe ;
+- encodage JPEG vidéo seulement lorsque le backend ne livre pas de MJPEG ;
 - buffers bornés pour éviter l'accumulation de retard ;
 - priorité à la dernière frame reçue ;
+- rotation et miroir du live appliqués au rendu plutôt qu'en recopiant la frame sur le CPU ;
 - séparation entre capture originale et transformations d'affichage ;
 - backends caméra natifs pour chaque système.
 
