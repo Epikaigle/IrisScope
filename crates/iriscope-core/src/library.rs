@@ -1,14 +1,38 @@
 //! Capture library indexing and privacy-aware presentation.
 
 use std::{
-    fs,
+    collections::HashMap,
+    fs, io,
     path::{Path, PathBuf},
     time::SystemTime,
 };
 
 use serde::{Deserialize, Serialize};
 
-use crate::session::{CaptureSession, Eye};
+use crate::{
+    session::{CaptureSession, Eye},
+    storage::CaptureTimestamp,
+};
+
+const LIBRARY_INDEX_FILE: &str = ".iriscope-index.json";
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+struct LibraryIndex {
+    #[serde(default)]
+    version: u32,
+    #[serde(default)]
+    entries: HashMap<String, StoredCaptureMetadata>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct StoredCaptureMetadata {
+    first_name: Option<String>,
+    last_name: Option<String>,
+    eye: Eye,
+    kind: CaptureKind,
+    date_str: String,
+    time_str: String,
+}
 
 /// The type of capture.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -70,10 +94,87 @@ pub enum LibraryFilter {
     VideosOnly,
 }
 
+/// Records reliable metadata for a newly created capture.
+///
+/// The hidden index is used by the library instead of trying to infer identity from a
+/// customizable filename. Existing captures without an index entry continue to use
+/// filename parsing as a compatibility fallback.
+///
+/// # Errors
+///
+/// Returns an I/O error when the index cannot be created or written.
+pub fn record_capture_metadata(
+    directory: &Path,
+    file_path: &Path,
+    session: &CaptureSession,
+    kind: CaptureKind,
+    timestamp: CaptureTimestamp,
+) -> io::Result<()> {
+    fs::create_dir_all(directory)?;
+
+    let Some(file_name) = file_path.file_name().and_then(|name| name.to_str()) else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "capture path does not contain a valid UTF-8 filename",
+        ));
+    };
+
+    let mut index = load_library_index(directory);
+    index.version = 1;
+    index.entries.insert(
+        file_name.to_owned(),
+        StoredCaptureMetadata {
+            first_name: (!session.first_name().is_empty())
+                .then(|| session.first_name().to_owned()),
+            last_name: (!session.last_name().is_empty()).then(|| session.last_name().to_owned()),
+            eye: session.eye(),
+            kind,
+            date_str: format!(
+                "{:04}-{:02}-{:02}",
+                timestamp.year, timestamp.month, timestamp.day
+            ),
+            time_str: format!(
+                "{:02}:{:02}:{:02}",
+                timestamp.hour, timestamp.minute, timestamp.second
+            ),
+        },
+    );
+
+    save_library_index(directory, &index)
+}
+
+fn load_library_index(directory: &Path) -> LibraryIndex {
+    let path = directory.join(LIBRARY_INDEX_FILE);
+    fs::read(path)
+        .ok()
+        .and_then(|data| serde_json::from_slice(&data).ok())
+        .unwrap_or_default()
+}
+
+fn save_library_index(directory: &Path, index: &LibraryIndex) -> io::Result<()> {
+    let final_path = directory.join(LIBRARY_INDEX_FILE);
+    let temporary_path = directory.join(".iriscope-index.json.tmp");
+    let data = serde_json::to_vec_pretty(index)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+
+    fs::write(&temporary_path, data)?;
+    if let Err(error) = fs::rename(&temporary_path, &final_path) {
+        if final_path.exists() {
+            fs::remove_file(&final_path)?;
+            fs::rename(&temporary_path, &final_path)?;
+        } else {
+            let _ = fs::remove_file(&temporary_path);
+            return Err(error);
+        }
+    }
+    Ok(())
+}
+
 /// Scans a directory and returns indexed library entries sorted by newest first.
 #[must_use]
 pub fn scan_library_directory(directory: &Path) -> Vec<LibraryEntry> {
     let mut entries = Vec::new();
+    let index = load_library_index(directory);
     let Ok(read_dir) = fs::read_dir(directory) else {
         return entries;
     };
@@ -99,16 +200,34 @@ pub fn scan_library_directory(directory: &Path) -> Vec<LibraryEntry> {
             .and_then(|meta| meta.modified())
             .unwrap_or(SystemTime::UNIX_EPOCH);
 
-        let file_stem = path
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .unwrap_or("");
+        let indexed_metadata = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(|name| index.entries.get(name));
 
-        let (first_name, last_name, eye, date_str, time_str) = parse_filename(file_stem);
+        let (first_name, last_name, eye, date_str, time_str, indexed_kind) =
+            if let Some(metadata) = indexed_metadata {
+                (
+                    metadata.first_name.clone(),
+                    metadata.last_name.clone(),
+                    metadata.eye,
+                    metadata.date_str.clone(),
+                    metadata.time_str.clone(),
+                    Some(metadata.kind),
+                )
+            } else {
+                let file_stem = path
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .unwrap_or("");
+                let (first_name, last_name, eye, date_str, time_str) =
+                    parse_filename(file_stem);
+                (first_name, last_name, eye, date_str, time_str, None)
+            };
 
         entries.push(LibraryEntry {
             file_path: path,
-            kind,
+            kind: indexed_kind.unwrap_or(kind),
             first_name,
             last_name,
             eye,
@@ -228,10 +347,14 @@ fn parse_eye(label: &str) -> Eye {
 mod tests {
     use std::{path::PathBuf, time::SystemTime};
 
-    use crate::session::{CaptureSession, Eye};
+    use crate::{
+        session::{CaptureSession, Eye},
+        storage::CaptureTimestamp,
+    };
 
     use super::{
-        CaptureKind, LibraryEntry, LibraryFilter, present_library_items, scan_library_directory,
+        CaptureKind, LibraryEntry, LibraryFilter, present_library_items, record_capture_metadata,
+        scan_library_directory,
     };
 
     #[test]
@@ -295,4 +418,45 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+    #[test]
+    fn index_preserves_identity_with_custom_filename() {
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("clock is valid")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("iris_test_index_{unique}"));
+        std::fs::create_dir_all(&dir).expect("create test dir");
+
+        let file = dir.join("capture-personnalisee-001.jpg");
+        std::fs::write(&file, b"test").expect("write test file");
+        let session = CaptureSession::new("Jean Pierre", "Du Pont", Eye::Left);
+        let timestamp = CaptureTimestamp {
+            year: 2026,
+            month: 9,
+            day: 20,
+            hour: 18,
+            minute: 45,
+            second: 12,
+        };
+
+        record_capture_metadata(
+            &dir,
+            &file,
+            &session,
+            CaptureKind::Photo,
+            timestamp,
+        )
+        .expect("record capture metadata");
+
+        let entries = scan_library_directory(&dir);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].first_name.as_deref(), Some("Jean Pierre"));
+        assert_eq!(entries[0].last_name.as_deref(), Some("Du Pont"));
+        assert_eq!(entries[0].eye, Eye::Left);
+        assert_eq!(entries[0].date_str, "2026-09-20");
+        assert_eq!(entries[0].time_str, "18:45:12");
+
+        std::fs::remove_dir_all(dir).expect("remove test directory");
+    }
+
 }

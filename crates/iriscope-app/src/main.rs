@@ -15,7 +15,10 @@ use iriscope_core::{
         PixelFormat,
     },
     capture::LatestFrame,
-    library::{CaptureKind, LibraryFilter, present_library_items, scan_library_directory},
+    library::{
+        CaptureKind, LibraryFilter, present_library_items, record_capture_metadata,
+        scan_library_directory,
+    },
     session::{CaptureSession, Eye},
     settings::{AppSettings, PhysicalButtonBehavior},
     storage::{CaptureNamingPolicy, CaptureTimestamp, save_new_capture},
@@ -935,6 +938,16 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             data_to_save.as_ref(),
         ) {
             Ok(saved_path) => {
+                if let Err(error) = record_capture_metadata(
+                    &capture_settings.capture_directory,
+                    &saved_path,
+                    &session,
+                    CaptureKind::Photo,
+                    timestamp,
+                ) {
+                    eprintln!("[IrisScope] Index bibliothèque non mis à jour : {error}");
+                }
+
                 let display_stem = saved_path
                     .file_name()
                     .and_then(|f| f.to_str())
@@ -1085,6 +1098,16 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 configuration.frame_rate,
             ) {
                 Ok((writer, saved_path)) => {
+                    if let Err(error) = record_capture_metadata(
+                        &recording_settings.capture_directory,
+                        &saved_path,
+                        &session,
+                        CaptureKind::Video,
+                        timestamp,
+                    ) {
+                        eprintln!("[IrisScope] Index bibliothèque non mis à jour : {error}");
+                    }
+
                     if let Ok(mut writer_guard) = video_writer_rec.lock() {
                         *writer_guard = Some(writer);
                     }
