@@ -222,6 +222,12 @@ impl CameraDevice for LinuxV4l2Device {
                     CameraErrorKind::TimedOut,
                     "timed out waiting for V4L2 frame",
                 )
+            } else if matches!(error.raw_os_error(), Some(5 | 19)) {
+                CameraError::new(
+                    CameraErrorKind::Disconnected,
+                    format!("V4L2 camera disconnected while reading a frame: {error}"),
+                )
+                .with_platform_code(i64::from(error.raw_os_error().unwrap_or_default()))
             } else {
                 camera_io_error("reading next V4L2 frame", &error)
             }

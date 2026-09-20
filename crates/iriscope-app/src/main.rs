@@ -682,6 +682,28 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                             dispatch_hardware_button(&win, behavior);
                         });
                     }
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            iriscope_core::camera::CameraErrorKind::Disconnected
+                                | iriscope_core::camera::CameraErrorKind::DeviceNotFound
+                        ) =>
+                    {
+                        let _ = device.stop_stream();
+                        if let Ok(mut active) = active_stream_configuration_worker.lock() {
+                            *active = None;
+                        }
+                        if let Ok(mut controls) = camera_controls_worker.lock() {
+                            controls.clear();
+                        }
+                        let _ = main_weak.upgrade_in_event_loop(|win| {
+                            win.set_camera_connected(false);
+                            win.set_is_streaming(false);
+                            win.set_status_text("DE400 déconnecté — reconnexion en cours...".into());
+                            win.set_camera_controls(ModelRc::new(VecModel::from(Vec::new())));
+                        });
+                        break;
+                    }
                     Ok(CameraEvent::Disconnected) => {
                         let _ = device.stop_stream();
                         if let Ok(mut active) = active_stream_configuration_worker.lock() {
@@ -691,11 +713,23 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                             controls.clear();
                         }
                         let _ = main_weak.upgrade_in_event_loop(|win| {
+                            win.set_camera_connected(false);
+                            win.set_is_streaming(false);
+                            win.set_status_text("DE400 déconnecté — reconnexion en cours...".into());
                             win.set_camera_controls(ModelRc::new(VecModel::from(Vec::new())));
                         });
                         break;
                     }
-                    _ => {}
+                    Err(error)
+                        if error.kind() == iriscope_core::camera::CameraErrorKind::TimedOut => {}
+                    Err(error) => {
+                        let message = format!("Erreur caméra : {error}");
+                        let _ = main_weak.upgrade_in_event_loop(move |win| {
+                            win.set_status_text(message.into());
+                        });
+                        thread::sleep(Duration::from_millis(50));
+                    }
+                    Ok(_) => {}
                 }
             }
         }
