@@ -479,7 +479,11 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         let _ = loaded_settings.save_to_file(&settings_path);
     }
     main_window.set_settings_capture_directory(
-        loaded_settings.capture_directory.to_string_lossy().to_string().into(),
+        loaded_settings
+            .capture_directory
+            .to_string_lossy()
+            .to_string()
+            .into(),
     );
     main_window.set_settings_filename_template(loaded_settings.filename_template.clone().into());
     main_window.set_settings_button_mode(physical_button_mode_index(
@@ -825,11 +829,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initial library population
     let initial_capture_directory = settings_snapshot(&settings).capture_directory;
-    refresh_lib_for_win(
-        &main_window,
-        &initial_capture_directory,
-        &active_session,
-    );
+    refresh_lib_for_win(&main_window, &initial_capture_directory, &active_session);
 
     let weak = main_window.as_weak();
     let latest_frame_cap = Arc::clone(&latest_frame);
