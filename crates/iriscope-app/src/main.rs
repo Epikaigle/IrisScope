@@ -702,7 +702,9 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                         let _ = main_weak.upgrade_in_event_loop(|win| {
                             win.set_camera_connected(false);
                             win.set_is_streaming(false);
-                            win.set_status_text("DE400 déconnecté — reconnexion en cours...".into());
+                            win.set_status_text(
+                                "DE400 déconnecté — reconnexion en cours...".into(),
+                            );
                             win.set_camera_controls(ModelRc::new(VecModel::from(Vec::new())));
                         });
                         break;
@@ -718,7 +720,9 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                         let _ = main_weak.upgrade_in_event_loop(|win| {
                             win.set_camera_connected(false);
                             win.set_is_streaming(false);
-                            win.set_status_text("DE400 déconnecté — reconnexion en cours...".into());
+                            win.set_status_text(
+                                "DE400 déconnecté — reconnexion en cours...".into(),
+                            );
                             win.set_camera_controls(ModelRc::new(VecModel::from(Vec::new())));
                         });
                         break;
