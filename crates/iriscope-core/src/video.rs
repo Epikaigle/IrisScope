@@ -41,10 +41,7 @@ impl AviMjpegWriter {
         height: u32,
         frame_rate: FrameRate,
     ) -> io::Result<Self> {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(path)?;
+        let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
 
         // Reserve space for RIFF header (2048 bytes header placeholder)
         let placeholder = vec![0_u8; 2048];
@@ -75,7 +72,11 @@ impl AviMjpegWriter {
         height: u32,
         frame_rate: FrameRate,
     ) -> io::Result<(Self, PathBuf)> {
-        if Path::new(file_name).file_name().and_then(|name| name.to_str()) != Some(file_name) {
+        if Path::new(file_name)
+            .file_name()
+            .and_then(|name| name.to_str())
+            != Some(file_name)
+        {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "video capture name must not contain a directory",

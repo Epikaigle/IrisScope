@@ -501,7 +501,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                     Ok(CameraEvent::HardwareButtonPressed) => {
                         let behavior = settings_worker.physical_button_behavior;
                         let _ = main_weak.upgrade_in_event_loop(move |win| {
-                            dispatch_hardware_button(win, behavior);
+                            dispatch_hardware_button(&win, behavior);
                         });
                     }
                     Ok(CameraEvent::Disconnected) => {
@@ -707,9 +707,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             if !matches!(configuration.pixel_format, PixelFormat::Mjpeg) {
-                win.set_last_capture_message(
-                    "Erreur vidéo : le mode actif n'est pas MJPEG".into(),
-                );
+                win.set_last_capture_message("Erreur vidéo : le mode actif n'est pas MJPEG".into());
                 win.set_show_last_capture(true);
                 return;
             }
@@ -861,10 +859,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     #[cfg(target_os = "linux")]
-    spawn_hardware_button_listener(
-        main_window.as_weak(),
-        settings.physical_button_behavior,
-    );
+    spawn_hardware_button_listener(main_window.as_weak(), settings.physical_button_behavior);
 
     main_window.run()?;
     let _ = cmd_tx.send(WorkerCommand::Stop);
@@ -905,7 +900,7 @@ fn spawn_hardware_button_listener(
             if is_button_event && last_trigger.elapsed() >= Duration::from_millis(600) {
                 last_trigger = Instant::now();
                 let _ = weak_win.upgrade_in_event_loop(move |win| {
-                    dispatch_hardware_button(win, behavior);
+                    dispatch_hardware_button(&win, behavior);
                 });
             }
         }
