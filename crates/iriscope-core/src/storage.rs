@@ -345,5 +345,4 @@ mod tests {
             "{prenom}_{nom}_{date}"
         ));
     }
-
 }
