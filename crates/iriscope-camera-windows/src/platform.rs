@@ -14,7 +14,7 @@ use windows::{
         },
         System::Com::{COINIT_MULTITHREADED, CoInitializeEx, CoTaskMemFree, CoUninitialize},
     },
-    core::{GUID, HRESULT, PWSTR},
+    core::{GUID, PWSTR},
 };
 
 /// Native Windows camera backend using Media Foundation.
@@ -68,7 +68,7 @@ fn enumerate_video_devices() -> CameraResult<Vec<CameraDescriptor>> {
 
     let mut attributes: Option<IMFAttributes> = None;
     // SAFETY: `attributes` points to valid storage for the returned COM interface.
-    unsafe { MFCreateAttributes(&mut attributes, 1) }
+    unsafe { MFCreateAttributes(&raw mut attributes, 1) }
         .map_err(|error| windows_error("creating Media Foundation attributes", &error))?;
     let attributes = attributes.ok_or_else(|| {
         CameraError::new(
@@ -89,7 +89,7 @@ fn enumerate_video_devices() -> CameraResult<Vec<CameraDescriptor>> {
     let mut raw_devices: *mut Option<IMFActivate> = ptr::null_mut();
     let mut device_count = 0;
     // SAFETY: Both output pointers are valid. Media Foundation allocates the returned array.
-    unsafe { MFEnumDeviceSources(&attributes, &mut raw_devices, &mut device_count) }
+    unsafe { MFEnumDeviceSources(&attributes, &raw mut raw_devices, &raw mut device_count) }
         .map_err(|error| windows_error("enumerating Media Foundation cameras", &error))?;
     let activation_array = ActivationArray::new(raw_devices, device_count as usize);
 
@@ -118,7 +118,7 @@ fn allocated_string(activation: &IMFActivate, key: &GUID) -> CameraResult<String
     let mut length = 0;
     // SAFETY: Both output pointers are valid. The returned string is freed below with
     // `CoTaskMemFree`, as required by `GetAllocatedString`.
-    let result = unsafe { activation.GetAllocatedString(key, &mut value, &mut length) };
+    let result = unsafe { activation.GetAllocatedString(key, &raw mut value, &raw mut length) };
     if let Err(error) = result {
         free_task_memory(value.0.cast());
         return Err(windows_error(
@@ -177,14 +177,6 @@ fn windows_error(context: &str, error: &windows::core::Error) -> CameraError {
         .with_platform_code(i64::from(error.code().0))
 }
 
-fn hresult_error(context: &str, result: HRESULT) -> CameraError {
-    CameraError::new(
-        CameraErrorKind::BackendUnavailable,
-        format!("{context}: {result:?}"),
-    )
-    .with_platform_code(i64::from(result.0))
-}
-
 struct ComApartment;
 
 impl ComApartment {
@@ -193,7 +185,7 @@ impl ComApartment {
         let result = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
         result
             .ok()
-            .map_err(|()| hresult_error("initializing COM", result))?;
+            .map_err(|error| windows_error("initializing COM", &error))?;
         Ok(Self)
     }
 }
