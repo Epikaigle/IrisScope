@@ -106,7 +106,7 @@ export component MainWindow inherits Window {
 
     // Bibliothèque
     in-out property <[LibraryItemData]> library-items: [];
-    in-out property <int> library-filter: 0; // 0 tous, 1 photos, 2 vidéos
+    in-out property <int> library-filter: 0; // 0 tous, 1 photos, 2 vidéos, 3 session
     callback open-capture-file(string);
 
     // Grille iridologique
@@ -189,6 +189,10 @@ export component MainWindow inherits Window {
                         primary: root.current-tab == 2;
                         clicked => {
                             root.current-tab = 2;
+                            root.library-filter =
+                                root.patient-first-name != "" && root.patient-last-name != ""
+                                    ? 3
+                                    : 0;
                             root.refresh-library();
                         }
                     }
@@ -928,6 +932,12 @@ export component MainWindow inherits Window {
                     alignment: start;
 
                     Button {
+                        text: "Session actuelle";
+                        primary: root.library-filter == 3;
+                        enabled: root.patient-first-name != "" && root.patient-last-name != "";
+                        clicked => { root.library-filter = 3; }
+                    }
+                    Button {
                         text: "Tous";
                         primary: root.library-filter == 0;
                         clicked => { root.library-filter = 0; }
@@ -1004,7 +1014,8 @@ export component MainWindow inherits Window {
                         for item in root.library-items: Rectangle {
                             visible: root.library-filter == 0
                                 || (root.library-filter == 1 && !item.is-video)
-                                || (root.library-filter == 2 && item.is-video);
+                                || (root.library-filter == 2 && item.is-video)
+                                || (root.library-filter == 3 && item.is-current-session);
                             height: self.visible ? 92px : 0px;
                             border-radius: 8px;
                             background: item.is-current-session ? #1c2738 : #181d23;
