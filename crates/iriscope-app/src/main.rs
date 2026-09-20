@@ -1406,7 +1406,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         let value = value.trim();
         let path = (!value.is_empty()).then(|| std::path::PathBuf::from(value));
         if let Ok(mut guard) = settings_map.lock() {
-            guard.iridology_map_path = path.clone();
+            guard.iridology_map_path.clone_from(&path);
         }
         persist_settings(&settings_map, &settings_path_map);
         win.set_settings_iridology_map_path(
@@ -1428,7 +1428,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         let value = value.trim();
         let path = (!value.is_empty()).then(|| std::path::PathBuf::from(value));
         if let Ok(mut guard) = settings_symbols.lock() {
-            guard.iridology_symbols_path = path.clone();
+            guard.iridology_symbols_path.clone_from(&path);
         }
         persist_settings(&settings_symbols, &settings_path_symbols);
         win.set_settings_iridology_symbols_path(
