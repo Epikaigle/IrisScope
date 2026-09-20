@@ -101,7 +101,7 @@ impl Default for CaptureNamingPolicy {
 
 /// Reports whether a filename template preserves the required patient identity.
 ///
-/// IrisScope requires every new capture filename to contain the patient's first name,
+/// `IrisScope` requires every new capture filename to contain the patient's first name,
 /// last name, and selected eye. Date and time remain optional.
 #[must_use]
 pub fn filename_template_preserves_identity(template: &str) -> bool {
