@@ -275,6 +275,33 @@ fn run_diagnose() {
     );
 }
 
+fn load_full_image(path: &std::path::Path) -> Option<slint::Image> {
+    let bytes = std::fs::read(path).ok()?;
+    let (width, height, rgb) = decode_image_to_rgb8(&bytes).ok()?;
+    let pixels = SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(&rgb, width, height);
+    Some(slint::Image::from_rgb8(pixels))
+}
+
+fn apply_reference_images(win: &MainWindow, settings: &AppSettings) {
+    if let Some(path) = settings.iridology_map_path.as_deref()
+        && let Some(image) = load_full_image(path)
+    {
+        win.set_iridology_map_image(image);
+        win.set_has_iridology_map(true);
+    } else {
+        win.set_has_iridology_map(false);
+    }
+
+    if let Some(path) = settings.iridology_symbols_path.as_deref()
+        && let Some(image) = load_full_image(path)
+    {
+        win.set_iridology_symbols_image(image);
+        win.set_has_iridology_symbols(true);
+    } else {
+        win.set_has_iridology_symbols(false);
+    }
+}
+
 fn load_thumbnail(path: &std::path::Path) -> Option<slint::Image> {
     let bytes = std::fs::read(path).ok()?;
     let (width, height, rgb) = decode_image_to_rgb8(&bytes).ok()?;
@@ -458,6 +485,21 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     main_window.set_settings_button_mode(physical_button_mode_index(
         loaded_settings.physical_button_behavior,
     ));
+    main_window.set_settings_iridology_map_path(
+        loaded_settings
+            .iridology_map_path
+            .as_deref()
+            .map_or_else(String::new, |path| path.to_string_lossy().into_owned())
+            .into(),
+    );
+    main_window.set_settings_iridology_symbols_path(
+        loaded_settings
+            .iridology_symbols_path
+            .as_deref()
+            .map_or_else(String::new, |path| path.to_string_lossy().into_owned())
+            .into(),
+    );
+    apply_reference_images(&main_window, &loaded_settings);
     let settings = Arc::new(Mutex::new(loaded_settings));
     let latest_frame = Arc::new(LatestFrame::new());
     let active_stream_configuration: Arc<Mutex<Option<StreamConfiguration>>> =
@@ -1329,6 +1371,50 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         };
         persist_settings(&settings_button, &settings_path_button);
         win.set_settings_button_mode(physical_button_mode_index(next));
+    });
+
+    let settings_map = Arc::clone(&settings);
+    let settings_path_map = settings_path.clone();
+    let weak_map = main_window.as_weak();
+    main_window.on_update_iridology_map_path(move |value| {
+        let Some(win) = weak_map.upgrade() else {
+            return;
+        };
+        let value = value.trim();
+        let path = (!value.is_empty()).then(|| std::path::PathBuf::from(value));
+        if let Ok(mut guard) = settings_map.lock() {
+            guard.iridology_map_path = path.clone();
+        }
+        persist_settings(&settings_map, &settings_path_map);
+        win.set_settings_iridology_map_path(
+            path.as_deref()
+                .map_or_else(String::new, |path| path.to_string_lossy().into_owned())
+                .into(),
+        );
+        let snapshot = settings_snapshot(&settings_map);
+        apply_reference_images(&win, &snapshot);
+    });
+
+    let settings_symbols = Arc::clone(&settings);
+    let settings_path_symbols = settings_path.clone();
+    let weak_symbols = main_window.as_weak();
+    main_window.on_update_iridology_symbols_path(move |value| {
+        let Some(win) = weak_symbols.upgrade() else {
+            return;
+        };
+        let value = value.trim();
+        let path = (!value.is_empty()).then(|| std::path::PathBuf::from(value));
+        if let Ok(mut guard) = settings_symbols.lock() {
+            guard.iridology_symbols_path = path.clone();
+        }
+        persist_settings(&settings_symbols, &settings_path_symbols);
+        win.set_settings_iridology_symbols_path(
+            path.as_deref()
+                .map_or_else(String::new, |path| path.to_string_lossy().into_owned())
+                .into(),
+        );
+        let snapshot = settings_snapshot(&settings_symbols);
+        apply_reference_images(&win, &snapshot);
     });
 
     // Capture directory opener

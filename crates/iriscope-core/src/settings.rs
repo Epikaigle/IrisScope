@@ -42,6 +42,12 @@ pub struct AppSettings {
     pub physical_button_behavior: PhysicalButtonBehavior,
     /// UI theme.
     pub theme: AppTheme,
+    /// Optional iridology chart image used as a visual reference.
+    #[serde(default)]
+    pub iridology_map_path: Option<PathBuf>,
+    /// Optional image containing iridology signs/symbols used as a visual reference.
+    #[serde(default)]
+    pub iridology_symbols_path: Option<PathBuf>,
 }
 
 impl Default for AppSettings {
@@ -56,6 +62,8 @@ impl Default for AppSettings {
             filename_template: "{prenom}_{nom}_{oeil}_{date}_{heure}".to_string(),
             physical_button_behavior: PhysicalButtonBehavior::default(),
             theme: AppTheme::default(),
+            iridology_map_path: None,
+            iridology_symbols_path: None,
         }
     }
 }

@@ -91,6 +91,18 @@ export component MainWindow inherits Window {
     in-out property <string> settings-capture-directory: "";
     in-out property <string> settings-filename-template: "";
     in-out property <int> settings-button-mode: 0; // 0 suit le mode, 1 photo, 2 vidéo
+    in-out property <string> settings-iridology-map-path: "";
+    in-out property <string> settings-iridology-symbols-path: "";
+
+    // Références visuelles d'iridologie
+    in-out property <image> iridology-map-image;
+    in-out property <image> iridology-symbols-image;
+    in-out property <bool> has-iridology-map: false;
+    in-out property <bool> has-iridology-symbols: false;
+    in-out property <int> iridology-reference-mode: 0; // 0 carte, 1 signes
+    in-out property <int> iridology-reference-zoom: 100;
+    in-out property <length> iridology-reference-pan-x: 0px;
+    in-out property <length> iridology-reference-pan-y: 0px;
 
     // Bibliothèque
     in-out property <[LibraryItemData]> library-items: [];
@@ -121,6 +133,8 @@ export component MainWindow inherits Window {
     callback update-capture-directory(string);
     callback update-filename-template(string);
     callback cycle-physical-button-mode();
+    callback update-iridology-map-path(string);
+    callback update-iridology-symbols-path(string);
 
     VerticalBox {
         padding: 0px;
@@ -1098,117 +1112,162 @@ export component MainWindow inherits Window {
                 }
             }
 
-            // Tab 3: Iridology Map
-            if root.current-tab == 3: ScrollView {
-                VerticalBox {
-                    padding: 24px;
-                    spacing: 20px;
+            // Tab 3: Iridology reference images
+            if root.current-tab == 3: VerticalBox {
+                padding: 24px;
+                spacing: 14px;
 
-                    Text {
-                        text: "Planches et Cartes d'Iridologie de Référence";
-                        font-size: 20px;
-                        font-weight: 700;
-                        color: #ffffff;
-                    }
+                HorizontalBox {
+                    alignment: space-between;
 
-                    Text {
-                        text: "Cartographie topographique des zones réflexes d'iridologie (Méthodes Bernard Jensen & Gilbert Jausas)";
-                        color: #9ca3af;
-                        font-size: 13px;
+                    VerticalBox {
+                        spacing: 4px;
+
+                        Text {
+                            text: "Références d'iridologie";
+                            font-size: 20px;
+                            font-weight: 700;
+                            color: #ffffff;
+                        }
+
+                        Text {
+                            text: "Images de référence visuelle configurées par l'utilisateur.";
+                            color: #9ca3af;
+                            font-size: 12px;
+                        }
                     }
 
                     HorizontalBox {
-                        spacing: 16px;
+                        spacing: 6px;
 
-                        // Iris Droit (OD)
-                        Rectangle {
-                            border-radius: 8px;
-                            background: #181d23;
-                            border-width: 1px;
-                            border-color: #2f3842;
-                            width: 50%;
-
-                            VerticalBox {
-                                padding: 16px;
-                                spacing: 10px;
-
-                                Text { text: "IRIS DROIT (OD)"; font-size: 16px; font-weight: 700; color: #60a5fa; horizontal-alignment: center; }
-                                Text { text: "Organes et correspondances par cadran horaire"; font-size: 11px; color: #9ca3af; horizontal-alignment: center; }
-
-                                Rectangle { height: 1px; background: #2f3842; }
-
-                                Text { text: "12h : Cerveau, Épiphise, Hypophyse, Psyché"; color: #e5e7eb; font-size: 12px; }
-                                Text { text: "1h : Face, Sinus, Mâchoire supérieure, Dents"; color: #e5e7eb; font-size: 12px; }
-                                Text { text: "2h : Gorge, Larynx, Thyroïde, Œsophage"; color: #e5e7eb; font-size: 12px; }
-                                Text { text: "3h : Bronches droites, Trachée, Dos supérieur"; color: #e5e7eb; font-size: 12px; }
-                                Text { text: "4h : Plèvre, Thorax, Sein droit"; color: #e5e7eb; font-size: 12px; }
-                                Text { text: "5h : Côtes, Foie périphérique, Épaule droite"; color: #e5e7eb; font-size: 12px; }
-                                Text { text: "6h : Rein droit, Glande surrénale, Urètre, Jambe"; color: #facc15; font-size: 12px; font-weight: 600; }
-                                Text { text: "7h : Ovaire / Testicule droit, Pelvis, Appendice"; color: #e5e7eb; font-size: 12px; }
-                                Text { text: "8h : FOIE & VÉSICULE BILIAIRE (Zone majeure OD)"; color: #34d399; font-size: 12px; font-weight: 700; }
-                                Text { text: "9h : Poumon droit (moyen & inférieur), Diaphragme"; color: #e5e7eb; font-size: 12px; }
-                                Text { text: "10h : Cou, Clavicule, Épaule droite"; color: #e5e7eb; font-size: 12px; }
-                                Text { text: "11h : Cervelet, Oreille droite, Centre de l'équilibre"; color: #e5e7eb; font-size: 12px; }
+                        Button {
+                            text: "Carte de l'iris";
+                            primary: root.iridology-reference-mode == 0;
+                            clicked => {
+                                root.iridology-reference-mode = 0;
+                                root.iridology-reference-zoom = 100;
+                                root.iridology-reference-pan-x = 0px;
+                                root.iridology-reference-pan-y = 0px;
                             }
                         }
 
-                        // Iris Gauche (OG)
-                        Rectangle {
-                            border-radius: 8px;
-                            background: #181d23;
-                            border-width: 1px;
-                            border-color: #2f3842;
-                            width: 50%;
+                        Button {
+                            text: "Signes / symboles";
+                            primary: root.iridology-reference-mode == 1;
+                            clicked => {
+                                root.iridology-reference-mode = 1;
+                                root.iridology-reference-zoom = 100;
+                                root.iridology-reference-pan-x = 0px;
+                                root.iridology-reference-pan-y = 0px;
+                            }
+                        }
 
-                            VerticalBox {
-                                padding: 16px;
-                                spacing: 10px;
+                        Button {
+                            text: "100%";
+                            primary: root.iridology-reference-zoom == 100;
+                            clicked => {
+                                root.iridology-reference-zoom = 100;
+                                root.iridology-reference-pan-x = 0px;
+                                root.iridology-reference-pan-y = 0px;
+                            }
+                        }
 
-                                Text { text: "IRIS GAUCHE (OG)"; font-size: 16px; font-weight: 700; color: #a78bfa; horizontal-alignment: center; }
-                                Text { text: "Organes et correspondances par cadran horaire"; font-size: 11px; color: #9ca3af; horizontal-alignment: center; }
+                        Button {
+                            text: "150%";
+                            primary: root.iridology-reference-zoom == 150;
+                            clicked => {
+                                root.iridology-reference-zoom = 150;
+                                root.iridology-reference-pan-x = 0px;
+                                root.iridology-reference-pan-y = 0px;
+                            }
+                        }
 
-                                Rectangle { height: 1px; background: #2f3842; }
-
-                                Text { text: "12h : Cerveau, Cortex cérébral, Système nerveux"; color: #e5e7eb; font-size: 12px; }
-                                Text { text: "1h : Cervelet, Oreille gauche, Centre de l'équilibre"; color: #e5e7eb; font-size: 12px; }
-                                Text { text: "2h : Épaule gauche, Cou, Bras, Poumon supérieur"; color: #e5e7eb; font-size: 12px; }
-                                Text { text: "3h : CŒUR & AORTE (Zone majeure OG), Bronches"; color: #f87171; font-size: 12px; font-weight: 700; }
-                                Text { text: "4h : RATE & Pancreas, Flanc gauche, Sein gauche"; color: #34d399; font-size: 12px; font-weight: 700; }
-                                Text { text: "5h : Côtes, Abdomen latéral gauche"; color: #e5e7eb; font-size: 12px; }
-                                Text { text: "6h : Rein gauche, Glande surrénale, Pelvis, Jambe"; color: #facc15; font-size: 12px; font-weight: 600; }
-                                Text { text: "7h : Ovaire / Testicule gauche, Vessie"; color: #e5e7eb; font-size: 12px; }
-                                Text { text: "8h : Côlon descendant, Sigmoïde, Rectum"; color: #e5e7eb; font-size: 12px; }
-                                Text { text: "9h : Poumon gauche (moyen et inférieur), Plèvre"; color: #e5e7eb; font-size: 12px; }
-                                Text { text: "10h : Gorge, Cordes vocales, Thyroïde, Œsophage"; color: #e5e7eb; font-size: 12px; }
-                                Text { text: "11h : Face, Sinus, Mâchoire, Dents gauches"; color: #e5e7eb; font-size: 12px; }
+                        Button {
+                            text: "200%";
+                            primary: root.iridology-reference-zoom == 200;
+                            clicked => {
+                                root.iridology-reference-zoom = 200;
+                                root.iridology-reference-pan-x = 0px;
+                                root.iridology-reference-pan-y = 0px;
                             }
                         }
                     }
+                }
 
-                    // Jensen concentric rings
-                    Rectangle {
-                        border-radius: 8px;
-                        background: #181d23;
-                        border-width: 1px;
-                        border-color: #2f3842;
+                reference-frame := Rectangle {
+                    clip: true;
+                    border-radius: 8px;
+                    background: #000000;
+                    border-width: 1px;
+                    border-color: #2f3842;
 
-                        VerticalBox {
-                            padding: 16px;
-                            spacing: 8px;
+                    if root.iridology-reference-mode == 0 && root.has-iridology-map: Image {
+                        source: root.iridology-map-image;
+                        x: (parent.width - self.width) / 2 + root.iridology-reference-pan-x;
+                        y: (parent.height - self.height) / 2 + root.iridology-reference-pan-y;
+                        width: root.iridology-reference-zoom == 200
+                            ? parent.width * 2
+                            : root.iridology-reference-zoom == 150
+                                ? parent.width * 1.5
+                                : parent.width;
+                        height: root.iridology-reference-zoom == 200
+                            ? parent.height * 2
+                            : root.iridology-reference-zoom == 150
+                                ? parent.height * 1.5
+                                : parent.height;
+                        image-fit: contain;
+                    }
 
-                            Text {
-                                text: "Les 7 Anneaux Physiologiques Concentriques (Système Bernard Jensen)";
-                                font-size: 15px;
-                                font-weight: 700;
-                                color: #38bdf8;
+                    if root.iridology-reference-mode == 1 && root.has-iridology-symbols: Image {
+                        source: root.iridology-symbols-image;
+                        x: (parent.width - self.width) / 2 + root.iridology-reference-pan-x;
+                        y: (parent.height - self.height) / 2 + root.iridology-reference-pan-y;
+                        width: root.iridology-reference-zoom == 200
+                            ? parent.width * 2
+                            : root.iridology-reference-zoom == 150
+                                ? parent.width * 1.5
+                                : parent.width;
+                        height: root.iridology-reference-zoom == 200
+                            ? parent.height * 2
+                            : root.iridology-reference-zoom == 150
+                                ? parent.height * 1.5
+                                : parent.height;
+                        image-fit: contain;
+                    }
+
+                    if root.iridology-reference-mode == 0 && !root.has-iridology-map: Text {
+                        text: "Aucune carte configurée.\nAjoutez son chemin dans Paramètres.";
+                        color: #9ca3af;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    if root.iridology-reference-mode == 1 && !root.has-iridology-symbols: Text {
+                        text: "Aucune planche de signes configurée.\nAjoutez son chemin dans Paramètres.";
+                        color: #9ca3af;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    reference-pan := TouchArea {
+                        enabled: root.iridology-reference-zoom > 100;
+                        private property <length> pan-start-x;
+                        private property <length> pan-start-y;
+
+                        changed pressed => {
+                            if self.pressed {
+                                self.pan-start-x = root.iridology-reference-pan-x;
+                                self.pan-start-y = root.iridology-reference-pan-y;
                             }
-                            Text { text: "• Anneau 1 (Bord pupillaire) : Système nerveux central, parasympathique et axe neuro-viscéral"; color: #cbd5e1; font-size: 12px; }
-                            Text { text: "• Anneau 2 (Zone stomacale) : Estomac, fonction digestive et assimilation nutritionnelle primaire"; color: #cbd5e1; font-size: 12px; }
-                            Text { text: "• Anneau 3 (Collerette / ANW) : Intestin grêle, côlon et régulation du système nerveux autonome"; color: #facc15; font-size: 12px; font-weight: 600; }
-                            Text { text: "• Anneau 4 (Zone ciliaire interne) : Organes filtres et métaboliques (Foie, Pancréas, Reins, Rate)"; color: #cbd5e1; font-size: 12px; }
-                            Text { text: "• Anneau 5 (Zone ciliaire médiane) : Fonctions circulatoires et respiratoires profondes (Cœur, Poumons)"; color: #cbd5e1; font-size: 12px; }
-                            Text { text: "• Anneau 6 (Zone ciliaire externe) : Système lymphatique, chaîne ganglionnaire et élimination humorale"; color: #cbd5e1; font-size: 12px; }
-                            Text { text: "• Anneau 7 (Bordure limbique) : Peau, élimination cutanée périphérique, sueur et toxicité métabolique"; color: #cbd5e1; font-size: 12px; }
+                        }
+
+                        moved => {
+                            if self.pressed {
+                                root.iridology-reference-pan-x =
+                                    self.pan-start-x + self.mouse-x - self.pressed-x;
+                                root.iridology-reference-pan-y =
+                                    self.pan-start-y + self.mouse-y - self.pressed-y;
+                            }
                         }
                     }
                 }
@@ -1312,6 +1371,24 @@ export component MainWindow inherits Window {
                                         : "Suit le mode actuel";
                                 clicked => {
                                     root.cycle-physical-button-mode();
+                                }
+                            }
+
+                            Text { text: "Carte d'iridologie (image) :"; color: #9ca3af; }
+                            LineEdit {
+                                text: root.settings-iridology-map-path;
+                                placeholder-text: "Chemin vers une image JPEG/PNG";
+                                accepted(value) => {
+                                    root.update-iridology-map-path(value);
+                                }
+                            }
+
+                            Text { text: "Planche signes / symboles :"; color: #9ca3af; }
+                            LineEdit {
+                                text: root.settings-iridology-symbols-path;
+                                placeholder-text: "Chemin vers une image JPEG/PNG";
+                                accepted(value) => {
+                                    root.update-iridology-symbols-path(value);
                                 }
                             }
 
