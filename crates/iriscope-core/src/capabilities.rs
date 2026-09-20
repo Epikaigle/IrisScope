@@ -1,6 +1,6 @@
 //! Camera capability models exposed consistently by every native backend.
 
-use std::fmt;
+use std::{cmp::Ordering, fmt};
 
 /// Pixel layout or compressed format delivered by a camera.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -73,9 +73,10 @@ impl FrameRate {
         if numerator == 0 || denominator == 0 {
             None
         } else {
+            let divisor = greatest_common_divisor(numerator, denominator);
             Some(Self {
-                numerator,
-                denominator,
+                numerator: numerator / divisor,
+                denominator: denominator / divisor,
             })
         }
     }
@@ -97,6 +98,28 @@ impl FrameRate {
     pub fn frames_per_second(self) -> f64 {
         f64::from(self.numerator) / f64::from(self.denominator)
     }
+}
+
+impl Ord for FrameRate {
+    fn cmp(&self, other: &Self) -> Ordering {
+        (u64::from(self.numerator) * u64::from(other.denominator))
+            .cmp(&(u64::from(other.numerator) * u64::from(self.denominator)))
+    }
+}
+
+impl PartialOrd for FrameRate {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+const fn greatest_common_divisor(mut left: u32, mut right: u32) -> u32 {
+    while right != 0 {
+        let remainder = left % right;
+        left = right;
+        right = remainder;
+    }
+    left
 }
 
 /// A pixel format and resolution with all advertised frame rates.
@@ -255,6 +278,40 @@ impl CameraCapabilities {
             .iter()
             .find(|mode| mode.pixel_format == *pixel_format && mode.resolution == resolution)
     }
+
+    /// Selects the strongest advertised mode before runtime measurements are available.
+    ///
+    /// Resolution is ranked first, followed by advertised frame rate and a deterministic
+    /// format preference. Runtime benchmarks may replace this initial choice later.
+    #[must_use]
+    pub fn preferred_mode(&self) -> Option<(&CameraMode, FrameRate)> {
+        self.modes
+            .iter()
+            .filter_map(|mode| {
+                mode.frame_rates
+                    .iter()
+                    .copied()
+                    .max()
+                    .map(|frame_rate| (mode, frame_rate))
+            })
+            .max_by_key(|(mode, frame_rate)| {
+                (
+                    mode.resolution.pixel_count(),
+                    *frame_rate,
+                    pixel_format_preference(&mode.pixel_format),
+                )
+            })
+    }
+}
+
+const fn pixel_format_preference(pixel_format: &PixelFormat) -> u8 {
+    match pixel_format {
+        PixelFormat::Mjpeg => 4,
+        PixelFormat::Yuyv => 3,
+        PixelFormat::Bgra8 => 2,
+        PixelFormat::Nv12 => 1,
+        PixelFormat::Other(_) => 0,
+    }
 }
 
 #[cfg(test)]
@@ -270,6 +327,11 @@ mod tests {
         assert_eq!(frame_rate.denominator(), 4);
         assert!(FrameRate::new(0, 1).is_none());
         assert!(FrameRate::new(1, 0).is_none());
+        assert_eq!(
+            FrameRate::new(16, 2),
+            FrameRate::new(8, 1),
+            "equivalent rates should normalize to the same value"
+        );
     }
 
     #[test]
@@ -291,5 +353,38 @@ mod tests {
 
         assert!(mode.supports_frame_rate(frame_rate));
         assert_eq!(resolution.pixel_count(), 1_310_720);
+    }
+
+    #[test]
+    fn preferred_mode_prioritizes_resolution_then_frame_rate() {
+        let high_resolution = Resolution::new(1280, 1024);
+        let capabilities = CameraCapabilities {
+            modes: vec![
+                CameraMode {
+                    pixel_format: PixelFormat::Yuyv,
+                    resolution: high_resolution,
+                    frame_rates: vec![FrameRate::new(3, 1).expect("valid frame rate")],
+                },
+                CameraMode {
+                    pixel_format: PixelFormat::Mjpeg,
+                    resolution: high_resolution,
+                    frame_rates: vec![FrameRate::new(8, 1).expect("valid frame rate")],
+                },
+                CameraMode {
+                    pixel_format: PixelFormat::Mjpeg,
+                    resolution: Resolution::new(640, 480),
+                    frame_rates: vec![FrameRate::new(30, 1).expect("valid frame rate")],
+                },
+            ],
+            controls: Vec::new(),
+        };
+
+        let (mode, frame_rate) = capabilities
+            .preferred_mode()
+            .expect("one mode should be preferred");
+
+        assert_eq!(mode.resolution, high_resolution);
+        assert_eq!(mode.pixel_format, PixelFormat::Mjpeg);
+        assert_eq!(frame_rate, FrameRate::new(8, 1).expect("valid frame rate"));
     }
 }

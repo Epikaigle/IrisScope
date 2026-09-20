@@ -1,0 +1,1171 @@
+import { Button, VerticalBox, HorizontalBox, LineEdit, Slider, ComboBox, ScrollView } from "std-widgets.slint";
+
+export struct DiagnosticData {
+    device-name: string,
+    device-id: string,
+    backend-name: string,
+    usb-info: string,
+    active-format: string,
+    active-resolution: string,
+    active-fps: string,
+    measured-fps: string,
+    decode-time-ms: string,
+    frame-count: int,
+    dropped-frames: int,
+}
+
+export struct LibraryItemData {
+    id: string,
+    file-path: string,
+    title: string,
+    date-time: string,
+    eye-label: string,
+    is-video: bool,
+    is-current-session: bool,
+}
+
+export component MainWindow inherits Window {
+    title: "IrisScope - Digital Microscope";
+    min-width: 1024px;
+    min-height: 720px;
+    preferred-width: 1280px;
+    preferred-height: 800px;
+    background: #14171a;
+
+    in-out property <image> live-frame;
+    in-out property <string> status-text: "Recherche de l'iridoscope...";
+    in-out property <bool> camera-connected: false;
+    in-out property <bool> is-streaming: false;
+
+    // Session patient
+    in-out property <string> patient-first-name: "";
+    in-out property <string> patient-last-name: "";
+    in-out property <int> selected-eye: 0; // 0: Non renseigné, 1: Gauche, 2: Droit
+    in-out property <bool> is-video-mode: false;
+    in-out property <bool> is-recording: false;
+    in-out property <string> recording-duration: "00:00";
+
+    // Transformations d'affichage live
+    in-out property <bool> is-frozen: false;
+    in-out property <int> zoom-level: 100; // 100, 125, 150, 200
+    in-out property <int> rotation-angle: 0; // 0, 90, 180, 270
+    in-out property <bool> mirror-horizontal: false;
+    in-out property <bool> mirror-vertical: false;
+
+    // Navigation (0: Camera, 1: Controls, 2: Library, 3: Iridology, 4: Settings)
+    in-out property <int> current-tab: 0;
+
+    // Diagnostic
+    in-out property <DiagnosticData> diagnostics;
+
+    // Dernier enregistrement & Flash
+    in-out property <string> last-capture-message: "";
+    in-out property <bool> show-last-capture: false;
+    in-out property <float> shutter-flash-opacity: 0.0;
+    in-out property <image> last-capture-thumbnail;
+    in-out property <bool> has-last-capture: false;
+    in-out property <string> last-capture-file-name: "";
+    in-out property <string> last-capture-path: "";
+    in-out property <int> session-photo-count: 0;
+
+    // Réglages caméra
+    in-out property <float> brightness-val: 127;
+    in-out property <float> contrast-val: 15;
+    in-out property <float> saturation-val: 15;
+    in-out property <float> hue-val: 0;
+    in-out property <float> gamma-val: 64;
+    in-out property <float> sharpness-val: 13;
+    in-out property <bool> white-balance-auto: true;
+    in-out property <float> white-balance-manual: 128;
+    in-out property <int> power-line-frequency: 2; // 0: Off, 1: 50Hz, 2: 60Hz
+
+    // Bibliothèque
+    in-out property <[LibraryItemData]> library-items: [];
+    callback open-capture-file(string);
+
+    // Grille iridologique
+    in-out property <bool> show-iridology-grid: false;
+
+    // Callbacks
+    callback trigger-capture();
+    callback toggle-recording();
+    callback clear-session();
+    callback toggle-freeze();
+    callback reset-camera-controls();
+    callback set-control-requested(string, float);
+    callback set-white-balance-auto-requested(bool);
+    callback refresh-library();
+    callback open-capture-directory();
+
+    VerticalBox {
+        padding: 0px;
+        spacing: 0px;
+
+        // Top Navigation Bar
+        Rectangle {
+            height: 52px;
+            background: #1c2127;
+
+            HorizontalBox {
+                padding-left: 16px;
+                padding-right: 16px;
+                alignment: space-between;
+
+                HorizontalBox {
+                    spacing: 12px;
+                    alignment: start;
+
+                    Text {
+                        text: "IrisScope";
+                        color: #4da3ff;
+                        font-size: 18px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+
+                    Rectangle {
+                        width: 1px;
+                        height: 24px;
+                        background: #2f3842;
+                    }
+
+                    Button {
+                        text: "Caméra";
+                        primary: root.current-tab == 0;
+                        clicked => { root.current-tab = 0; }
+                    }
+
+                    Button {
+                        text: "Réglages Image";
+                        primary: root.current-tab == 1;
+                        clicked => { root.current-tab = 1; }
+                    }
+
+                    Button {
+                        text: "Bibliothèque";
+                        primary: root.current-tab == 2;
+                        clicked => {
+                            root.current-tab = 2;
+                            root.refresh-library();
+                        }
+                    }
+
+                    Button {
+                        text: "Carte d'iridologie";
+                        primary: root.current-tab == 3;
+                        clicked => { root.current-tab = 3; }
+                    }
+
+                    Button {
+                        text: "Paramètres & Diagnostic";
+                        primary: root.current-tab == 4;
+                        clicked => { root.current-tab = 4; }
+                    }
+                }
+
+                HorizontalBox {
+                    spacing: 10px;
+                    alignment: end;
+
+                    Rectangle {
+                        border-radius: 12px;
+                        background: root.camera-connected ? #173822 : #381a1a;
+                        height: 28px;
+
+                        HorizontalBox {
+                            padding-left: 8px;
+                            padding-right: 8px;
+                            spacing: 6px;
+
+                            Rectangle {
+                                width: 8px;
+                                height: 8px;
+                                border-radius: 4px;
+                                background: root.camera-connected ? #34d399 : #f87171;
+                            }
+
+                            Text {
+                                text: root.status-text;
+                                color: root.camera-connected ? #6ee7b7 : #fca5a5;
+                                font-size: 12px;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Main Viewport Container
+        Rectangle {
+            background: #0f1215;
+
+            // Tab 0: Camera Live View
+            if root.current-tab == 0: VerticalBox {
+                padding: 12px;
+                spacing: 12px;
+
+                // Live Camera viewport
+                Rectangle {
+                    clip: true;
+                    border-radius: 8px;
+                    background: #000000;
+
+                    if root.is-streaming: Image {
+                        source: root.live-frame;
+                        width: 100%;
+                        height: 100%;
+                        image-fit: contain;
+                    }
+
+                    if root.is-streaming && root.show-iridology-grid: Rectangle {
+                        width: 100%;
+                        height: 100%;
+
+                        // 1. Pupil circle
+                        Rectangle {
+                            x: (parent.width - 60px) / 2;
+                            y: (parent.height - 60px) / 2;
+                            width: 60px;
+                            height: 60px;
+                            border-radius: 30px;
+                            border-width: 1.5px;
+                            border-color: #38bdf8aa;
+                        }
+                        // 2. Stomach zone
+                        Rectangle {
+                            x: (parent.width - 140px) / 2;
+                            y: (parent.height - 140px) / 2;
+                            width: 140px;
+                            height: 140px;
+                            border-radius: 70px;
+                            border-width: 1px;
+                            border-color: #38bdf866;
+                        }
+                        // 3. Collarette (ANW) in amber
+                        Rectangle {
+                            x: (parent.width - 240px) / 2;
+                            y: (parent.height - 240px) / 2;
+                            width: 240px;
+                            height: 240px;
+                            border-radius: 120px;
+                            border-width: 1.5px;
+                            border-color: #facc15cc;
+                        }
+                        // 4. Ciliary zone
+                        Rectangle {
+                            x: (parent.width - 360px) / 2;
+                            y: (parent.height - 360px) / 2;
+                            width: 360px;
+                            height: 360px;
+                            border-radius: 180px;
+                            border-width: 1px;
+                            border-color: #38bdf855;
+                        }
+                        // 5. Limbic outer ring
+                        Rectangle {
+                            x: (parent.width - 480px) / 2;
+                            y: (parent.height - 480px) / 2;
+                            width: 480px;
+                            height: 480px;
+                            border-radius: 240px;
+                            border-width: 1.5px;
+                            border-color: #38bdf899;
+                        }
+                        // Crosshairs
+                        Rectangle {
+                            x: (parent.width - 1px) / 2;
+                            y: (parent.height - 480px) / 2;
+                            width: 1px;
+                            height: 480px;
+                            background: #38bdf855;
+                        }
+                        Rectangle {
+                            x: (parent.width - 480px) / 2;
+                            y: (parent.height - 1px) / 2;
+                            width: 480px;
+                            height: 1px;
+                            background: #38bdf855;
+                        }
+                        // Clock sector guides
+                        Text {
+                            x: (parent.width - 50px) / 2;
+                            y: (parent.height - 480px) / 2 - 18px;
+                            text: "12h Cerveau";
+                            color: #38bdf8;
+                            font-size: 11px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                        }
+                        Text {
+                            x: (parent.width - 50px) / 2;
+                            y: (parent.height + 480px) / 2 + 4px;
+                            text: "6h Reins";
+                            color: #38bdf8;
+                            font-size: 11px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                        }
+                    }
+
+                    if !root.is-streaming: VerticalBox {
+                        alignment: center;
+                        spacing: 8px;
+
+                        Text {
+                            text: root.camera-connected ? "Démarrage du flux en cours..." : "DE400 non détecté";
+                            color: #8b98a5;
+                            font-size: 18px;
+                            horizontal-alignment: center;
+                        }
+                        Text {
+                            text: root.camera-connected ? "Veuillez patienter" : "Branchez l'iridoscope pour démarrer l'affichage en direct";
+                            color: #5b6875;
+                            font-size: 13px;
+                            horizontal-alignment: center;
+                        }
+                    }
+
+                    // Shutter flash effect
+                    Rectangle {
+                        width: 100%;
+                        height: 100%;
+                        background: #ffffff;
+                        opacity: root.shutter-flash-opacity;
+                        animate opacity { duration: 180ms; easing: ease-out; }
+                    }
+
+                    // Recording overlay indicator
+                    if root.is-recording: Rectangle {
+                        x: 16px;
+                        y: 16px;
+                        width: 120px;
+                        height: 32px;
+                        border-radius: 16px;
+                        background: #b91c1cb0;
+
+                        HorizontalBox {
+                            alignment: center;
+                            spacing: 6px;
+
+                            Rectangle {
+                                width: 10px;
+                                height: 10px;
+                                border-radius: 5px;
+                                background: #ef4444;
+                            }
+
+                            Text {
+                                text: "REC " + root.recording-duration;
+                                color: #ffffff;
+                                font-size: 14px;
+                                font-weight: 700;
+                            }
+                        }
+                    }
+
+                    // Session photo count badge
+                    if root.session-photo-count > 0: Rectangle {
+                        x: root.is-recording ? 148px : 16px;
+                        y: 16px;
+                        width: 130px;
+                        height: 32px;
+                        border-radius: 16px;
+                        background: #0f172ae6;
+                        border-width: 1.5px;
+                        border-color: #38bdf8;
+
+                        HorizontalBox {
+                            padding-left: 12px;
+                            padding-right: 12px;
+                            alignment: center;
+                            spacing: 6px;
+
+                            Text {
+                                text: "📸 " + root.session-photo-count + (root.session-photo-count > 1 ? " photos" : " photo");
+                                color: #38bdf8;
+                                font-size: 13px;
+                                font-weight: 700;
+                            }
+                        }
+                    }
+
+                    // Frozen image indicator
+                    if root.is-frozen: Rectangle {
+                        x: (parent.width - 200px) / 2;
+                        y: 16px;
+                        width: 200px;
+                        height: 32px;
+                        border-radius: 16px;
+                        background: #0284c7d0;
+                        border-width: 1px;
+                        border-color: #38bdf8;
+
+                        HorizontalBox {
+                            alignment: center;
+                            Text {
+                                text: "❄ Image Figée";
+                                color: #ffffff;
+                                font-size: 13px;
+                                font-weight: 700;
+                            }
+                        }
+                    }
+
+                    // Toast confirmation overlay
+                    if root.show-last-capture: Rectangle {
+                        x: (parent.width - 440px) / 2;
+                        y: 56px;
+                        width: 440px;
+                        height: 42px;
+                        border-radius: 21px;
+                        background: #059669f0;
+                        border-width: 1px;
+                        border-color: #34d399;
+
+                        HorizontalBox {
+                            padding-left: 16px;
+                            padding-right: 16px;
+                            alignment: space-between;
+
+                            Text {
+                                text: root.last-capture-message;
+                                color: #ffffff;
+                                font-size: 13px;
+                                font-weight: 700;
+                                vertical-alignment: center;
+                            }
+
+                            if root.has-last-capture: Button {
+                                text: "👁 Voir";
+                                clicked => { root.open-capture-file(root.last-capture-path); }
+                            }
+                        }
+                    }
+
+                    // Floating Thumbnail Card (Dernière capture)
+                    if root.has-last-capture: Rectangle {
+                        x: parent.width - 264px;
+                        y: parent.height - 120px;
+                        width: 248px;
+                        height: 104px;
+                        border-radius: 10px;
+                        background: #14181cf6;
+                        border-width: 1.5px;
+                        border-color: #38bdf8aa;
+
+                        HorizontalBox {
+                            padding: 8px;
+                            spacing: 10px;
+                            alignment: start;
+
+                            // Thumbnail
+                            Rectangle {
+                                width: 88px;
+                                height: 88px;
+                                border-radius: 6px;
+                                clip: true;
+                                background: #000000;
+
+                                Image {
+                                    source: root.last-capture-thumbnail;
+                                    width: 100%;
+                                    height: 100%;
+                                    image-fit: cover;
+                                }
+                            }
+
+                            // Details & actions
+                            VerticalBox {
+                                alignment: space-between;
+                                padding: 0px;
+                                spacing: 2px;
+
+                                Text {
+                                    text: "Dernière capture";
+                                    color: #38bdf8;
+                                    font-size: 11px;
+                                    font-weight: 700;
+                                }
+                                Text {
+                                    text: root.last-capture-file-name;
+                                    color: #cbd5e1;
+                                    font-size: 10px;
+                                    overflow: elide;
+                                }
+                                HorizontalBox {
+                                    padding: 0px;
+                                    spacing: 6px;
+                                    alignment: start;
+
+                                    Button {
+                                        text: "👁 Voir";
+                                        clicked => { root.open-capture-file(root.last-capture-path); }
+                                    }
+                                    Button {
+                                        text: "📁";
+                                        clicked => { root.open-capture-directory(); }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Bottom Session & Capture Bar
+                Rectangle {
+                    height: 84px;
+                    border-radius: 8px;
+                    background: #1c2127;
+
+                    HorizontalBox {
+                        padding-left: 12px;
+                        padding-right: 12px;
+                        spacing: 16px;
+                        alignment: space-between;
+
+                        // Patient identity
+                        HorizontalBox {
+                            spacing: 8px;
+                            alignment: start;
+
+                            VerticalBox {
+                                alignment: center;
+                                spacing: 2px;
+                                Text { text: "Prénom"; color: #8b98a5; font-size: 11px; }
+                                LineEdit {
+                                    text <=> root.patient-first-name;
+                                    placeholder-text: "Prénom";
+                                    width: 120px;
+                                }
+                            }
+
+                            VerticalBox {
+                                alignment: center;
+                                spacing: 2px;
+                                Text { text: "Nom"; color: #8b98a5; font-size: 11px; }
+                                LineEdit {
+                                    text <=> root.patient-last-name;
+                                    placeholder-text: "Nom";
+                                    width: 120px;
+                                }
+                            }
+
+                            VerticalBox {
+                                alignment: center;
+                                spacing: 2px;
+                                Text { text: "Œil"; color: #8b98a5; font-size: 11px; }
+                                HorizontalBox {
+                                    spacing: 4px;
+                                    Button {
+                                        text: "Gauche";
+                                        primary: root.selected-eye == 1;
+                                        clicked => { root.selected-eye = 1; }
+                                    }
+                                    Button {
+                                        text: "Droit";
+                                        primary: root.selected-eye == 2;
+                                        clicked => { root.selected-eye = 2; }
+                                    }
+                                    Button {
+                                        text: "—";
+                                        primary: root.selected-eye == 0;
+                                        clicked => { root.selected-eye = 0; }
+                                    }
+                                }
+                            }
+
+                            VerticalBox {
+                                alignment: center;
+                                Button {
+                                    text: "Terminer session";
+                                    clicked => { root.clear-session(); }
+                                }
+                            }
+                        }
+
+                        // Main Action Button (Photo / Video)
+                        HorizontalBox {
+                            spacing: 12px;
+                            alignment: center;
+
+                            HorizontalBox {
+                                spacing: 4px;
+                                alignment: center;
+                                Button {
+                                    text: "PHOTO";
+                                    primary: !root.is-video-mode;
+                                    clicked => { root.is-video-mode = false; }
+                                }
+                                Button {
+                                    text: "VIDÉO";
+                                    primary: root.is-video-mode;
+                                    clicked => { root.is-video-mode = true; }
+                                }
+                            }
+
+                            Button {
+                                text: root.is-video-mode ? (root.is-recording ? "■ Arrêter Enreg." : "● Démarrer Vidéo") : "📷 Capturer Photo";
+                                primary: true;
+                                enabled: root.is-streaming;
+                                clicked => {
+                                    if root.is-video-mode {
+                                        root.toggle-recording();
+                                    } else {
+                                        root.trigger-capture();
+                                    }
+                                }
+                            }
+                        }
+
+                        // Display Tools (Freeze, Zoom, Rotation)
+                        HorizontalBox {
+                            spacing: 6px;
+                            alignment: end;
+
+                            Button {
+                                text: root.show-iridology-grid ? "Grille Iris (Active)" : "Grille Iris";
+                                primary: root.show-iridology-grid;
+                                clicked => { root.show-iridology-grid = !root.show-iridology-grid; }
+                            }
+
+                            Button {
+                                text: root.is-frozen ? "Reprendre" : "Figer";
+                                clicked => { root.toggle-freeze(); }
+                            }
+
+                            Button {
+                                text: "100%";
+                                primary: root.zoom-level == 100;
+                                clicked => { root.zoom-level = 100; }
+                            }
+                            Button {
+                                text: "150%";
+                                primary: root.zoom-level == 150;
+                                clicked => { root.zoom-level = 150; }
+                            }
+                            Button {
+                                text: "200%";
+                                primary: root.zoom-level == 200;
+                                clicked => { root.zoom-level = 200; }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Tab 1: Image Controls
+            if root.current-tab == 1: VerticalBox {
+                padding: 24px;
+                spacing: 16px;
+                alignment: start;
+
+                Text {
+                    text: "Réglages Caméra en Temps Réel";
+                    font-size: 20px;
+                    font-weight: 700;
+                    color: #ffffff;
+                }
+
+                HorizontalBox {
+                    spacing: 24px;
+
+                    VerticalBox {
+                        width: 400px;
+                        spacing: 12px;
+
+                        Text { text: "Luminosité (" + root.brightness-val + ")"; color: #e5e7eb; }
+                        Slider {
+                            minimum: 0;
+                            maximum: 255;
+                            value <=> root.brightness-val;
+                            changed => { root.set-control-requested("brightness", self.value); }
+                        }
+
+                        Text { text: "Contraste (" + root.contrast-val + ")"; color: #e5e7eb; }
+                        Slider {
+                            minimum: 0;
+                            maximum: 31;
+                            value <=> root.contrast-val;
+                            changed => { root.set-control-requested("contrast", self.value); }
+                        }
+
+                        Text { text: "Saturation (" + root.saturation-val + ")"; color: #e5e7eb; }
+                        Slider {
+                            minimum: 0;
+                            maximum: 31;
+                            value <=> root.saturation-val;
+                            changed => { root.set-control-requested("saturation", self.value); }
+                        }
+
+                        Text { text: "Teinte (" + root.hue-val + ")"; color: #e5e7eb; }
+                        Slider {
+                            minimum: -180;
+                            maximum: 180;
+                            value <=> root.hue-val;
+                            changed => { root.set-control-requested("hue", self.value); }
+                        }
+                    }
+
+                    VerticalBox {
+                        width: 400px;
+                        spacing: 12px;
+
+                        Text { text: "Gamma (" + root.gamma-val + ")"; color: #e5e7eb; }
+                        Slider {
+                            minimum: 0;
+                            maximum: 127;
+                            value <=> root.gamma-val;
+                            changed => { root.set-control-requested("gamma", self.value); }
+                        }
+
+                        Text { text: "Netteté (" + root.sharpness-val + ")"; color: #e5e7eb; }
+                        Slider {
+                            minimum: 0;
+                            maximum: 15;
+                            value <=> root.sharpness-val;
+                            changed => { root.set-control-requested("sharpness", self.value); }
+                        }
+
+                        HorizontalBox {
+                            Text { text: "Balance des blancs auto"; color: #e5e7eb; vertical-alignment: center; }
+                            Button {
+                                text: root.white-balance-auto ? "Activée" : "Manuelle";
+                                clicked => {
+                                    root.white-balance-auto = !root.white-balance-auto;
+                                    root.set-white-balance-auto-requested(root.white-balance-auto);
+                                }
+                            }
+                        }
+
+                        if !root.white-balance-auto: VerticalBox {
+                            spacing: 4px;
+                            Text { text: "Balance manuelle (" + root.white-balance-manual + ")"; color: #e5e7eb; }
+                            Slider {
+                                minimum: 0;
+                                maximum: 255;
+                                value <=> root.white-balance-manual;
+                                changed => { root.set-control-requested("white_balance_temperature", self.value); }
+                            }
+                        }
+
+                        HorizontalBox {
+                            Text { text: "Anti-scintillement: "; color: #e5e7eb; vertical-alignment: center; }
+                            Button {
+                                text: "Off";
+                                primary: root.power-line-frequency == 0;
+                                clicked => {
+                                    root.power-line-frequency = 0;
+                                    root.set-control-requested("power_line_frequency", 0);
+                                }
+                            }
+                            Button {
+                                text: "50 Hz";
+                                primary: root.power-line-frequency == 1;
+                                clicked => {
+                                    root.power-line-frequency = 1;
+                                    root.set-control-requested("power_line_frequency", 1);
+                                }
+                            }
+                            Button {
+                                text: "60 Hz";
+                                primary: root.power-line-frequency == 2;
+                                clicked => {
+                                    root.power-line-frequency = 2;
+                                    root.set-control-requested("power_line_frequency", 2);
+                                }
+                            }
+                        }
+
+                        Button {
+                            text: "Réinitialiser les réglages aux valeurs par défaut";
+                            clicked => { root.reset-camera-controls(); }
+                        }
+                    }
+                }
+            }
+
+            // Tab 2: Library
+            if root.current-tab == 2: VerticalBox {
+                padding: 24px;
+                spacing: 16px;
+
+                HorizontalBox {
+                    alignment: space-between;
+                    Text {
+                        text: "Bibliothèque de Captures";
+                        font-size: 20px;
+                        font-weight: 700;
+                        color: #ffffff;
+                    }
+                    HorizontalBox {
+                        spacing: 8px;
+                        Button {
+                            text: "🔄 Actualiser";
+                            clicked => { root.refresh-library(); }
+                        }
+                        Button {
+                            text: "📁 Ouvrir le dossier des captures";
+                            clicked => { root.open-capture-directory(); }
+                        }
+                    }
+                }
+
+                HorizontalBox {
+                    spacing: 8px;
+                    alignment: start;
+                    Rectangle {
+                        border-radius: 4px;
+                        background: #065f46;
+                        height: 24px;
+                        HorizontalBox {
+                            padding-left: 8px;
+                            padding-right: 8px;
+                            Text {
+                                text: "Confidentialité Médicale Active";
+                                color: #34d399;
+                                font-size: 11px;
+                                font-weight: 700;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                    Text {
+                        text: "Les clichés appartenant à d'autres patients sont strictement anonymisés dans cette vue.";
+                        color: #9ca3af;
+                        font-size: 13px;
+                        vertical-alignment: center;
+                    }
+                }
+
+                if root.library-items.length == 0: Rectangle {
+                    background: #181d23;
+                    border-radius: 8px;
+                    border-width: 1px;
+                    border-color: #2f3842;
+                    min-height: 350px;
+
+                    VerticalBox {
+                        alignment: center;
+                        spacing: 8px;
+                        Text {
+                            text: "Aucun cliché dans la bibliothèque pour le moment.";
+                            color: #ffffff;
+                            font-size: 16px;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                        }
+                        Text {
+                            text: "Prenez des photos ou enregistrez des vidéos depuis l'onglet Caméra.";
+                            color: #9ca3af;
+                            font-size: 13px;
+                            horizontal-alignment: center;
+                        }
+                    }
+                }
+
+                if root.library-items.length > 0: ScrollView {
+                    min-height: 400px;
+                    VerticalBox {
+                        spacing: 8px;
+                        for item in root.library-items: Rectangle {
+                            height: 64px;
+                            border-radius: 8px;
+                            background: item.is-current-session ? #1c2738 : #181d23;
+                            border-width: 1px;
+                            border-color: item.is-current-session ? #3b82f6 : #2f3842;
+
+                            HorizontalBox {
+                                padding-left: 16px;
+                                padding-right: 16px;
+                                alignment: space-between;
+
+                                HorizontalBox {
+                                    spacing: 12px;
+                                    alignment: start;
+
+                                    Rectangle {
+                                        width: 72px;
+                                        height: 28px;
+                                        border-radius: 6px;
+                                        background: item.is-video ? #1e3a5f : #064e3b;
+
+                                        HorizontalBox {
+                                            alignment: center;
+                                            Text {
+                                                text: item.is-video ? "VIDÉO" : "PHOTO";
+                                                color: item.is-video ? #60a5fa : #34d399;
+                                                font-size: 11px;
+                                                font-weight: 700;
+                                            }
+                                        }
+                                    }
+
+                                    VerticalBox {
+                                        alignment: center;
+                                        spacing: 2px;
+
+                                        HorizontalBox {
+                                            spacing: 8px;
+                                            alignment: start;
+                                            Text {
+                                                text: item.title;
+                                                color: #ffffff;
+                                                font-size: 14px;
+                                                font-weight: 600;
+                                            }
+                                            if item.is-current-session: Rectangle {
+                                                border-radius: 4px;
+                                                background: #1d4ed8;
+                                                height: 18px;
+                                                HorizontalBox {
+                                                    padding-left: 4px;
+                                                    padding-right: 4px;
+                                                    Text {
+                                                        text: "Patient Actif";
+                                                        color: #dbeafe;
+                                                        font-size: 10px;
+                                                        font-weight: 700;
+                                                    }
+                                                }
+                                            }
+                                            if !item.is-current-session: Rectangle {
+                                                border-radius: 4px;
+                                                background: #374151;
+                                                height: 18px;
+                                                HorizontalBox {
+                                                    padding-left: 4px;
+                                                    padding-right: 4px;
+                                                    Text {
+                                                        text: "Anonymisé";
+                                                        color: #9ca3af;
+                                                        font-size: 10px;
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        Text {
+                                            text: item.date-time + "  •  " + item.eye-label;
+                                            color: #9ca3af;
+                                            font-size: 12px;
+                                        }
+                                    }
+                                }
+
+                                Button {
+                                    text: "Ouvrir";
+                                    clicked => { root.open-capture-file(item.file-path); }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Tab 3: Iridology Map
+            if root.current-tab == 3: ScrollView {
+                VerticalBox {
+                    padding: 24px;
+                    spacing: 20px;
+
+                    Text {
+                        text: "Planches et Cartes d'Iridologie de Référence";
+                        font-size: 20px;
+                        font-weight: 700;
+                        color: #ffffff;
+                    }
+
+                    Text {
+                        text: "Cartographie topographique des zones réflexes d'iridologie (Méthodes Bernard Jensen & Gilbert Jausas)";
+                        color: #9ca3af;
+                        font-size: 13px;
+                    }
+
+                    HorizontalBox {
+                        spacing: 16px;
+
+                        // Iris Droit (OD)
+                        Rectangle {
+                            border-radius: 8px;
+                            background: #181d23;
+                            border-width: 1px;
+                            border-color: #2f3842;
+                            width: 50%;
+
+                            VerticalBox {
+                                padding: 16px;
+                                spacing: 10px;
+
+                                Text { text: "IRIS DROIT (OD)"; font-size: 16px; font-weight: 700; color: #60a5fa; horizontal-alignment: center; }
+                                Text { text: "Organes et correspondances par cadran horaire"; font-size: 11px; color: #9ca3af; horizontal-alignment: center; }
+
+                                Rectangle { height: 1px; background: #2f3842; }
+
+                                Text { text: "12h : Cerveau, Épiphise, Hypophyse, Psyché"; color: #e5e7eb; font-size: 12px; }
+                                Text { text: "1h : Face, Sinus, Mâchoire supérieure, Dents"; color: #e5e7eb; font-size: 12px; }
+                                Text { text: "2h : Gorge, Larynx, Thyroïde, Œsophage"; color: #e5e7eb; font-size: 12px; }
+                                Text { text: "3h : Bronches droites, Trachée, Dos supérieur"; color: #e5e7eb; font-size: 12px; }
+                                Text { text: "4h : Plèvre, Thorax, Sein droit"; color: #e5e7eb; font-size: 12px; }
+                                Text { text: "5h : Côtes, Foie périphérique, Épaule droite"; color: #e5e7eb; font-size: 12px; }
+                                Text { text: "6h : Rein droit, Glande surrénale, Urètre, Jambe"; color: #facc15; font-size: 12px; font-weight: 600; }
+                                Text { text: "7h : Ovaire / Testicule droit, Pelvis, Appendice"; color: #e5e7eb; font-size: 12px; }
+                                Text { text: "8h : FOIE & VÉSICULE BILIAIRE (Zone majeure OD)"; color: #34d399; font-size: 12px; font-weight: 700; }
+                                Text { text: "9h : Poumon droit (moyen & inférieur), Diaphragme"; color: #e5e7eb; font-size: 12px; }
+                                Text { text: "10h : Cou, Clavicule, Épaule droite"; color: #e5e7eb; font-size: 12px; }
+                                Text { text: "11h : Cervelet, Oreille droite, Centre de l'équilibre"; color: #e5e7eb; font-size: 12px; }
+                            }
+                        }
+
+                        // Iris Gauche (OG)
+                        Rectangle {
+                            border-radius: 8px;
+                            background: #181d23;
+                            border-width: 1px;
+                            border-color: #2f3842;
+                            width: 50%;
+
+                            VerticalBox {
+                                padding: 16px;
+                                spacing: 10px;
+
+                                Text { text: "IRIS GAUCHE (OG)"; font-size: 16px; font-weight: 700; color: #a78bfa; horizontal-alignment: center; }
+                                Text { text: "Organes et correspondances par cadran horaire"; font-size: 11px; color: #9ca3af; horizontal-alignment: center; }
+
+                                Rectangle { height: 1px; background: #2f3842; }
+
+                                Text { text: "12h : Cerveau, Cortex cérébral, Système nerveux"; color: #e5e7eb; font-size: 12px; }
+                                Text { text: "1h : Cervelet, Oreille gauche, Centre de l'équilibre"; color: #e5e7eb; font-size: 12px; }
+                                Text { text: "2h : Épaule gauche, Cou, Bras, Poumon supérieur"; color: #e5e7eb; font-size: 12px; }
+                                Text { text: "3h : CŒUR & AORTE (Zone majeure OG), Bronches"; color: #f87171; font-size: 12px; font-weight: 700; }
+                                Text { text: "4h : RATE & Pancreas, Flanc gauche, Sein gauche"; color: #34d399; font-size: 12px; font-weight: 700; }
+                                Text { text: "5h : Côtes, Abdomen latéral gauche"; color: #e5e7eb; font-size: 12px; }
+                                Text { text: "6h : Rein gauche, Glande surrénale, Pelvis, Jambe"; color: #facc15; font-size: 12px; font-weight: 600; }
+                                Text { text: "7h : Ovaire / Testicule gauche, Vessie"; color: #e5e7eb; font-size: 12px; }
+                                Text { text: "8h : Côlon descendant, Sigmoïde, Rectum"; color: #e5e7eb; font-size: 12px; }
+                                Text { text: "9h : Poumon gauche (moyen et inférieur), Plèvre"; color: #e5e7eb; font-size: 12px; }
+                                Text { text: "10h : Gorge, Cordes vocales, Thyroïde, Œsophage"; color: #e5e7eb; font-size: 12px; }
+                                Text { text: "11h : Face, Sinus, Mâchoire, Dents gauches"; color: #e5e7eb; font-size: 12px; }
+                            }
+                        }
+                    }
+
+                    // Jensen concentric rings
+                    Rectangle {
+                        border-radius: 8px;
+                        background: #181d23;
+                        border-width: 1px;
+                        border-color: #2f3842;
+
+                        VerticalBox {
+                            padding: 16px;
+                            spacing: 8px;
+
+                            Text {
+                                text: "Les 7 Anneaux Physiologiques Concentriques (Système Bernard Jensen)";
+                                font-size: 15px;
+                                font-weight: 700;
+                                color: #38bdf8;
+                            }
+                            Text { text: "• Anneau 1 (Bord pupillaire) : Système nerveux central, parasympathique et axe neuro-viscéral"; color: #cbd5e1; font-size: 12px; }
+                            Text { text: "• Anneau 2 (Zone stomacale) : Estomac, fonction digestive et assimilation nutritionnelle primaire"; color: #cbd5e1; font-size: 12px; }
+                            Text { text: "• Anneau 3 (Collerette / ANW) : Intestin grêle, côlon et régulation du système nerveux autonome"; color: #facc15; font-size: 12px; font-weight: 600; }
+                            Text { text: "• Anneau 4 (Zone ciliaire interne) : Organes filtres et métaboliques (Foie, Pancréas, Reins, Rate)"; color: #cbd5e1; font-size: 12px; }
+                            Text { text: "• Anneau 5 (Zone ciliaire médiane) : Fonctions circulatoires et respiratoires profondes (Cœur, Poumons)"; color: #cbd5e1; font-size: 12px; }
+                            Text { text: "• Anneau 6 (Zone ciliaire externe) : Système lymphatique, chaîne ganglionnaire et élimination humorale"; color: #cbd5e1; font-size: 12px; }
+                            Text { text: "• Anneau 7 (Bordure limbique) : Peau, élimination cutanée périphérique, sueur et toxicité métabolique"; color: #cbd5e1; font-size: 12px; }
+                        }
+                    }
+                }
+            }
+
+            // Tab 4: Settings & Diagnostics
+            if root.current-tab == 4: VerticalBox {
+                padding: 24px;
+                spacing: 20px;
+                alignment: start;
+
+                Text {
+                    text: "Paramètres & Diagnostic Technique";
+                    font-size: 20px;
+                    font-weight: 700;
+                    color: #ffffff;
+                }
+
+                HorizontalBox {
+                    spacing: 24px;
+
+                    // Diagnostic Technique
+                    Rectangle {
+                        border-radius: 8px;
+                        background: #181d23;
+                        border-width: 1px;
+                        border-color: #2f3842;
+                        width: 480px;
+
+                        VerticalBox {
+                            spacing: 10px;
+
+                            Text {
+                                text: "État Matériel & Flux Vidéo";
+                                font-size: 15px;
+                                font-weight: 700;
+                                color: #60a5fa;
+                            }
+
+                            HorizontalBox { Text { text: "Périphérique :"; color: #9ca3af; } Text { text: root.diagnostics.device-name; color: #ffffff; } }
+                            HorizontalBox { Text { text: "Identifiant :"; color: #9ca3af; } Text { text: root.diagnostics.device-id; color: #ffffff; } }
+                            HorizontalBox { Text { text: "Backend Natif :"; color: #9ca3af; } Text { text: root.diagnostics.backend-name; color: #ffffff; } }
+                            HorizontalBox { Text { text: "Identité USB :"; color: #9ca3af; } Text { text: root.diagnostics.usb-info; color: #ffffff; } }
+                            HorizontalBox { Text { text: "Format actif :"; color: #9ca3af; } Text { text: root.diagnostics.active-format; color: #ffffff; } }
+                            HorizontalBox { Text { text: "Résolution :"; color: #9ca3af; } Text { text: root.diagnostics.active-resolution; color: #ffffff; } }
+                            HorizontalBox { Text { text: "FPS Caméra :"; color: #9ca3af; } Text { text: root.diagnostics.active-fps; color: #ffffff; } }
+                            HorizontalBox { Text { text: "FPS Mesuré :"; color: #9ca3af; } Text { text: root.diagnostics.measured-fps; color: #34d399; font-weight: 700; } }
+                            HorizontalBox { Text { text: "Temps décodage :"; color: #9ca3af; } Text { text: root.diagnostics.decode-time-ms; color: #ffffff; } }
+                            HorizontalBox { Text { text: "Frames reçues :"; color: #9ca3af; } Text { text: "" + root.diagnostics.frame-count; color: #ffffff; } }
+                            HorizontalBox { Text { text: "Frames ignorées :"; color: #9ca3af; } Text { text: "" + root.diagnostics.dropped-frames; color: #ffffff; } }
+                        }
+                    }
+
+                    // Paramètres Généraux
+                    Rectangle {
+                        border-radius: 8px;
+                        background: #181d23;
+                        border-width: 1px;
+                        border-color: #2f3842;
+                        width: 480px;
+
+                        VerticalBox {
+                            spacing: 12px;
+
+                            Text {
+                                text: "Configuration & Stockage";
+                                font-size: 15px;
+                                font-weight: 700;
+                                color: #60a5fa;
+                            }
+
+                            Text { text: "Modèle de nommage :"; color: #9ca3af; }
+                            Text {
+                                text: "{prenom}_{nom}_{oeil}_{date}_{heure}.jpg";
+                                color: #e5e7eb;
+                                font-family: "monospace";
+                            }
+
+                            Text { text: "Bouton physique de l'iridoscope :"; color: #9ca3af; }
+                            Text {
+                                text: "Suit le mode actuel (Photo ou Vidéo)";
+                                color: #e5e7eb;
+                            }
+
+                            Button {
+                                text: "📁 Ouvrir le dossier des captures";
+                                clicked => { root.open-capture-directory(); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

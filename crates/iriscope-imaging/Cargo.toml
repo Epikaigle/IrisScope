@@ -6,6 +6,8 @@ rust-version.workspace = true
 
 [dependencies]
 iriscope-core = { path = "../iriscope-core" }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+zune-jpeg = "0.5"
 
 [lints]
 workspace = true

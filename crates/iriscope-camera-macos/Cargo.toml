@@ -9,6 +9,8 @@ iriscope-core = { path = "../iriscope-core" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 av-foundation = "0.8.1"
+core-media = "0.8.1"
+objc2-foundation = "0.3.2"
 
 [lints]
 workspace = true

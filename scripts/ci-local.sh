@@ -24,7 +24,7 @@ cross_targets=(
 )
 
 for target in "${cross_targets[@]}"; do
-    if ! rustup target list --installed | rg --fixed-strings --line-regexp "$target" >/dev/null; then
+    if ! rustup target list --installed | grep -Fx "$target" >/dev/null; then
         echo "Missing Rust target: $target" >&2
         echo "Install it with: rustup target add $target" >&2
         exit 1
@@ -39,7 +39,7 @@ done
 
 if [[ "${1:-}" == "--hardware" ]]; then
     echo "Running native camera detection"
-    cargo run --quiet
+    cargo run --quiet -- --diagnose
 fi
 
 echo "Local CI completed successfully"

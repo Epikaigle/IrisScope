@@ -3,11 +3,16 @@ name = "iriscope-app"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+build = "build.rs"
 
 [dependencies]
 iriscope-core = { path = "../iriscope-core" }
 iriscope-imaging = { path = "../iriscope-imaging" }
 iriscope-renderer = { path = "../iriscope-renderer" }
+slint = "=1.16.1"
+
+[build-dependencies]
+slint-build = "=1.16.1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 iriscope-camera-linux = { path = "../iriscope-camera-linux" }

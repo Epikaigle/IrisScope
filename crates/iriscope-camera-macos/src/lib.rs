@@ -3,6 +3,9 @@
 /// Human-readable name of the native macOS camera API.
 pub const BACKEND_NAME: &str = "AVFoundation";
 
+#[cfg(any(target_os = "macos", test))]
+mod capabilities;
+
 #[cfg(target_os = "macos")]
 mod platform;
 
