@@ -9,8 +9,23 @@ use iriscope_camera_windows as platform_camera;
 compile_error!("IrisScope currently supports Linux, Windows, and macOS");
 
 fn main() {
-    println!(
-        "IrisScope workspace initialized ({})",
-        platform_camera::BACKEND_NAME
-    );
+    let mut backend = platform_camera::create_backend();
+    println!("IrisScope camera detection ({})", backend.kind());
+
+    match backend.enumerate_devices() {
+        Ok(devices) if devices.is_empty() => println!("No video capture device detected"),
+        Ok(devices) => {
+            for device in devices {
+                if let Some(usb) = device.usb {
+                    println!(
+                        "Camera: {} [{}] USB {:04x}:{:04x}",
+                        device.display_name, device.id, usb.vendor_id, usb.product_id
+                    );
+                } else {
+                    println!("Camera: {} [{}]", device.display_name, device.id);
+                }
+            }
+        }
+        Err(error) => eprintln!("Camera detection failed: {error}"),
+    }
 }

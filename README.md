@@ -5,10 +5,10 @@ d'un iridoscope Firefly DE400 / Infoxelle Digital Microscope.
 
 ## État du développement
 
-Les étapes 1 à 3 mettent en place le workspace Rust partagé, sa validation
-continue et l'abstraction caméra commune. Les crates sont séparées selon leurs
-responsabilités afin de garder le cœur métier indépendant des API caméra
-natives :
+Les étapes 1 à 4 mettent en place le workspace Rust partagé, sa validation
+continue, l'abstraction caméra commune et la détection native. Les crates sont
+séparées selon leurs responsabilités afin de garder le cœur métier indépendant
+des API caméra natives :
 
 - `iriscope-core` : modèles et logique métier partagés ;
 - `iriscope-camera-linux` : backend V4L2 ;
@@ -24,6 +24,10 @@ fonctionnelles correspondantes.
 L'interface `CameraBackend` couvre l'énumération et le hotplug. Une caméra
 ouverte expose ses capacités réelles, le démarrage du flux, les frames natives,
 les contrôles et les événements du bouton physique à travers `CameraDevice`.
+
+L'énumération utilise V4L2 sous Linux, Media Foundation sous Windows et
+AVFoundation sous macOS. Le backend Linux ignore les nœuds de métadonnées et
+associe les nœuds de capture à l'identité USB trouvée dans sysfs.
 
 ## Intégration continue
 

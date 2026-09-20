@@ -7,5 +7,8 @@ rust-version.workspace = true
 [dependencies]
 iriscope-core = { path = "../iriscope-core" }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+v4l = "0.14.0"
+
 [lints]
 workspace = true

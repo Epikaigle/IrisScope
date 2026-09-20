@@ -7,5 +7,11 @@ rust-version.workspace = true
 [dependencies]
 iriscope-core = { path = "../iriscope-core" }
 
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.62.2", features = [
+    "Win32_Media_MediaFoundation",
+    "Win32_System_Com",
+] }
+
 [lints]
 workspace = true
