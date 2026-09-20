@@ -82,6 +82,26 @@ fn settings_file_path() -> std::path::PathBuf {
         .join("iriscope-settings.json")
 }
 
+fn settings_snapshot(settings: &Arc<Mutex<AppSettings>>) -> AppSettings {
+    settings
+        .lock()
+        .map_or_else(|_| AppSettings::default(), |guard| guard.clone())
+}
+
+fn persist_settings(settings: &Arc<Mutex<AppSettings>>, path: &std::path::Path) {
+    if let Ok(guard) = settings.lock() {
+        let _ = guard.save_to_file(path);
+    }
+}
+
+fn physical_button_mode_index(behavior: PhysicalButtonBehavior) -> i32 {
+    match behavior {
+        PhysicalButtonBehavior::FollowMode => 0,
+        PhysicalButtonBehavior::AlwaysPhoto => 1,
+        PhysicalButtonBehavior::AlwaysVideo => 2,
+    }
+}
+
 fn dispatch_hardware_button(win: &MainWindow, behavior: PhysicalButtonBehavior) {
     match behavior {
         PhysicalButtonBehavior::FollowMode => {
@@ -429,7 +449,14 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     if !settings_path.exists() {
         let _ = loaded_settings.save_to_file(&settings_path);
     }
-    let settings = Arc::new(loaded_settings);
+    main_window.set_settings_capture_directory(
+        loaded_settings.capture_directory.to_string_lossy().to_string().into(),
+    );
+    main_window.set_settings_filename_template(loaded_settings.filename_template.clone().into());
+    main_window.set_settings_button_mode(physical_button_mode_index(
+        loaded_settings.physical_button_behavior,
+    ));
+    let settings = Arc::new(Mutex::new(loaded_settings));
     let latest_frame = Arc::new(LatestFrame::new());
     let active_stream_configuration: Arc<Mutex<Option<StreamConfiguration>>> =
         Arc::new(Mutex::new(None));
@@ -680,7 +707,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                     Ok(CameraEvent::HardwareButtonPressed) => {
-                        let behavior = settings_worker.physical_button_behavior;
+                        let behavior = settings_snapshot(&settings_worker).physical_button_behavior;
                         let _ = main_weak.upgrade_in_event_loop(move |win| {
                             dispatch_hardware_button(&win, behavior);
                         });
@@ -753,7 +780,12 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         };
 
     // Initial library population
-    refresh_lib_for_win(&main_window, &settings.capture_directory, &active_session);
+    let initial_capture_directory = settings_snapshot(&settings).capture_directory;
+    refresh_lib_for_win(
+        &main_window,
+        &initial_capture_directory,
+        &active_session,
+    );
 
     let weak = main_window.as_weak();
     let latest_frame_cap = Arc::clone(&latest_frame);
@@ -792,7 +824,8 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             *guard = session.clone();
         }
         let timestamp = CaptureTimestamp::now();
-        let policy = CaptureNamingPolicy::new(&settings_cap.filename_template);
+        let capture_settings = settings_snapshot(&settings_cap);
+        let policy = CaptureNamingPolicy::new(&capture_settings.filename_template);
         let (ext, data_to_save) = match frame.pixel_format {
             PixelFormat::Mjpeg => ("jpg", ensure_jpeg_has_dht(&frame.data)),
             PixelFormat::Yuyv => {
@@ -853,7 +886,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         let file_name = policy.filename(&session, timestamp, ext);
 
         match save_new_capture(
-            &settings_cap.capture_directory,
+            &capture_settings.capture_directory,
             &file_name,
             data_to_save.as_ref(),
         ) {
@@ -911,7 +944,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 if let Ok(mut g) = toast_cap.lock() {
                     *g = Some(Instant::now());
                 }
-                refresh_lib_for_win(&win, &settings_cap.capture_directory, &session_cap);
+                refresh_lib_for_win(&win, &capture_settings.capture_directory, &session_cap);
             }
             Err(err) => {
                 win.set_last_capture_message(format!("Erreur d'enregistrement : {err}").into());
@@ -936,6 +969,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             return;
         };
         let currently_recording = is_rec.load(Ordering::Relaxed);
+        let recording_settings = settings_snapshot(&settings_rec);
 
         if currently_recording {
             // Stop recording
@@ -954,7 +988,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             if let Ok(mut g) = toast_rec.lock() {
                 *g = Some(Instant::now());
             }
-            refresh_lib_for_win(&win, &settings_rec.capture_directory, &session_rec);
+            refresh_lib_for_win(&win, &recording_settings.capture_directory, &session_rec);
         } else {
             // Start recording
             let first = win.get_patient_first_name().to_string();
@@ -996,11 +1030,11 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             let timestamp = CaptureTimestamp::now();
-            let policy = CaptureNamingPolicy::new(&settings_rec.filename_template);
+            let policy = CaptureNamingPolicy::new(&recording_settings.filename_template);
             let file_name = policy.filename(&session, timestamp, "avi");
 
             match AviMjpegWriter::create_unique(
-                &settings_rec.capture_directory,
+                &recording_settings.capture_directory,
                 &file_name,
                 current_frame.resolution.width,
                 current_frame.resolution.height,
@@ -1045,7 +1079,8 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         if let Ok(mut s) = session_clear.lock() {
             s.clear();
         }
-        refresh_lib_for_win(&win, &settings_clear.capture_directory, &session_clear);
+        let directory = settings_snapshot(&settings_clear).capture_directory;
+        refresh_lib_for_win(&win, &directory, &session_clear);
     });
 
     // Refresh library callback
@@ -1056,7 +1091,8 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         let Some(win) = weak_refresh.upgrade() else {
             return;
         };
-        refresh_lib_for_win(&win, &settings_refresh.capture_directory, &session_refresh);
+        let directory = settings_snapshot(&settings_refresh).capture_directory;
+        refresh_lib_for_win(&win, &directory, &session_refresh);
     });
 
     // Open still captures inside IrisScope so historical filenames remain private.
@@ -1232,21 +1268,82 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         let _ = cmd_tx_reset.send(WorkerCommand::ResetControls);
     });
 
+    // Persistent application settings
+    let settings_directory = Arc::clone(&settings);
+    let settings_path_directory = settings_path.clone();
+    let session_directory = Arc::clone(&active_session);
+    let weak_directory = main_window.as_weak();
+    main_window.on_update_capture_directory(move |value| {
+        let Some(win) = weak_directory.upgrade() else {
+            return;
+        };
+        let value = value.trim();
+        if value.is_empty() {
+            return;
+        }
+        let directory = std::path::PathBuf::from(value);
+        if let Ok(mut guard) = settings_directory.lock() {
+            guard.capture_directory = directory.clone();
+        }
+        persist_settings(&settings_directory, &settings_path_directory);
+        win.set_settings_capture_directory(directory.to_string_lossy().to_string().into());
+        refresh_lib_for_win(&win, &directory, &session_directory);
+    });
+
+    let settings_template = Arc::clone(&settings);
+    let settings_path_template = settings_path.clone();
+    let weak_template = main_window.as_weak();
+    main_window.on_update_filename_template(move |value| {
+        let Some(win) = weak_template.upgrade() else {
+            return;
+        };
+        let value = value.trim();
+        if value.is_empty() {
+            return;
+        }
+        if let Ok(mut guard) = settings_template.lock() {
+            guard.filename_template = value.to_owned();
+        }
+        persist_settings(&settings_template, &settings_path_template);
+        win.set_settings_filename_template(value.into());
+    });
+
+    let settings_button = Arc::clone(&settings);
+    let settings_path_button = settings_path.clone();
+    let weak_button = main_window.as_weak();
+    main_window.on_cycle_physical_button_mode(move || {
+        let Some(win) = weak_button.upgrade() else {
+            return;
+        };
+        let next = if let Ok(mut guard) = settings_button.lock() {
+            guard.physical_button_behavior = match guard.physical_button_behavior {
+                PhysicalButtonBehavior::FollowMode => PhysicalButtonBehavior::AlwaysPhoto,
+                PhysicalButtonBehavior::AlwaysPhoto => PhysicalButtonBehavior::AlwaysVideo,
+                PhysicalButtonBehavior::AlwaysVideo => PhysicalButtonBehavior::FollowMode,
+            };
+            guard.physical_button_behavior
+        } else {
+            PhysicalButtonBehavior::FollowMode
+        };
+        persist_settings(&settings_button, &settings_path_button);
+        win.set_settings_button_mode(physical_button_mode_index(next));
+    });
+
     // Capture directory opener
     let settings_open = Arc::clone(&settings);
     main_window.on_open_capture_directory(move || {
-        let dir = &settings_open.capture_directory;
-        let _ = std::fs::create_dir_all(dir);
+        let dir = settings_snapshot(&settings_open).capture_directory;
+        let _ = std::fs::create_dir_all(&dir);
         #[cfg(target_os = "linux")]
-        let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
+        let _ = std::process::Command::new("xdg-open").arg(&dir).spawn();
         #[cfg(target_os = "windows")]
-        let _ = std::process::Command::new("explorer").arg(dir).spawn();
+        let _ = std::process::Command::new("explorer").arg(&dir).spawn();
         #[cfg(target_os = "macos")]
-        let _ = std::process::Command::new("open").arg(dir).spawn();
+        let _ = std::process::Command::new("open").arg(&dir).spawn();
     });
 
     #[cfg(target_os = "linux")]
-    spawn_hardware_button_listener(main_window.as_weak(), settings.physical_button_behavior);
+    spawn_hardware_button_listener(main_window.as_weak(), Arc::clone(&settings));
 
     main_window.run()?;
     let _ = cmd_tx.send(WorkerCommand::Stop);
@@ -1256,7 +1353,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(target_os = "linux")]
 fn spawn_hardware_button_listener(
     weak_win: slint::Weak<MainWindow>,
-    behavior: PhysicalButtonBehavior,
+    settings: Arc<Mutex<AppSettings>>,
 ) {
     thread::spawn(move || {
         use std::io::{BufRead, BufReader};
@@ -1287,7 +1384,10 @@ fn spawn_hardware_button_listener(
             if is_button_event && last_trigger.elapsed() >= Duration::from_millis(600) {
                 last_trigger = Instant::now();
                 let _ = weak_win.upgrade_in_event_loop(move |win| {
-                    dispatch_hardware_button(&win, behavior);
+                    dispatch_hardware_button(
+                        &win,
+                        settings_snapshot(&settings).physical_button_behavior,
+                    );
                 });
             }
         }

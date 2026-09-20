@@ -87,6 +87,11 @@ export component MainWindow inherits Window {
     // Réglages caméra détectés au runtime
     in-out property <[CameraControlUiData]> camera-controls: [];
 
+    // Préférences persistantes
+    in-out property <string> settings-capture-directory: "";
+    in-out property <string> settings-filename-template: "";
+    in-out property <int> settings-button-mode: 0; // 0 suit le mode, 1 photo, 2 vidéo
+
     // Bibliothèque
     in-out property <[LibraryItemData]> library-items: [];
     callback open-capture-file(string);
@@ -109,6 +114,9 @@ export component MainWindow inherits Window {
     callback cycle-camera-control-menu(string);
     callback refresh-library();
     callback open-capture-directory();
+    callback update-capture-directory(string);
+    callback update-filename-template(string);
+    callback cycle-physical-button-mode();
 
     VerticalBox {
         padding: 0px;
@@ -1245,17 +1253,39 @@ export component MainWindow inherits Window {
                                 color: #60a5fa;
                             }
 
+                            Text { text: "Dossier des captures :"; color: #9ca3af; }
+                            LineEdit {
+                                text: root.settings-capture-directory;
+                                placeholder-text: "Chemin du dossier";
+                                accepted(value) => {
+                                    root.update-capture-directory(value);
+                                }
+                            }
+
                             Text { text: "Modèle de nommage :"; color: #9ca3af; }
+                            LineEdit {
+                                text: root.settings-filename-template;
+                                placeholder-text: "{prenom}_{nom}_{oeil}_{date}_{heure}";
+                                accepted(value) => {
+                                    root.update-filename-template(value);
+                                }
+                            }
                             Text {
-                                text: "{prenom}_{nom}_{oeil}_{date}_{heure}.jpg";
-                                color: #e5e7eb;
-                                font-family: "monospace";
+                                text: "Variables : {prenom} {nom} {oeil} {date} {heure}";
+                                color: #6b7280;
+                                font-size: 11px;
                             }
 
                             Text { text: "Bouton physique de l'iridoscope :"; color: #9ca3af; }
-                            Text {
-                                text: "Suit le mode actuel (Photo ou Vidéo)";
-                                color: #e5e7eb;
+                            Button {
+                                text: root.settings-button-mode == 1
+                                    ? "Toujours Photo"
+                                    : root.settings-button-mode == 2
+                                        ? "Toujours Vidéo"
+                                        : "Suit le mode actuel";
+                                clicked => {
+                                    root.cycle-physical-button-mode();
+                                }
                             }
 
                             Button {
