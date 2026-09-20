@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     slice,
     sync::{
         Arc, Mutex, OnceLock,
@@ -52,13 +53,15 @@ use crate::capabilities::{frame_rate_from_duration_parts, merge_mode, pixel_form
 
 /// Native macOS camera backend using `AVFoundation`.
 #[derive(Debug, Default)]
-pub struct MacAvFoundationBackend;
+pub struct MacAvFoundationBackend {
+    known_devices: HashMap<CameraDeviceId, CameraDescriptor>,
+}
 
 impl MacAvFoundationBackend {
     /// Creates a backend. Device discovery happens during enumeration.
     #[must_use]
-    pub const fn new() -> Self {
-        Self
+    pub fn new() -> Self {
+        Self::default()
     }
 }
 
@@ -74,17 +77,35 @@ impl CameraBackend for MacAvFoundationBackend {
             .map(|device| descriptor_from_device(&device))
             .collect::<Vec<_>>();
         descriptors.sort_by(|left, right| left.id.as_str().cmp(right.id.as_str()));
+        self.known_devices = descriptors
+            .iter()
+            .cloned()
+            .map(|descriptor| (descriptor.id.clone(), descriptor))
+            .collect();
         Ok(descriptors)
     }
 
     fn wait_for_device_event(
         &mut self,
-        _timeout: Duration,
+        timeout: Duration,
     ) -> CameraResult<Option<CameraDeviceEvent>> {
-        Err(CameraError::new(
-            CameraErrorKind::Unsupported,
-            "AVFoundation hotplug monitoring is not implemented yet",
-        ))
+        let previous = self.known_devices.clone();
+        thread::sleep(timeout);
+        let current = self.enumerate_devices()?;
+
+        for id in previous.keys() {
+            if !self.known_devices.contains_key(id) {
+                return Ok(Some(CameraDeviceEvent::Disconnected(id.clone())));
+            }
+        }
+
+        for descriptor in current {
+            if !previous.contains_key(&descriptor.id) {
+                return Ok(Some(CameraDeviceEvent::Connected(descriptor)));
+            }
+        }
+
+        Ok(None)
     }
 
     fn open(&mut self, device_id: &CameraDeviceId) -> CameraResult<Box<dyn CameraDevice>> {

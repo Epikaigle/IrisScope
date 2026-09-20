@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     ffi::c_void,
     ptr, slice,
     sync::{
@@ -41,13 +42,15 @@ use windows::{
 
 /// Native Windows camera backend using Media Foundation.
 #[derive(Debug, Default)]
-pub struct WindowsMediaFoundationBackend;
+pub struct WindowsMediaFoundationBackend {
+    known_devices: HashMap<CameraDeviceId, CameraDescriptor>,
+}
 
 impl WindowsMediaFoundationBackend {
     /// Creates a backend. Media Foundation is initialized on the calling thread as needed.
     #[must_use]
-    pub const fn new() -> Self {
-        Self
+    pub fn new() -> Self {
+        Self::default()
     }
 }
 
@@ -57,17 +60,36 @@ impl CameraBackend for WindowsMediaFoundationBackend {
     }
 
     fn enumerate_devices(&mut self) -> CameraResult<Vec<CameraDescriptor>> {
-        enumerate_video_devices()
+        let devices = enumerate_video_devices()?;
+        self.known_devices = devices
+            .iter()
+            .cloned()
+            .map(|descriptor| (descriptor.id.clone(), descriptor))
+            .collect();
+        Ok(devices)
     }
 
     fn wait_for_device_event(
         &mut self,
-        _timeout: Duration,
+        timeout: Duration,
     ) -> CameraResult<Option<CameraDeviceEvent>> {
-        Err(CameraError::new(
-            CameraErrorKind::Unsupported,
-            "Media Foundation hotplug monitoring is not implemented yet",
-        ))
+        let previous = self.known_devices.clone();
+        thread::sleep(timeout);
+        let current = self.enumerate_devices()?;
+
+        for id in previous.keys() {
+            if !self.known_devices.contains_key(id) {
+                return Ok(Some(CameraDeviceEvent::Disconnected(id.clone())));
+            }
+        }
+
+        for descriptor in current {
+            if !previous.contains_key(&descriptor.id) {
+                return Ok(Some(CameraDeviceEvent::Connected(descriptor)));
+            }
+        }
+
+        Ok(None)
     }
 
     fn open(&mut self, device_id: &CameraDeviceId) -> CameraResult<Box<dyn CameraDevice>> {

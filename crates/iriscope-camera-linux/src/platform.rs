@@ -94,12 +94,25 @@ impl CameraBackend for LinuxV4l2Backend {
 
     fn wait_for_device_event(
         &mut self,
-        _timeout: Duration,
+        timeout: Duration,
     ) -> CameraResult<Option<CameraDeviceEvent>> {
-        Err(CameraError::new(
-            CameraErrorKind::Unsupported,
-            "V4L2 hotplug monitoring is not implemented yet",
-        ))
+        let previous = self.descriptors.clone();
+        std::thread::sleep(timeout);
+        let current = self.enumerate_devices()?;
+
+        for id in previous.keys() {
+            if !self.descriptors.contains_key(id) {
+                return Ok(Some(CameraDeviceEvent::Disconnected(id.clone())));
+            }
+        }
+
+        for descriptor in current {
+            if !previous.contains_key(&descriptor.id) {
+                return Ok(Some(CameraDeviceEvent::Connected(descriptor)));
+            }
+        }
+
+        Ok(None)
     }
 
     fn open(&mut self, device_id: &CameraDeviceId) -> CameraResult<Box<dyn CameraDevice>> {
