@@ -1,0 +1,22 @@
+[package]
+name = "iriscope-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+iriscope-core = { path = "../iriscope-core" }
+iriscope-imaging = { path = "../iriscope-imaging" }
+iriscope-renderer = { path = "../iriscope-renderer" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+iriscope-camera-linux = { path = "../iriscope-camera-linux" }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+iriscope-camera-windows = { path = "../iriscope-camera-windows" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+iriscope-camera-macos = { path = "../iriscope-camera-macos" }
+
+[lints]
+workspace = true

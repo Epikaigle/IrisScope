@@ -1,0 +1,11 @@
+[package]
+name = "iriscope-camera-macos"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+iriscope-core = { path = "../iriscope-core" }
+
+[lints]
+workspace = true
