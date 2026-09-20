@@ -48,8 +48,11 @@ impl AviMjpegReader {
             ));
         }
 
-        let microseconds_per_frame =
-            u32::from_le_bytes(header[32..36].try_into().expect("four-byte AVI timing field"));
+        let microseconds_per_frame = u32::from_le_bytes(
+            header[32..36]
+                .try_into()
+                .expect("four-byte AVI timing field"),
+        );
         let frame_rate = FrameRate::new(1_000_000, microseconds_per_frame).ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidData, "invalid AVI frame timing")
         })?;
@@ -467,5 +470,4 @@ mod tests {
 
         let _ = fs::remove_file(path);
     }
-
 }
