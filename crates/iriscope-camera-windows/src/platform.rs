@@ -112,10 +112,7 @@ impl CameraDevice for WindowsCameraDevice {
 
         let (response_sender, response_receiver) = mpsc::sync_channel(1);
         self.command_sender
-            .send(WorkerCommand::Start(
-                configuration.clone(),
-                response_sender,
-            ))
+            .send(WorkerCommand::Start(configuration.clone(), response_sender))
             .map_err(|error| worker_channel_error("starting the Media Foundation stream", error))?;
         response_receiver.recv().map_err(|error| {
             CameraError::new(
@@ -381,7 +378,9 @@ fn configure_stream(
             .map_err(|error| windows_error("setting the camera frame rate", &error))?;
         source_reader
             .SetCurrentMediaType(stream_index, None, &media_type)
-            .map_err(|error| windows_device_error("setting the native camera media type", &error))?;
+            .map_err(|error| {
+                windows_device_error("setting the native camera media type", &error)
+            })?;
     }
 
     Ok(())
