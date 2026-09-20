@@ -25,8 +25,8 @@ use iriscope_core::{
     video::{AviMjpegReader, AviMjpegWriter},
 };
 use iriscope_imaging::{
-    apply_transforms, convert_bgra8_to_rgb8, convert_yuyv_to_rgb8, decode_image_to_rgb8,
-    decode_mjpeg_to_rgb8, encode_rgb8_png, ensure_jpeg_has_dht, resize_rgb8_to_fit,
+    convert_bgra8_to_rgb8, convert_yuyv_to_rgb8, decode_image_to_rgb8, decode_mjpeg_to_rgb8,
+    encode_rgb8_png, ensure_jpeg_has_dht, resize_rgb8_to_fit,
 };
 use slint::{ComponentHandle, ModelRc, Rgb8Pixel, SharedPixelBuffer, VecModel};
 
@@ -721,17 +721,10 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                                     return;
                                 }
 
-                                let rot = u32::try_from(win.get_rotation_angle().max(0))
-                                    .unwrap_or_default();
-                                let mir_h = win.get_mirror_horizontal();
-                                let mir_v = win.get_mirror_vertical();
-
-                                let (out_w, out_h, final_rgb) =
-                                    apply_transforms(&raw_rgb, width, height, rot, mir_h, mir_v);
-
-                                let pixel_buffer = SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(
-                                    &final_rgb, out_w, out_h,
-                                );
+                                let pixel_buffer =
+                                    SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(
+                                        &raw_rgb, width, height,
+                                    );
                                 win.set_live_frame(slint::Image::from_rgb8(pixel_buffer));
                             });
                         }

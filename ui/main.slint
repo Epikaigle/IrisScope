@@ -256,19 +256,23 @@ export component MainWindow inherits Window {
 
                     if root.is-streaming: Image {
                         source: root.live-frame;
+                        private property <bool> quarter-turn:
+                            root.rotation-angle == 90 || root.rotation-angle == 270;
+                        private property <float> zoom-factor:
+                            root.zoom-level == 200 ? 2 : root.zoom-level == 150 ? 1.5 : 1;
+
+                        width: (self.quarter-turn ? parent.height : parent.width)
+                            * self.zoom-factor;
+                        height: (self.quarter-turn ? parent.width : parent.height)
+                            * self.zoom-factor;
                         x: (parent.width - self.width) / 2 + root.zoom-pan-x;
                         y: (parent.height - self.height) / 2 + root.zoom-pan-y;
-                        width: root.zoom-level == 200
-                            ? parent.width * 2
-                            : root.zoom-level == 150
-                                ? parent.width * 1.5
-                                : parent.width;
-                        height: root.zoom-level == 200
-                            ? parent.height * 2
-                            : root.zoom-level == 150
-                                ? parent.height * 1.5
-                                : parent.height;
                         image-fit: contain;
+
+                        transform-origin: { x: self.width / 2, y: self.height / 2 };
+                        transform-rotation: root.rotation-angle * 1deg;
+                        transform-scale-x: root.mirror-horizontal ? -100% : 100%;
+                        transform-scale-y: root.mirror-vertical ? -100% : 100%;
                     }
 
                     pan-area := TouchArea {
