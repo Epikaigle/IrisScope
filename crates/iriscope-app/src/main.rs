@@ -490,6 +490,26 @@ fn snap_integer_control_value(
     Some(CameraControlValue::Integer(snapped))
 }
 
+fn finalize_recording(
+    is_recording: &AtomicBool,
+    video_writer: &Mutex<Option<AviMjpegWriter>>,
+    recording_start: &Mutex<Option<Instant>>,
+) -> bool {
+    let was_recording = is_recording.swap(false, Ordering::Relaxed);
+
+    if let Ok(mut start) = recording_start.lock() {
+        *start = None;
+    }
+
+    if let Ok(mut writer_guard) = video_writer.lock()
+        && let Some(mut writer) = writer_guard.take()
+    {
+        let _ = writer.finish();
+    }
+
+    was_recording
+}
+
 #[allow(clippy::too_many_lines)]
 fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     let main_window = MainWindow::new()?;
@@ -670,6 +690,11 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                             let _ = device.reset_controls();
                         }
                         WorkerCommand::Stop => {
+                            finalize_recording(
+                                &is_rec_clone,
+                                &video_writer_clone,
+                                &rec_start_clone,
+                            );
                             let _ = device.stop_stream();
                             return;
                         }
@@ -791,6 +816,11 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                                 | iriscope_core::camera::CameraErrorKind::DeviceNotFound
                         ) =>
                     {
+                        let recording_was_active = finalize_recording(
+                            &is_rec_clone,
+                            &video_writer_clone,
+                            &rec_start_clone,
+                        );
                         let _ = device.stop_stream();
                         if let Ok(mut active) = active_stream_configuration_worker.lock() {
                             *active = None;
@@ -798,17 +828,30 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                         if let Ok(mut controls) = camera_controls_worker.lock() {
                             controls.clear();
                         }
-                        let _ = main_weak.upgrade_in_event_loop(|win| {
+                        let _ = main_weak.upgrade_in_event_loop(move |win| {
                             win.set_camera_connected(false);
                             win.set_is_streaming(false);
+                            win.set_is_recording(false);
+                            win.set_recording_duration("00:00".into());
                             win.set_status_text(
                                 "DE400 déconnecté — reconnexion en cours...".into(),
                             );
+                            if recording_was_active {
+                                win.set_last_capture_message(
+                                    "Vidéo arrêtée et finalisée après déconnexion caméra.".into(),
+                                );
+                                win.set_show_last_capture(true);
+                            }
                             win.set_camera_controls(ModelRc::new(VecModel::from(Vec::new())));
                         });
                         break;
                     }
                     Ok(CameraEvent::Disconnected) => {
+                        let recording_was_active = finalize_recording(
+                            &is_rec_clone,
+                            &video_writer_clone,
+                            &rec_start_clone,
+                        );
                         let _ = device.stop_stream();
                         if let Ok(mut active) = active_stream_configuration_worker.lock() {
                             *active = None;
@@ -816,12 +859,20 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                         if let Ok(mut controls) = camera_controls_worker.lock() {
                             controls.clear();
                         }
-                        let _ = main_weak.upgrade_in_event_loop(|win| {
+                        let _ = main_weak.upgrade_in_event_loop(move |win| {
                             win.set_camera_connected(false);
                             win.set_is_streaming(false);
+                            win.set_is_recording(false);
+                            win.set_recording_duration("00:00".into());
                             win.set_status_text(
                                 "DE400 déconnecté — reconnexion en cours...".into(),
                             );
+                            if recording_was_active {
+                                win.set_last_capture_message(
+                                    "Vidéo arrêtée et finalisée après déconnexion caméra.".into(),
+                                );
+                                win.set_show_last_capture(true);
+                            }
                             win.set_camera_controls(ModelRc::new(VecModel::from(Vec::new())));
                         });
                         break;
@@ -1050,16 +1101,9 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
 
         if currently_recording {
             // Stop recording
-            is_rec.store(false, Ordering::Relaxed);
-            if let Ok(mut g) = rec_start_rec.lock() {
-                *g = None;
-            }
+            finalize_recording(&is_rec, &video_writer_rec, &rec_start_rec);
             win.set_is_recording(false);
-            if let Ok(mut writer_guard) = video_writer_rec.lock()
-                && let Some(mut writer) = writer_guard.take()
-            {
-                let _ = writer.finish();
-            }
+            win.set_recording_duration("00:00".into());
             win.set_last_capture_message("✓ Vidéo enregistrée".into());
             win.set_show_last_capture(true);
             if let Ok(mut g) = toast_rec.lock() {
