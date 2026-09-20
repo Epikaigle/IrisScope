@@ -1,7 +1,7 @@
 use std::{
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc,
     },
     thread,
@@ -22,7 +22,7 @@ use iriscope_core::{
     session::{CaptureSession, Eye},
     settings::{AppSettings, PhysicalButtonBehavior},
     storage::{CaptureNamingPolicy, CaptureTimestamp, save_new_capture},
-    video::AviMjpegWriter,
+    video::{AviMjpegReader, AviMjpegWriter},
 };
 use iriscope_imaging::{
     apply_transforms, convert_bgra8_to_rgb8, convert_yuyv_to_rgb8, decode_image_to_rgb8,
@@ -517,6 +517,8 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     let recording_start: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
     let last_toast_time: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
     let frozen_frame: Arc<Mutex<Option<CapturedFrame>>> = Arc::new(Mutex::new(None));
+    let viewer_generation = Arc::new(AtomicU64::new(0));
+    let viewer_video_playing = Arc::new(AtomicBool::new(false));
     let camera_controls: Arc<Mutex<Vec<CameraControlRuntimeState>>> =
         Arc::new(Mutex::new(Vec::new()));
 
@@ -1162,42 +1164,118 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         refresh_lib_for_win(&win, &directory, &session_refresh);
     });
 
-    // Open still captures inside IrisScope so historical filenames remain private.
+    // Open photos and IrisScope MJPEG videos inside the private in-app viewer.
     let weak_viewer = main_window.as_weak();
+    let viewer_generation_open = Arc::clone(&viewer_generation);
+    let viewer_playing_open = Arc::clone(&viewer_video_playing);
     main_window.on_open_capture_file(move |file_path_str| {
         let Some(win) = weak_viewer.upgrade() else {
             return;
         };
-        let path = std::path::Path::new(file_path_str.as_str());
+        let path = std::path::PathBuf::from(file_path_str.as_str());
         if !path.exists() {
             return;
         }
 
-        let is_image = path
+        let extension = path
             .extension()
             .and_then(|extension| extension.to_str())
-            .is_some_and(|extension| {
-                matches!(
-                    extension.to_ascii_lowercase().as_str(),
-                    "jpg" | "jpeg" | "png"
-                )
-            });
+            .unwrap_or_default()
+            .to_ascii_lowercase();
 
-        if is_image {
-            if let Ok(bytes) = std::fs::read(path)
+        if matches!(extension.as_str(), "jpg" | "jpeg" | "png") {
+            viewer_generation_open.fetch_add(1, Ordering::Relaxed);
+            viewer_playing_open.store(false, Ordering::Relaxed);
+
+            if let Ok(bytes) = std::fs::read(&path)
                 && let Ok((width, height, rgb)) = decode_image_to_rgb8(&bytes)
             {
                 let pixels = SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(&rgb, width, height);
                 win.set_viewer_image(slint::Image::from_rgb8(pixels));
+                win.set_viewer_is_video(false);
+                win.set_viewer_video_playing(false);
                 win.set_viewer_open(true);
             }
             return;
         }
 
-        win.set_last_capture_message(
-            "La lecture vidéo intégrée sera ajoutée dans une prochaine étape.".into(),
-        );
-        win.set_show_last_capture(true);
+        if extension != "avi" {
+            win.set_last_capture_message(
+                "Ce format vidéo n'est pas encore lisible dans IrisScope.".into(),
+            );
+            win.set_show_last_capture(true);
+            return;
+        }
+
+        let Ok(mut reader) = AviMjpegReader::open(&path) else {
+            win.set_last_capture_message("Vidéo AVI illisible ou non compatible.".into());
+            win.set_show_last_capture(true);
+            return;
+        };
+
+        let generation = viewer_generation_open
+            .fetch_add(1, Ordering::Relaxed)
+            .saturating_add(1);
+        viewer_playing_open.store(true, Ordering::Relaxed);
+        win.set_viewer_is_video(true);
+        win.set_viewer_video_playing(true);
+        win.set_viewer_open(true);
+
+        let weak_playback = weak_viewer.clone();
+        let generation_state = Arc::clone(&viewer_generation_open);
+        let playing_state = Arc::clone(&viewer_playing_open);
+
+        thread::spawn(move || {
+            let frame_count = reader.frame_count();
+            let fps = reader.frame_rate().frames_per_second().max(0.5);
+            let frame_duration = Duration::from_secs_f64(1.0 / fps);
+            let mut frame_index = 0_usize;
+
+            while generation_state.load(Ordering::Relaxed) == generation {
+                if !playing_state.load(Ordering::Relaxed) {
+                    thread::sleep(Duration::from_millis(20));
+                    continue;
+                }
+
+                let Ok(jpeg) = reader.read_frame(frame_index) else {
+                    break;
+                };
+                let jpeg = ensure_jpeg_has_dht(&jpeg);
+
+                if let Ok((width, height, rgb)) = decode_mjpeg_to_rgb8(&jpeg) {
+                    let _ = weak_playback.upgrade_in_event_loop(move |viewer| {
+                        let pixels =
+                            SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(&rgb, width, height);
+                        viewer.set_viewer_image(slint::Image::from_rgb8(pixels));
+                    });
+                }
+
+                frame_index = (frame_index + 1) % frame_count;
+                thread::sleep(frame_duration);
+            }
+        });
+    });
+
+    let viewer_generation_close = Arc::clone(&viewer_generation);
+    let viewer_playing_close = Arc::clone(&viewer_video_playing);
+    let weak_close_viewer = main_window.as_weak();
+    main_window.on_close_viewer(move || {
+        viewer_generation_close.fetch_add(1, Ordering::Relaxed);
+        viewer_playing_close.store(false, Ordering::Relaxed);
+        if let Some(win) = weak_close_viewer.upgrade() {
+            win.set_viewer_is_video(false);
+            win.set_viewer_video_playing(false);
+        }
+    });
+
+    let viewer_playing_toggle = Arc::clone(&viewer_video_playing);
+    let weak_toggle_viewer = main_window.as_weak();
+    main_window.on_toggle_viewer_video(move || {
+        let playing = !viewer_playing_toggle.load(Ordering::Relaxed);
+        viewer_playing_toggle.store(playing, Ordering::Relaxed);
+        if let Some(win) = weak_toggle_viewer.upgrade() {
+            win.set_viewer_video_playing(playing);
+        }
     });
 
     // Freeze frame

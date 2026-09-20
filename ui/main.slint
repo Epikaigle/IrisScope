@@ -118,6 +118,8 @@ export component MainWindow inherits Window {
     in-out property <int> viewer-zoom: 100;
     in-out property <length> viewer-pan-x: 0px;
     in-out property <length> viewer-pan-y: 0px;
+    in-out property <bool> viewer-is-video: false;
+    in-out property <bool> viewer-video-playing: false;
 
     // Callbacks
     callback trigger-capture();
@@ -135,6 +137,8 @@ export component MainWindow inherits Window {
     callback cycle-physical-button-mode();
     callback update-iridology-map-path(string);
     callback update-iridology-symbols-path(string);
+    callback close-viewer();
+    callback toggle-viewer-video();
 
     VerticalBox {
         padding: 0px;
@@ -1419,7 +1423,7 @@ export component MainWindow inherits Window {
                 alignment: space-between;
 
                 Text {
-                    text: "Aperçu de l'iris";
+                    text: root.viewer-is-video ? "Vidéo de l'iris" : "Aperçu de l'iris";
                     color: #ffffff;
                     font-size: 18px;
                     font-weight: 700;
@@ -1455,6 +1459,11 @@ export component MainWindow inherits Window {
                             root.viewer-pan-y = 0px;
                         }
                     }
+                    if root.viewer-is-video: Button {
+                        text: root.viewer-video-playing ? "Pause" : "Lecture";
+                        clicked => { root.toggle-viewer-video(); }
+                    }
+
                     Button {
                         text: "Fermer";
                         clicked => {
@@ -1462,6 +1471,7 @@ export component MainWindow inherits Window {
                             root.viewer-zoom = 100;
                             root.viewer-pan-x = 0px;
                             root.viewer-pan-y = 0px;
+                            root.close-viewer();
                         }
                     }
                 }

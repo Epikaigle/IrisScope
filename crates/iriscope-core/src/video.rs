@@ -8,11 +8,127 @@
 
 use std::{
     fs::{self, File, OpenOptions},
-    io::{self, Seek, SeekFrom, Write},
+    io::{self, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
 };
 
 use crate::capabilities::FrameRate;
+
+/// Lightweight reader for MJPEG AVI files produced by IrisScope.
+///
+/// Only compressed-frame offsets are kept in memory. JPEG payloads are read lazily.
+pub struct AviMjpegReader {
+    file: File,
+    frame_rate: FrameRate,
+    frames: Vec<(u64, u32)>,
+}
+
+impl AviMjpegReader {
+    /// Opens an IrisScope MJPEG AVI and indexes its video frames.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error if the file is invalid, truncated, or cannot be read.
+    pub fn open(path: impl AsRef<Path>) -> io::Result<Self> {
+        let mut file = File::open(path)?;
+        let file_len = file.metadata()?.len();
+        if file_len < 2_048 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "AVI file is smaller than the IrisScope header",
+            ));
+        }
+
+        let mut header = vec![0_u8; 2_048];
+        file.read_exact(&mut header)?;
+        if &header[0..4] != b"RIFF" || &header[8..12] != b"AVI " {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "not an AVI RIFF file",
+            ));
+        }
+
+        let microseconds_per_frame =
+            u32::from_le_bytes(header[32..36].try_into().expect("four-byte AVI timing field"));
+        let frame_rate = FrameRate::new(1_000_000, microseconds_per_frame).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "invalid AVI frame timing")
+        })?;
+
+        let mut frames = Vec::new();
+        let mut position = 2_048_u64;
+
+        while position.saturating_add(8) <= file_len {
+            file.seek(SeekFrom::Start(position))?;
+            let mut chunk_header = [0_u8; 8];
+            file.read_exact(&mut chunk_header)?;
+
+            let chunk_id = &chunk_header[..4];
+            let size =
+                u32::from_le_bytes(chunk_header[4..8].try_into().expect("four-byte chunk size"));
+
+            if chunk_id == b"idx1" {
+                break;
+            }
+
+            let payload_offset = position.saturating_add(8);
+            let payload_end = payload_offset.saturating_add(u64::from(size));
+            if payload_end > file_len {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "truncated AVI chunk",
+                ));
+            }
+
+            if chunk_id == b"00dc" {
+                frames.push((payload_offset, size));
+            }
+
+            position = payload_end.saturating_add(u64::from(size % 2));
+        }
+
+        if frames.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "AVI contains no MJPEG frames",
+            ));
+        }
+
+        Ok(Self {
+            file,
+            frame_rate,
+            frames,
+        })
+    }
+
+    /// Returns the recorded frame rate.
+    #[must_use]
+    pub const fn frame_rate(&self) -> FrameRate {
+        self.frame_rate
+    }
+
+    /// Returns the number of indexed frames.
+    #[must_use]
+    pub fn frame_count(&self) -> usize {
+        self.frames.len()
+    }
+
+    /// Reads one compressed JPEG frame.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error if the frame index is invalid or the payload cannot be read.
+    pub fn read_frame(&mut self, index: usize) -> io::Result<Vec<u8>> {
+        let &(offset, size) = self.frames.get(index).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "AVI frame index out of range")
+        })?;
+
+        self.file.seek(SeekFrom::Start(offset))?;
+        let mut bytes =
+            vec![0_u8; usize::try_from(size).expect("u32 AVI frame size always fits usize")];
+        self.file.read_exact(&mut bytes)?;
+        Ok(bytes)
+    }
+}
 
 /// An active AVI MJPEG recording file.
 ///
@@ -299,7 +415,7 @@ mod tests {
 
     use crate::capabilities::FrameRate;
 
-    use super::AviMjpegWriter;
+    use super::{AviMjpegReader, AviMjpegWriter};
 
     #[test]
     fn creates_and_finishes_avi_file() {
@@ -323,4 +439,33 @@ mod tests {
         assert!(&bytes[8..12] == b"AVI ");
         let _ = fs::remove_file(path);
     }
+    #[test]
+    fn reader_indexes_and_reads_writer_frames() {
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("clock is valid")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("test_video_reader_{unique}.avi"));
+
+        let frame_rate = FrameRate::new(25, 4).expect("valid test frame rate");
+        let first = [0xff, 0xd8, 0x01, 0xff, 0xd9];
+        let second = [0xff, 0xd8, 0x02, 0xff, 0xd9];
+
+        {
+            let mut writer =
+                AviMjpegWriter::create(&path, 1280, 1024, frame_rate).expect("create test AVI");
+            writer.write_frame(&first).expect("write first frame");
+            writer.write_frame(&second).expect("write second frame");
+            writer.finish().expect("finish AVI");
+        }
+
+        let mut reader = AviMjpegReader::open(&path).expect("open AVI");
+        assert_eq!(reader.frame_count(), 2);
+        assert_eq!(reader.frame_rate(), frame_rate);
+        assert_eq!(reader.read_frame(0).expect("read first frame"), first);
+        assert_eq!(reader.read_frame(1).expect("read second frame"), second);
+
+        let _ = fs::remove_file(path);
+    }
+
 }
