@@ -7,10 +7,12 @@
 )]
 
 use std::{
-    fs::{File, OpenOptions},
+    fs::{self, File, OpenOptions},
     io::{self, Seek, SeekFrom, Write},
-    path::Path,
+    path::{Path, PathBuf},
 };
+
+use crate::capabilities::FrameRate;
 
 /// An active AVI MJPEG recording file.
 ///
@@ -20,7 +22,7 @@ pub struct AviMjpegWriter {
     file: File,
     width: u32,
     height: u32,
-    fps: u32,
+    frame_rate: FrameRate,
     frame_count: u32,
     movi_start_pos: u64,
     index_entries: Vec<(u32, u32)>, // (offset_from_movi, size)
@@ -33,14 +35,16 @@ impl AviMjpegWriter {
     /// # Errors
     ///
     /// Returns an I/O error if the destination file cannot be created.
-    pub fn create(path: impl AsRef<Path>, width: u32, height: u32, fps: u32) -> io::Result<Self> {
+    pub fn create(
+        path: impl AsRef<Path>,
+        width: u32,
+        height: u32,
+        frame_rate: FrameRate,
+    ) -> io::Result<Self> {
         let mut file = OpenOptions::new()
             .write(true)
-            .create(true)
-            .truncate(true)
+            .create_new(true)
             .open(path)?;
-
-        let fps = fps.max(1);
 
         // Reserve space for RIFF header (2048 bytes header placeholder)
         let placeholder = vec![0_u8; 2048];
@@ -52,12 +56,58 @@ impl AviMjpegWriter {
             file,
             width,
             height,
-            fps,
+            frame_rate,
             frame_count: 0,
             movi_start_pos,
             index_entries: Vec::new(),
             is_closed: false,
         })
+    }
+
+    /// Creates a recording without overwriting an existing capture.
+    ///
+    /// When the requested filename already exists, a numeric suffix is appended
+    /// before the extension until a new file can be created atomically.
+    pub fn create_unique(
+        directory: &Path,
+        file_name: &str,
+        width: u32,
+        height: u32,
+        frame_rate: FrameRate,
+    ) -> io::Result<(Self, PathBuf)> {
+        if Path::new(file_name).file_name().and_then(|name| name.to_str()) != Some(file_name) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "video capture name must not contain a directory",
+            ));
+        }
+
+        fs::create_dir_all(directory)?;
+        let requested = Path::new(file_name);
+        let stem = requested
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or("Iris");
+        let extension = requested.extension().and_then(|value| value.to_str());
+
+        for collision_index in 1_u32.. {
+            let candidate_name = if collision_index == 1 {
+                file_name.to_owned()
+            } else if let Some(extension) = extension {
+                format!("{stem}_{collision_index}.{extension}")
+            } else {
+                format!("{stem}_{collision_index}")
+            };
+            let candidate = directory.join(candidate_name);
+
+            match Self::create(&candidate, width, height, frame_rate) {
+                Ok(writer) => return Ok((writer, candidate)),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(error),
+            }
+        }
+
+        unreachable!("the collision counter covers every u32 filename suffix")
     }
 
     /// Appends one native JPEG frame to the video container.
@@ -128,7 +178,15 @@ impl AviMjpegWriter {
 
     fn write_avi_headers(&mut self, total_file_size: u64, movi_size: u32) -> io::Result<()> {
         let riff_size = (total_file_size.saturating_sub(8)) as u32;
-        let microsec_per_frame = 1_000_000 / self.fps;
+        let numerator = u64::from(self.frame_rate.numerator()).max(1);
+        let denominator = u64::from(self.frame_rate.denominator()).max(1);
+        let microsec_per_frame = u32::try_from(
+            (1_000_000_u64
+                .saturating_mul(denominator)
+                .saturating_add(numerator / 2))
+                / numerator,
+        )
+        .unwrap_or(u32::MAX);
 
         // RIFF Header
         self.file.write_all(b"RIFF")?;
@@ -171,8 +229,10 @@ impl AviMjpegWriter {
         self.file.write_all(&0_u16.to_le_bytes())?; // priority
         self.file.write_all(&0_u16.to_le_bytes())?; // language
         self.file.write_all(&0_u32.to_le_bytes())?; // initial frames
-        self.file.write_all(&1_u32.to_le_bytes())?; // scale
-        self.file.write_all(&self.fps.to_le_bytes())?; // rate
+        self.file
+            .write_all(&self.frame_rate.denominator().to_le_bytes())?; // scale
+        self.file
+            .write_all(&self.frame_rate.numerator().to_le_bytes())?; // rate
         self.file.write_all(&0_u32.to_le_bytes())?; // start
         self.file.write_all(&self.frame_count.to_le_bytes())?; // length
         self.file.write_all(&0_u32.to_le_bytes())?; // suggested buffer size
@@ -231,6 +291,8 @@ impl Drop for AviMjpegWriter {
 mod tests {
     use std::{fs, time::SystemTime};
 
+    use crate::capabilities::FrameRate;
+
     use super::AviMjpegWriter;
 
     #[test]
@@ -241,7 +303,9 @@ mod tests {
             .as_nanos();
         let path = std::env::temp_dir().join(format!("test_video_{unique}.avi"));
 
-        let mut writer = AviMjpegWriter::create(&path, 1280, 1024, 8).expect("create test AVI");
+        let frame_rate = FrameRate::new(25, 4).expect("valid test frame rate");
+        let mut writer =
+            AviMjpegWriter::create(&path, 1280, 1024, frame_rate).expect("create test AVI");
         let fake_jpeg = [0xff, 0xd8, 0xff, 0xd9];
         writer.write_frame(&fake_jpeg).expect("write frame 1");
         writer.write_frame(&fake_jpeg).expect("write frame 2");

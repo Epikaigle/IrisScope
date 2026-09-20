@@ -14,7 +14,7 @@ use iriscope_core::{
     capture::LatestFrame,
     library::{CaptureKind, LibraryFilter, present_library_items, scan_library_directory},
     session::{CaptureSession, Eye},
-    settings::AppSettings,
+    settings::{AppSettings, PhysicalButtonBehavior},
     storage::{CaptureNamingPolicy, CaptureTimestamp, save_new_capture},
     video::AviMjpegWriter,
 };
@@ -39,6 +39,57 @@ enum WorkerCommand {
     SetControl(CameraControlId, CameraControlValue),
     ResetControls,
     Stop,
+}
+
+fn settings_file_path() -> std::path::PathBuf {
+    #[cfg(target_os = "windows")]
+    if let Ok(base) = std::env::var("APPDATA") {
+        return std::path::PathBuf::from(base)
+            .join("IrisScope")
+            .join("settings.json");
+    }
+
+    #[cfg(target_os = "macos")]
+    if let Ok(home) = std::env::var("HOME") {
+        return std::path::PathBuf::from(home)
+            .join("Library")
+            .join("Application Support")
+            .join("IrisScope")
+            .join("settings.json");
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(base) = std::env::var("XDG_CONFIG_HOME") {
+            return std::path::PathBuf::from(base)
+                .join("IrisScope")
+                .join("settings.json");
+        }
+        if let Ok(home) = std::env::var("HOME") {
+            return std::path::PathBuf::from(home)
+                .join(".config")
+                .join("IrisScope")
+                .join("settings.json");
+        }
+    }
+
+    std::env::current_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+        .join("iriscope-settings.json")
+}
+
+fn dispatch_hardware_button(win: &MainWindow, behavior: PhysicalButtonBehavior) {
+    match behavior {
+        PhysicalButtonBehavior::FollowMode => {
+            if win.get_is_video_mode() {
+                win.invoke_toggle_recording();
+            } else {
+                win.invoke_trigger_capture();
+            }
+        }
+        PhysicalButtonBehavior::AlwaysPhoto => win.invoke_trigger_capture(),
+        PhysicalButtonBehavior::AlwaysVideo => win.invoke_toggle_recording(),
+    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -224,8 +275,15 @@ fn load_library_items(
 #[allow(clippy::too_many_lines)]
 fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     let main_window = MainWindow::new()?;
-    let settings = Arc::new(AppSettings::default());
+    let settings_path = settings_file_path();
+    let loaded_settings = AppSettings::load_from_file(&settings_path);
+    if !settings_path.exists() {
+        let _ = loaded_settings.save_to_file(&settings_path);
+    }
+    let settings = Arc::new(loaded_settings);
     let latest_frame = Arc::new(LatestFrame::new());
+    let active_stream_configuration: Arc<Mutex<Option<StreamConfiguration>>> =
+        Arc::new(Mutex::new(None));
     let is_recording = Arc::new(AtomicBool::new(false));
     let video_writer: Arc<Mutex<Option<AviMjpegWriter>>> = Arc::new(Mutex::new(None));
     let active_session = Arc::new(Mutex::new(CaptureSession::default()));
@@ -242,6 +300,8 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     let video_writer_clone = Arc::clone(&video_writer);
     let rec_start_clone = Arc::clone(&recording_start);
     let toast_clone = Arc::clone(&last_toast_time);
+    let active_stream_configuration_worker = Arc::clone(&active_stream_configuration);
+    let settings_worker = Arc::clone(&settings);
 
     thread::spawn(move || {
         let mut backend = platform_camera::create_backend();
@@ -293,6 +353,9 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             if device.start_stream(&config).is_err() {
                 thread::sleep(Duration::from_secs(1));
                 continue;
+            }
+            if let Ok(mut active) = active_stream_configuration_worker.lock() {
+                *active = Some(config.clone());
             }
 
             let _ = main_weak.upgrade_in_event_loop({
@@ -436,13 +499,16 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                     Ok(CameraEvent::HardwareButtonPressed) => {
-                        // DE400 button press
-                        let _ = main_weak.upgrade_in_event_loop(|win| {
-                            win.invoke_trigger_capture();
+                        let behavior = settings_worker.physical_button_behavior;
+                        let _ = main_weak.upgrade_in_event_loop(move |win| {
+                            dispatch_hardware_button(win, behavior);
                         });
                     }
                     Ok(CameraEvent::Disconnected) => {
                         let _ = device.stop_stream();
+                        if let Ok(mut active) = active_stream_configuration_worker.lock() {
+                            *active = None;
+                        }
                         break;
                     }
                     _ => {}
@@ -589,6 +655,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     let session_rec = Arc::clone(&active_session);
     let rec_start_rec = Arc::clone(&recording_start);
     let toast_rec = Arc::clone(&last_toast_time);
+    let active_stream_configuration_rec = Arc::clone(&active_stream_configuration);
 
     main_window.on_toggle_recording(move || {
         let Some(win) = weak_rec.upgrade() else {
@@ -625,17 +692,40 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             let session = CaptureSession::new(&first, &last, eye);
+            if let Ok(mut current_session) = session_rec.lock() {
+                *current_session = session.clone();
+            }
+
+            let Some(configuration) = active_stream_configuration_rec
+                .lock()
+                .ok()
+                .and_then(|active| active.clone())
+            else {
+                win.set_last_capture_message("Erreur vidéo : aucun flux caméra actif".into());
+                win.set_show_last_capture(true);
+                return;
+            };
+
+            if !matches!(configuration.pixel_format, PixelFormat::Mjpeg) {
+                win.set_last_capture_message(
+                    "Erreur vidéo : le mode actif n'est pas MJPEG".into(),
+                );
+                win.set_show_last_capture(true);
+                return;
+            }
+
             let timestamp = CaptureTimestamp::now();
             let policy = CaptureNamingPolicy::new(&settings_rec.filename_template);
             let file_name = policy.filename(&session, timestamp, "avi");
-            let file_path = settings_rec.capture_directory.join(&file_name);
 
-            if let Some(parent) = file_path.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-
-            match AviMjpegWriter::create(&file_path, 1280, 1024, 8) {
-                Ok(writer) => {
+            match AviMjpegWriter::create_unique(
+                &settings_rec.capture_directory,
+                &file_name,
+                configuration.resolution.width,
+                configuration.resolution.height,
+                configuration.frame_rate,
+            ) {
+                Ok((writer, saved_path)) => {
                     if let Ok(mut writer_guard) = video_writer_rec.lock() {
                         *writer_guard = Some(writer);
                     }
@@ -645,6 +735,10 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     win.set_is_recording(true);
                     win.set_recording_duration("00:00".into());
+                    win.set_last_capture_path(saved_path.to_string_lossy().to_string().into());
+                    if let Some(name) = saved_path.file_name().and_then(|value| value.to_str()) {
+                        win.set_last_capture_file_name(name.into());
+                    }
                 }
                 Err(err) => {
                     win.set_last_capture_message(format!("Erreur vidéo : {err}").into());
@@ -767,7 +861,10 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     #[cfg(target_os = "linux")]
-    spawn_hardware_button_listener(main_window.as_weak());
+    spawn_hardware_button_listener(
+        main_window.as_weak(),
+        settings.physical_button_behavior,
+    );
 
     main_window.run()?;
     let _ = cmd_tx.send(WorkerCommand::Stop);
@@ -775,7 +872,10 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[cfg(target_os = "linux")]
-fn spawn_hardware_button_listener(weak_win: slint::Weak<MainWindow>) {
+fn spawn_hardware_button_listener(
+    weak_win: slint::Weak<MainWindow>,
+    behavior: PhysicalButtonBehavior,
+) {
     thread::spawn(move || {
         use std::io::{BufRead, BufReader};
         use std::process::{Command, Stdio};
@@ -804,8 +904,8 @@ fn spawn_hardware_button_listener(weak_win: slint::Weak<MainWindow>) {
 
             if is_button_event && last_trigger.elapsed() >= Duration::from_millis(600) {
                 last_trigger = Instant::now();
-                let _ = weak_win.upgrade_in_event_loop(|win| {
-                    win.invoke_trigger_capture();
+                let _ = weak_win.upgrade_in_event_loop(move |win| {
+                    dispatch_hardware_button(win, behavior);
                 });
             }
         }
