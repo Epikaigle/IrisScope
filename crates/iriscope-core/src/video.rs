@@ -133,7 +133,10 @@ impl AviMjpegReader {
 
         self.file.seek(SeekFrom::Start(offset))?;
         let frame_size = usize::try_from(size).map_err(|_| {
-            io::Error::new(io::ErrorKind::InvalidData, "AVI frame is too large for this platform")
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "AVI frame is too large for this platform",
+            )
         })?;
         let mut bytes = vec![0_u8; frame_size];
         self.file.read_exact(&mut bytes)?;
