@@ -1,7 +1,10 @@
 use std::{
     ffi::c_void,
     ptr, slice,
-    sync::mpsc::{self, Receiver, SyncSender},
+    sync::{
+        Arc,
+        mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TryRecvError, TrySendError},
+    },
     thread::{self, JoinHandle},
     time::Duration,
 };
@@ -9,7 +12,7 @@ use std::{
 use iriscope_core::{
     camera::{
         CameraBackend, CameraBackendKind, CameraDescriptor, CameraDevice, CameraDeviceEvent,
-        CameraDeviceId, CameraError, CameraErrorKind, CameraEvent, CameraResult,
+        CameraDeviceId, CameraError, CameraErrorKind, CameraEvent, CameraResult, CapturedFrame,
         StreamConfiguration, UsbDeviceIdentity,
     },
     capabilities::{
@@ -20,7 +23,7 @@ use iriscope_core::{
 use windows::{
     Win32::{
         Media::MediaFoundation::{
-            IMFActivate, IMFAttributes, IMFMediaSource, IMFSourceReader,
+            IMFActivate, IMFAttributes, IMFMediaSource, IMFMediaType, IMFSourceReader,
             MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME, MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
             MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID,
             MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK, MF_E_NO_MORE_TYPES,
@@ -75,8 +78,15 @@ impl CameraBackend for WindowsMediaFoundationBackend {
 struct WindowsCameraDevice {
     descriptor: CameraDescriptor,
     capabilities: CameraCapabilities,
-    shutdown_sender: Option<SyncSender<()>>,
+    command_sender: SyncSender<WorkerCommand>,
+    event_receiver: Receiver<CameraResult<CameraEvent>>,
     worker: Option<JoinHandle<()>>,
+}
+
+enum WorkerCommand {
+    Start(StreamConfiguration, SyncSender<CameraResult<()>>),
+    Stop(SyncSender<CameraResult<()>>),
+    Shutdown,
 }
 
 impl CameraDevice for WindowsCameraDevice {
@@ -88,16 +98,58 @@ impl CameraDevice for WindowsCameraDevice {
         &self.capabilities
     }
 
-    fn start_stream(&mut self, _configuration: &StreamConfiguration) -> CameraResult<()> {
-        Err(streaming_unavailable())
+    fn start_stream(&mut self, configuration: &StreamConfiguration) -> CameraResult<()> {
+        if self
+            .capabilities
+            .find_mode(&configuration.pixel_format, configuration.resolution)
+            .is_none()
+        {
+            return Err(CameraError::new(
+                CameraErrorKind::InvalidConfiguration,
+                "requested Media Foundation camera mode is not advertised",
+            ));
+        }
+
+        let (response_sender, response_receiver) = mpsc::sync_channel(1);
+        self.command_sender
+            .send(WorkerCommand::Start(
+                configuration.clone(),
+                response_sender,
+            ))
+            .map_err(|error| worker_channel_error("starting the Media Foundation stream", error))?;
+        response_receiver.recv().map_err(|error| {
+            CameraError::new(
+                CameraErrorKind::Backend,
+                format!("Media Foundation worker stopped while starting the stream: {error}"),
+            )
+        })?
     }
 
     fn stop_stream(&mut self) -> CameraResult<()> {
-        Err(streaming_unavailable())
+        let (response_sender, response_receiver) = mpsc::sync_channel(1);
+        self.command_sender
+            .send(WorkerCommand::Stop(response_sender))
+            .map_err(|error| worker_channel_error("stopping the Media Foundation stream", error))?;
+        response_receiver.recv().map_err(|error| {
+            CameraError::new(
+                CameraErrorKind::Backend,
+                format!("Media Foundation worker stopped while stopping the stream: {error}"),
+            )
+        })?
     }
 
-    fn next_event(&mut self, _timeout: Duration) -> CameraResult<CameraEvent> {
-        Err(streaming_unavailable())
+    fn next_event(&mut self, timeout: Duration) -> CameraResult<CameraEvent> {
+        match self.event_receiver.recv_timeout(timeout) {
+            Ok(event) => event,
+            Err(RecvTimeoutError::Timeout) => Err(CameraError::new(
+                CameraErrorKind::TimedOut,
+                "timed out waiting for a Media Foundation camera event",
+            )),
+            Err(RecvTimeoutError::Disconnected) => Err(CameraError::new(
+                CameraErrorKind::Disconnected,
+                "Media Foundation camera worker stopped",
+            )),
+        }
     }
 
     fn control_value(&self, _control_id: &CameraControlId) -> CameraResult<CameraControlValue> {
@@ -119,20 +171,15 @@ impl CameraDevice for WindowsCameraDevice {
 
 impl Drop for WindowsCameraDevice {
     fn drop(&mut self) {
-        if let Some(sender) = self.shutdown_sender.take() {
-            let _ = sender.send(());
-        }
+        let _ = self.command_sender.send(WorkerCommand::Shutdown);
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
     }
 }
 
-fn streaming_unavailable() -> CameraError {
-    CameraError::new(
-        CameraErrorKind::Unsupported,
-        "Media Foundation streaming is not implemented yet",
-    )
+fn worker_channel_error<T: std::fmt::Display>(context: &str, error: T) -> CameraError {
+    CameraError::new(CameraErrorKind::Backend, format!("{context}: {error}"))
 }
 
 fn controls_unavailable() -> CameraError {
@@ -157,10 +204,18 @@ struct WorkerDevice {
 fn open_video_device(device_id: &CameraDeviceId) -> CameraResult<WindowsCameraDevice> {
     let requested_id = device_id.as_str().to_owned();
     let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
-    let (shutdown_sender, shutdown_receiver) = mpsc::sync_channel(1);
+    let (command_sender, command_receiver) = mpsc::sync_channel(4);
+    let (event_sender, event_receiver) = mpsc::sync_channel(2);
     let worker = thread::Builder::new()
         .name("iriscope-media-foundation".to_owned())
-        .spawn(move || device_worker(&requested_id, &ready_sender, &shutdown_receiver))
+        .spawn(move || {
+            device_worker(
+                &requested_id,
+                &ready_sender,
+                &command_receiver,
+                &event_sender,
+            );
+        })
         .map_err(|error| {
             CameraError::new(
                 CameraErrorKind::Backend,
@@ -172,7 +227,8 @@ fn open_video_device(device_id: &CameraDeviceId) -> CameraResult<WindowsCameraDe
         Ok(Ok(opened)) => Ok(WindowsCameraDevice {
             descriptor: opened.descriptor,
             capabilities: opened.capabilities,
-            shutdown_sender: Some(shutdown_sender),
+            command_sender,
+            event_receiver,
             worker: Some(worker),
         }),
         Ok(Err(error)) => {
@@ -192,7 +248,8 @@ fn open_video_device(device_id: &CameraDeviceId) -> CameraResult<WindowsCameraDe
 fn device_worker(
     requested_id: &str,
     ready_sender: &SyncSender<CameraResult<OpenedDevice>>,
-    shutdown_receiver: &Receiver<()>,
+    command_receiver: &Receiver<WorkerCommand>,
+    event_sender: &SyncSender<CameraResult<CameraEvent>>,
 ) {
     let com = match ComApartment::initialize() {
         Ok(com) => com,
@@ -225,10 +282,264 @@ fn device_worker(
         return;
     }
 
-    let _ = shutdown_receiver.recv();
+    run_worker_loop(&worker_device, command_receiver, event_sender);
     shutdown_worker_device(worker_device);
     drop(media_foundation);
     drop(com);
+}
+
+fn run_worker_loop(
+    worker_device: &WorkerDevice,
+    command_receiver: &Receiver<WorkerCommand>,
+    event_sender: &SyncSender<CameraResult<CameraEvent>>,
+) {
+    let mut streaming = false;
+    let mut configuration: Option<StreamConfiguration> = None;
+    let mut sequence_number = 0_u64;
+
+    loop {
+        let command = if streaming {
+            match command_receiver.try_recv() {
+                Ok(command) => Some(command),
+                Err(TryRecvError::Empty) => None,
+                Err(TryRecvError::Disconnected) => return,
+            }
+        } else {
+            match command_receiver.recv() {
+                Ok(command) => Some(command),
+                Err(_) => return,
+            }
+        };
+
+        if let Some(command) = command {
+            match command {
+                WorkerCommand::Start(requested, response_sender) => {
+                    let result = configure_stream(&worker_device.source_reader, &requested);
+                    if result.is_ok() {
+                        configuration = Some(requested);
+                        sequence_number = 0;
+                        streaming = true;
+                    }
+                    let _ = response_sender.send(result);
+                }
+                WorkerCommand::Stop(response_sender) => {
+                    let result = flush_source_reader(&worker_device.source_reader);
+                    streaming = false;
+                    configuration = None;
+                    let _ = response_sender.send(result);
+                }
+                WorkerCommand::Shutdown => return,
+            }
+            continue;
+        }
+
+        let Some(active_configuration) = configuration.as_ref() else {
+            streaming = false;
+            continue;
+        };
+
+        match read_next_frame(
+            &worker_device.source_reader,
+            active_configuration,
+            sequence_number,
+        ) {
+            Ok(Some(frame)) => {
+                sequence_number = sequence_number.saturating_add(1);
+                match event_sender.try_send(Ok(CameraEvent::Frame(frame))) {
+                    Ok(()) | Err(TrySendError::Full(_)) => {}
+                    Err(TrySendError::Disconnected(_)) => return,
+                }
+            }
+            Ok(None) => {}
+            Err(error) if error.kind() == CameraErrorKind::Disconnected => {
+                let _ = event_sender.send(Ok(CameraEvent::Disconnected));
+                return;
+            }
+            Err(error) => {
+                let _ = event_sender.send(Err(error));
+                streaming = false;
+                configuration = None;
+            }
+        }
+    }
+}
+
+fn configure_stream(
+    source_reader: &IMFSourceReader,
+    configuration: &StreamConfiguration,
+) -> CameraResult<()> {
+    let stream_index = MF_SOURCE_READER_FIRST_VIDEO_STREAM.0.cast_unsigned();
+    let media_type = find_native_media_type(source_reader, configuration)?;
+
+    // SAFETY: The source reader and native media type belong to this Media Foundation worker.
+    unsafe {
+        source_reader
+            .SetStreamSelection(stream_index, true)
+            .map_err(|error| windows_device_error("selecting the camera video stream", &error))?;
+        media_type
+            .SetUINT64(&MF_MT_FRAME_RATE, pack_frame_rate(configuration.frame_rate))
+            .map_err(|error| windows_error("setting the camera frame rate", &error))?;
+        source_reader
+            .SetCurrentMediaType(stream_index, None, &media_type)
+            .map_err(|error| windows_device_error("setting the native camera media type", &error))?;
+    }
+
+    Ok(())
+}
+
+fn find_native_media_type(
+    source_reader: &IMFSourceReader,
+    configuration: &StreamConfiguration,
+) -> CameraResult<IMFMediaType> {
+    let stream_index = MF_SOURCE_READER_FIRST_VIDEO_STREAM.0.cast_unsigned();
+    let mut media_type_index = 0_u32;
+
+    loop {
+        // SAFETY: The source reader is valid on the worker thread. Enumeration ends when
+        // Media Foundation reports that there are no more native types.
+        let media_type =
+            match unsafe { source_reader.GetNativeMediaType(stream_index, media_type_index) } {
+                Ok(media_type) => media_type,
+                Err(error) if error.code() == MF_E_NO_MORE_TYPES => break,
+                Err(error) => {
+                    return Err(windows_device_error(
+                        "enumerating native camera media types",
+                        &error,
+                    ));
+                }
+            };
+        media_type_index = media_type_index.saturating_add(1);
+
+        // SAFETY: Native video media types expose subtype and packed frame size attributes.
+        let subtype = unsafe { media_type.GetGUID(&MF_MT_SUBTYPE) }
+            .map_err(|error| windows_error("reading native camera pixel format", &error))?;
+        let packed_size = unsafe { media_type.GetUINT64(&MF_MT_FRAME_SIZE) }
+            .map_err(|error| windows_error("reading native camera frame size", &error))?;
+
+        if pixel_format_from_subtype(subtype) != configuration.pixel_format
+            || unpack_resolution(packed_size) != Some(configuration.resolution)
+            || !media_type_supports_frame_rate(&media_type, configuration.frame_rate)
+        {
+            continue;
+        }
+
+        return Ok(media_type);
+    }
+
+    Err(CameraError::new(
+        CameraErrorKind::InvalidConfiguration,
+        format!(
+            "Media Foundation camera does not expose {} {} at {:.3} fps",
+            configuration.pixel_format,
+            configuration.resolution,
+            configuration.frame_rate.frames_per_second()
+        ),
+    ))
+}
+
+fn media_type_supports_frame_rate(media_type: &IMFMediaType, requested: FrameRate) -> bool {
+    // SAFETY: These are optional packed rational attributes on a native video media type.
+    let exact = unsafe { media_type.GetUINT64(&MF_MT_FRAME_RATE) }
+        .ok()
+        .and_then(unpack_frame_rate);
+    if exact == Some(requested) {
+        return true;
+    }
+
+    let minimum = unsafe { media_type.GetUINT64(&MF_MT_FRAME_RATE_RANGE_MIN) }
+        .ok()
+        .and_then(unpack_frame_rate);
+    let maximum = unsafe { media_type.GetUINT64(&MF_MT_FRAME_RATE_RANGE_MAX) }
+        .ok()
+        .and_then(unpack_frame_rate);
+
+    matches!((minimum, maximum), (Some(min), Some(max)) if requested >= min && requested <= max)
+}
+
+const fn pack_frame_rate(frame_rate: FrameRate) -> u64 {
+    (frame_rate.numerator() as u64) << 32 | frame_rate.denominator() as u64
+}
+
+fn flush_source_reader(source_reader: &IMFSourceReader) -> CameraResult<()> {
+    let stream_index = MF_SOURCE_READER_FIRST_VIDEO_STREAM.0.cast_unsigned();
+    // SAFETY: The reader belongs to the worker thread and has no asynchronous callbacks.
+    unsafe { source_reader.Flush(stream_index) }
+        .map_err(|error| windows_device_error("flushing the camera stream", &error))
+}
+
+fn read_next_frame(
+    source_reader: &IMFSourceReader,
+    configuration: &StreamConfiguration,
+    sequence_number: u64,
+) -> CameraResult<Option<CapturedFrame>> {
+    let stream_index = MF_SOURCE_READER_FIRST_VIDEO_STREAM.0.cast_unsigned();
+    let mut stream_flags = 0_u32;
+    let mut timestamp_100ns = 0_i64;
+    let mut sample = None;
+
+    // SAFETY: The Source Reader was created without an async callback, so this synchronous read
+    // happens entirely on the owning Media Foundation worker thread.
+    unsafe {
+        source_reader.ReadSample(
+            stream_index,
+            0,
+            None,
+            Some(&raw mut stream_flags),
+            Some(&raw mut timestamp_100ns),
+            Some(&raw mut sample),
+        )
+    }
+    .map_err(|error| windows_device_error("reading a camera frame", &error))?;
+
+    let Some(sample) = sample else {
+        return Ok(None);
+    };
+
+    // SAFETY: The sample is valid for this call and Media Foundation returns a contiguous buffer
+    // retaining the sample data until the COM buffer is released.
+    let buffer = unsafe { sample.ConvertToContiguousBuffer() }
+        .map_err(|error| windows_device_error("coalescing a camera frame buffer", &error))?;
+
+    let mut data_pointer = ptr::null_mut();
+    let mut current_length = 0_u32;
+    // SAFETY: The output pointers are valid and the buffer is unlocked below before it is dropped.
+    unsafe { buffer.Lock(&raw mut data_pointer, None, Some(&raw mut current_length)) }
+        .map_err(|error| windows_device_error("locking a camera frame buffer", &error))?;
+
+    let bytes = if data_pointer.is_null() && current_length != 0 {
+        Vec::new()
+    } else {
+        // SAFETY: Lock reports current_length valid bytes starting at data_pointer.
+        unsafe {
+            slice::from_raw_parts(
+                data_pointer.cast_const(),
+                usize::try_from(current_length).expect("u32 buffer size fits in usize"),
+            )
+        }
+        .to_vec()
+    };
+
+    // SAFETY: Balances the successful Lock call above.
+    unsafe { buffer.Unlock() }
+        .map_err(|error| windows_device_error("unlocking a camera frame buffer", &error))?;
+
+    if current_length != 0 && bytes.is_empty() {
+        return Err(CameraError::new(
+            CameraErrorKind::Backend,
+            "Media Foundation returned a non-empty frame with a null buffer pointer",
+        ));
+    }
+
+    let non_negative_timestamp = u64::try_from(timestamp_100ns.max(0)).unwrap_or_default();
+    let timestamp = Duration::from_nanos(non_negative_timestamp.saturating_mul(100));
+
+    Ok(Some(CapturedFrame {
+        sequence_number,
+        timestamp,
+        pixel_format: configuration.pixel_format.clone(),
+        resolution: configuration.resolution,
+        data: Arc::from(bytes),
+    }))
 }
 
 fn open_on_worker(requested_id: &str) -> CameraResult<WorkerDevice> {

@@ -132,6 +132,10 @@ pub fn decode_mjpeg_to_rgb8(jpeg_data: &[u8]) -> Result<(u32, u32, Vec<u8>), Ima
 }
 
 /// Decodes a supported still-image file (JPEG or PNG) into RGB8.
+///
+/// # Errors
+///
+/// Returns ImagingError::ImageDecode when the input cannot be decoded.
 pub fn decode_image_to_rgb8(image_data: &[u8]) -> Result<(u32, u32, Vec<u8>), ImagingError> {
     let decoded = image::load_from_memory(image_data)
         .map_err(|error| ImagingError::ImageDecode(error.to_string()))?;
@@ -142,6 +146,11 @@ pub fn decode_image_to_rgb8(image_data: &[u8]) -> Result<(u32, u32, Vec<u8>), Im
 }
 
 /// Resizes an RGB8 image to fit inside a square thumbnail while preserving aspect ratio.
+///
+/// # Errors
+///
+/// Returns ImagingError::InvalidBufferSize when the RGB buffer does not match
+/// the supplied dimensions.
 pub fn resize_rgb8_to_fit(
     rgb: &[u8],
     width: u32,
