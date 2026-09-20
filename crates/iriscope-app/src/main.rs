@@ -26,7 +26,7 @@ use iriscope_core::{
 };
 use iriscope_imaging::{
     convert_bgra8_to_rgb8, convert_yuyv_to_rgb8, decode_image_to_rgb8, decode_mjpeg_to_rgb8,
-    encode_rgb8_png, ensure_jpeg_has_dht, resize_rgb8_to_fit,
+    encode_rgb8_jpeg, encode_rgb8_png, ensure_jpeg_has_dht, resize_rgb8_to_fit,
 };
 use slint::{ComponentHandle, ModelRc, Rgb8Pixel, SharedPixelBuffer, VecModel};
 
@@ -681,15 +681,6 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                         frame_count = frame_count.saturating_add(1);
                         stat_frames += 1;
 
-                        // Lossless video recording if active
-                        if is_rec_clone.load(Ordering::Relaxed)
-                            && matches!(frame.pixel_format, PixelFormat::Mjpeg)
-                            && let Ok(mut writer_guard) = video_writer_clone.lock()
-                            && let Some(writer) = writer_guard.as_mut()
-                        {
-                            let _ = writer.write_frame(&frame.data);
-                        }
-
                         latest_frame_clone.publish(frame.clone());
 
                         // Decode frame for Slint
@@ -714,6 +705,26 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                             _ => None,
                         };
                         let decode_dur = decode_start.elapsed();
+
+                        if is_rec_clone.load(Ordering::Relaxed)
+                            && let Ok(mut writer_guard) = video_writer_clone.lock()
+                            && let Some(writer) = writer_guard.as_mut()
+                        {
+                            match frame.pixel_format {
+                                PixelFormat::Mjpeg => {
+                                    let jpeg = ensure_jpeg_has_dht(&frame.data);
+                                    let _ = writer.write_frame(jpeg.as_ref());
+                                }
+                                _ => {
+                                    if let Some((width, height, rgb)) = rgb_opt.as_ref()
+                                        && let Ok(jpeg) =
+                                            encode_rgb8_jpeg(rgb, *width, *height, 95)
+                                    {
+                                        let _ = writer.write_frame(&jpeg);
+                                    }
+                                }
+                            }
+                        }
 
                         if let Some((width, height, raw_rgb)) = rgb_opt {
                             let _ = main_weak.upgrade_in_event_loop(move |win| {
@@ -1088,14 +1099,6 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 win.set_show_last_capture(true);
                 return;
             };
-            if !matches!(current_frame.pixel_format, PixelFormat::Mjpeg) {
-                win.set_last_capture_message(
-                    "Enregistrement vidéo disponible lorsque le flux livré est MJPEG.".into(),
-                );
-                win.set_show_last_capture(true);
-                return;
-            }
-
             let timestamp = CaptureTimestamp::now();
             let policy = CaptureNamingPolicy::new(&recording_settings.filename_template);
             let file_name = policy.filename(&session, timestamp, "avi");

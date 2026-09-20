@@ -194,6 +194,33 @@ pub fn convert_bgra8_to_rgb8(
     Ok(rgb)
 }
 
+/// Encodes an RGB8 frame as JPEG.
+///
+/// This is used only when a camera backend does not provide native MJPEG frames,
+/// allowing the same MJPEG AVI container to be used cross-platform.
+///
+/// # Errors
+///
+/// Returns an imaging error when the RGB buffer size is invalid or encoding fails.
+pub fn encode_rgb8_jpeg(
+    rgb: &[u8],
+    width: u32,
+    height: u32,
+    quality: u8,
+) -> Result<Vec<u8>, ImagingError> {
+    let expected = usize::try_from(u64::from(width) * u64::from(height) * 3)
+        .map_err(|_| ImagingError::InvalidBufferSize)?;
+    if rgb.len() != expected {
+        return Err(ImagingError::InvalidBufferSize);
+    }
+
+    let mut encoded = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut encoded, quality.clamp(1, 100))
+        .write_image(rgb, width, height, ColorType::Rgb8.into())
+        .map_err(|error| ImagingError::ImageEncode(format!("{error:?}")))?;
+    Ok(encoded)
+}
+
 /// Encodes an RGB8 frame as a lossless PNG.
 ///
 /// # Errors
