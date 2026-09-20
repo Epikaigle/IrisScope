@@ -461,9 +461,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                                 frame.resolution.height,
                             )
                             .ok()
-                            .map(|rgb| {
-                                (frame.resolution.width, frame.resolution.height, rgb)
-                            }),
+                            .map(|rgb| (frame.resolution.width, frame.resolution.height, rgb)),
                             _ => None,
                         };
                         let decode_dur = decode_start.elapsed();
@@ -607,20 +605,17 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                     frame.resolution.width,
                     frame.resolution.height,
                 );
-                let png = match encode_rgb8_png(
-                    &rgb,
-                    frame.resolution.width,
-                    frame.resolution.height,
-                ) {
-                    Ok(png) => png,
-                    Err(error) => {
-                        win.set_last_capture_message(
-                            format!("Erreur de conversion photo : {error}").into(),
-                        );
-                        win.set_show_last_capture(true);
-                        return;
-                    }
-                };
+                let png =
+                    match encode_rgb8_png(&rgb, frame.resolution.width, frame.resolution.height) {
+                        Ok(png) => png,
+                        Err(error) => {
+                            win.set_last_capture_message(
+                                format!("Erreur de conversion photo : {error}").into(),
+                            );
+                            win.set_show_last_capture(true);
+                            return;
+                        }
+                    };
                 ("png", std::borrow::Cow::Owned(png))
             }
             PixelFormat::Bgra8 => {
@@ -638,20 +633,17 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                         return;
                     }
                 };
-                let png = match encode_rgb8_png(
-                    &rgb,
-                    frame.resolution.width,
-                    frame.resolution.height,
-                ) {
-                    Ok(png) => png,
-                    Err(error) => {
-                        win.set_last_capture_message(
-                            format!("Erreur de conversion photo : {error}").into(),
-                        );
-                        win.set_show_last_capture(true);
-                        return;
-                    }
-                };
+                let png =
+                    match encode_rgb8_png(&rgb, frame.resolution.width, frame.resolution.height) {
+                        Ok(png) => png,
+                        Err(error) => {
+                            win.set_last_capture_message(
+                                format!("Erreur de conversion photo : {error}").into(),
+                            );
+                            win.set_show_last_capture(true);
+                            return;
+                        }
+                    };
                 ("png", std::borrow::Cow::Owned(png))
             }
             _ => {

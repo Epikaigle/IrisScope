@@ -193,12 +193,8 @@ pub fn convert_bgra8_to_rgb8(
 ///
 /// # Errors
 ///
-/// Returns an ImagingError when the RGB buffer size is invalid or encoding fails.
-pub fn encode_rgb8_png(
-    rgb: &[u8],
-    width: u32,
-    height: u32,
-) -> Result<Vec<u8>, ImagingError> {
+/// Returns an imaging error when the RGB buffer size is invalid or encoding fails.
+pub fn encode_rgb8_png(rgb: &[u8], width: u32, height: u32) -> Result<Vec<u8>, ImagingError> {
     let expected = usize::try_from(u64::from(width) * u64::from(height) * 3)
         .map_err(|_| ImagingError::InvalidBufferSize)?;
     if rgb.len() != expected {
