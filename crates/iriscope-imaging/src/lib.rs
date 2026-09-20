@@ -135,7 +135,7 @@ pub fn decode_mjpeg_to_rgb8(jpeg_data: &[u8]) -> Result<(u32, u32, Vec<u8>), Ima
 ///
 /// # Errors
 ///
-/// Returns ImagingError::ImageDecode when the input cannot be decoded.
+/// Returns `ImagingError::ImageDecode` when the input cannot be decoded.
 pub fn decode_image_to_rgb8(image_data: &[u8]) -> Result<(u32, u32, Vec<u8>), ImagingError> {
     let decoded = image::load_from_memory(image_data)
         .map_err(|error| ImagingError::ImageDecode(error.to_string()))?;
@@ -149,7 +149,7 @@ pub fn decode_image_to_rgb8(image_data: &[u8]) -> Result<(u32, u32, Vec<u8>), Im
 ///
 /// # Errors
 ///
-/// Returns ImagingError::InvalidBufferSize when the RGB buffer does not match
+/// Returns `ImagingError::InvalidBufferSize` when the RGB buffer does not match
 /// the supplied dimensions.
 pub fn resize_rgb8_to_fit(
     rgb: &[u8],
