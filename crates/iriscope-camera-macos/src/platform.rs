@@ -453,10 +453,13 @@ fn find_matching_format(
         }
 
         let requested = configuration.frame_rate.frames_per_second();
-        let supported = format.video_supported_frame_rate_ranges().iter().any(|range| {
-            requested + 0.001 >= range.min_frame_rate()
-                && requested - 0.001 <= range.max_frame_rate()
-        });
+        let supported = format
+            .video_supported_frame_rate_ranges()
+            .iter()
+            .any(|range| {
+                requested + 0.001 >= range.min_frame_rate()
+                    && requested - 0.001 <= range.max_frame_rate()
+            });
         if supported {
             return Some(format);
         }
@@ -566,12 +569,14 @@ fn frame_from_sample_buffer(
         let length = data_buffer.get_data_length();
         if length != 0 {
             let mut data = vec![0_u8; length];
-            data_buffer.copy_data_bytes(0, &mut data).map_err(|status| {
-                CameraError::new(
-                    CameraErrorKind::Backend,
-                    format!("copying AVFoundation compressed sample bytes failed: {status}"),
-                )
-            })?;
+            data_buffer
+                .copy_data_bytes(0, &mut data)
+                .map_err(|status| {
+                    CameraError::new(
+                        CameraErrorKind::Backend,
+                        format!("copying AVFoundation compressed sample bytes failed: {status}"),
+                    )
+                })?;
 
             return Ok(Some(CapturedFrame {
                 sequence_number,
@@ -621,10 +626,16 @@ fn copy_locked_pixel_buffer(
     sequence_number: u64,
 ) -> CameraResult<Option<CapturedFrame>> {
     let width = u32::try_from(pixel_buffer.get_width()).map_err(|_| {
-        CameraError::new(CameraErrorKind::Backend, "AVFoundation frame width is too large")
+        CameraError::new(
+            CameraErrorKind::Backend,
+            "AVFoundation frame width is too large",
+        )
     })?;
     let height = u32::try_from(pixel_buffer.get_height()).map_err(|_| {
-        CameraError::new(CameraErrorKind::Backend, "AVFoundation frame height is too large")
+        CameraError::new(
+            CameraErrorKind::Backend,
+            "AVFoundation frame height is too large",
+        )
     })?;
     let format = pixel_buffer.get_pixel_format();
 
@@ -642,7 +653,10 @@ fn copy_locked_pixel_buffer(
         .ok()
         .and_then(|width| width.checked_mul(bytes_per_pixel))
         .ok_or_else(|| {
-            CameraError::new(CameraErrorKind::Backend, "AVFoundation frame row is too large")
+            CameraError::new(
+                CameraErrorKind::Backend,
+                "AVFoundation frame row is too large",
+            )
         })?;
     let source_row_bytes = pixel_buffer.get_bytes_per_row();
     if source_row_bytes < row_bytes {
@@ -664,14 +678,20 @@ fn copy_locked_pixel_buffer(
     let source_length = source_row_bytes
         .checked_mul(usize::try_from(height).unwrap_or_default())
         .ok_or_else(|| {
-            CameraError::new(CameraErrorKind::Backend, "AVFoundation frame buffer is too large")
+            CameraError::new(
+                CameraErrorKind::Backend,
+                "AVFoundation frame buffer is too large",
+            )
         })?;
     // SAFETY: The locked pixel buffer guarantees at least stride * height readable bytes.
     let source = unsafe { slice::from_raw_parts(base.cast::<u8>(), source_length) };
     let destination_length = row_bytes
         .checked_mul(usize::try_from(height).unwrap_or_default())
         .ok_or_else(|| {
-            CameraError::new(CameraErrorKind::Backend, "AVFoundation frame buffer is too large")
+            CameraError::new(
+                CameraErrorKind::Backend,
+                "AVFoundation frame buffer is too large",
+            )
         })?;
     let mut data = Vec::with_capacity(destination_length);
 
