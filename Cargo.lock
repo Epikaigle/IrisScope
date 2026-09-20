@@ -2459,8 +2459,12 @@ name = "iriscope-camera-macos"
 version = "0.1.0"
 dependencies = [
  "av-foundation",
+ "core-foundation 0.10.1",
  "core-media",
+ "core-video",
+ "dispatch2",
  "iriscope-core",
+ "objc2 0.6.4",
  "objc2-foundation 0.3.2",
 ]
 
