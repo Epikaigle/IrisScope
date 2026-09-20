@@ -717,8 +717,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                                 _ => {
                                     if let Some((width, height, rgb)) = rgb_opt.as_ref()
-                                        && let Ok(jpeg) =
-                                            encode_rgb8_jpeg(rgb, *width, *height, 95)
+                                        && let Ok(jpeg) = encode_rgb8_jpeg(rgb, *width, *height, 95)
                                     {
                                         let _ = writer.write_frame(&jpeg);
                                     }
