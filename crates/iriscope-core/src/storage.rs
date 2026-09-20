@@ -99,6 +99,17 @@ impl Default for CaptureNamingPolicy {
     }
 }
 
+/// Reports whether a filename template preserves the required patient identity.
+///
+/// IrisScope requires every new capture filename to contain the patient's first name,
+/// last name, and selected eye. Date and time remain optional.
+#[must_use]
+pub fn filename_template_preserves_identity(template: &str) -> bool {
+    ["{prenom}", "{nom}", "{oeil}"]
+        .iter()
+        .all(|token| template.contains(token))
+}
+
 impl CaptureNamingPolicy {
     /// Creates a policy from a user-visible filename template.
     #[must_use]
@@ -260,7 +271,10 @@ mod tests {
 
     use crate::session::{CaptureSession, Eye};
 
-    use super::{CaptureNamingPolicy, CaptureTimestamp, save_new_capture};
+    use super::{
+        CaptureNamingPolicy, CaptureTimestamp, filename_template_preserves_identity,
+        save_new_capture,
+    };
 
     fn timestamp() -> CaptureTimestamp {
         CaptureTimestamp {
@@ -316,4 +330,20 @@ mod tests {
         assert_eq!(fs::read(second).expect("read second"), b"second");
         fs::remove_dir_all(directory).expect("remove test directory");
     }
+    #[test]
+    fn filename_template_requires_patient_identity_and_eye() {
+        assert!(filename_template_preserves_identity(
+            "{prenom}_{nom}_{oeil}_{date}_{heure}"
+        ));
+        assert!(filename_template_preserves_identity(
+            "{date}-{nom}-{prenom}-{oeil}"
+        ));
+        assert!(!filename_template_preserves_identity(
+            "{date}_{heure}_{oeil}"
+        ));
+        assert!(!filename_template_preserves_identity(
+            "{prenom}_{nom}_{date}"
+        ));
+    }
+
 }

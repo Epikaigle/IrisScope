@@ -21,7 +21,10 @@ use iriscope_core::{
     },
     session::{CaptureSession, Eye},
     settings::{AppSettings, PhysicalButtonBehavior},
-    storage::{CaptureNamingPolicy, CaptureTimestamp, save_new_capture},
+    storage::{
+        CaptureNamingPolicy, CaptureTimestamp, DEFAULT_FILENAME_TEMPLATE,
+        filename_template_preserves_identity, save_new_capture,
+    },
     video::{AviMjpegReader, AviMjpegWriter},
 };
 use iriscope_imaging::{
@@ -514,10 +517,11 @@ fn finalize_recording(
 fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     let main_window = MainWindow::new()?;
     let settings_path = settings_file_path();
-    let loaded_settings = AppSettings::load_from_file(&settings_path);
-    if !settings_path.exists() {
-        let _ = loaded_settings.save_to_file(&settings_path);
+    let mut loaded_settings = AppSettings::load_from_file(&settings_path);
+    if !filename_template_preserves_identity(&loaded_settings.filename_template) {
+        loaded_settings.filename_template = DEFAULT_FILENAME_TEMPLATE.to_owned();
     }
+    let _ = loaded_settings.save_to_file(&settings_path);
     main_window.set_settings_capture_directory(
         loaded_settings
             .capture_directory
@@ -1496,7 +1500,13 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             return;
         };
         let value = value.trim();
-        if value.is_empty() {
+        if !filename_template_preserves_identity(value) {
+            let current = settings_snapshot(&settings_template).filename_template;
+            win.set_settings_filename_template(current.into());
+            win.set_last_capture_message(
+                "Le modèle doit contenir {prenom}, {nom} et {oeil}.".into(),
+            );
+            win.set_show_last_capture(true);
             return;
         }
         if let Ok(mut guard) = settings_template.lock() {
