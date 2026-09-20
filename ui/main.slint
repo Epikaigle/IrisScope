@@ -94,6 +94,7 @@ export component MainWindow inherits Window {
 
     // Bibliothèque
     in-out property <[LibraryItemData]> library-items: [];
+    in-out property <int> library-filter: 0; // 0 tous, 1 photos, 2 vidéos
     callback open-capture-file(string);
 
     // Grille iridologique
@@ -102,6 +103,9 @@ export component MainWindow inherits Window {
     // Visionneuse privée intégrée
     in-out property <bool> viewer-open: false;
     in-out property <image> viewer-image;
+    in-out property <int> viewer-zoom: 100;
+    in-out property <length> viewer-pan-x: 0px;
+    in-out property <length> viewer-pan-y: 0px;
 
     // Callbacks
     callback trigger-capture();
@@ -891,6 +895,27 @@ export component MainWindow inherits Window {
                 HorizontalBox {
                     spacing: 8px;
                     alignment: start;
+
+                    Button {
+                        text: "Tous";
+                        primary: root.library-filter == 0;
+                        clicked => { root.library-filter = 0; }
+                    }
+                    Button {
+                        text: "Photos";
+                        primary: root.library-filter == 1;
+                        clicked => { root.library-filter = 1; }
+                    }
+                    Button {
+                        text: "Vidéos";
+                        primary: root.library-filter == 2;
+                        clicked => { root.library-filter = 2; }
+                    }
+                }
+
+                HorizontalBox {
+                    spacing: 8px;
+                    alignment: start;
                     Rectangle {
                         border-radius: 4px;
                         background: #065f46;
@@ -945,7 +970,9 @@ export component MainWindow inherits Window {
                     min-height: 400px;
                     VerticalBox {
                         spacing: 8px;
-                        for item in root.library-items: Rectangle {
+                        for item in root.library-items: if root.library-filter == 0
+                            || (root.library-filter == 1 && !item.is-video)
+                            || (root.library-filter == 2 && item.is-video): Rectangle {
                             height: 92px;
                             border-radius: 8px;
                             background: item.is-current-session ? #1c2738 : #181d23;
@@ -1308,7 +1335,7 @@ export component MainWindow inherits Window {
 
         VerticalBox {
             padding: 24px;
-            spacing: 16px;
+            spacing: 12px;
 
             HorizontalBox {
                 alignment: space-between;
@@ -1320,21 +1347,90 @@ export component MainWindow inherits Window {
                     font-weight: 700;
                 }
 
-                Button {
-                    text: "Fermer";
-                    clicked => { root.viewer-open = false; }
+                HorizontalBox {
+                    spacing: 6px;
+
+                    Button {
+                        text: "100%";
+                        primary: root.viewer-zoom == 100;
+                        clicked => {
+                            root.viewer-zoom = 100;
+                            root.viewer-pan-x = 0px;
+                            root.viewer-pan-y = 0px;
+                        }
+                    }
+                    Button {
+                        text: "150%";
+                        primary: root.viewer-zoom == 150;
+                        clicked => {
+                            root.viewer-zoom = 150;
+                            root.viewer-pan-x = 0px;
+                            root.viewer-pan-y = 0px;
+                        }
+                    }
+                    Button {
+                        text: "200%";
+                        primary: root.viewer-zoom == 200;
+                        clicked => {
+                            root.viewer-zoom = 200;
+                            root.viewer-pan-x = 0px;
+                            root.viewer-pan-y = 0px;
+                        }
+                    }
+                    Button {
+                        text: "Fermer";
+                        clicked => {
+                            root.viewer-open = false;
+                            root.viewer-zoom = 100;
+                            root.viewer-pan-x = 0px;
+                            root.viewer-pan-y = 0px;
+                        }
+                    }
                 }
             }
 
-            Rectangle {
+            viewer-frame := Rectangle {
+                clip: true;
                 background: #000000;
                 border-radius: 8px;
 
                 Image {
                     source: root.viewer-image;
-                    width: 100%;
-                    height: 100%;
+                    x: (parent.width - self.width) / 2 + root.viewer-pan-x;
+                    y: (parent.height - self.height) / 2 + root.viewer-pan-y;
+                    width: root.viewer-zoom == 200
+                        ? parent.width * 2
+                        : root.viewer-zoom == 150
+                            ? parent.width * 1.5
+                            : parent.width;
+                    height: root.viewer-zoom == 200
+                        ? parent.height * 2
+                        : root.viewer-zoom == 150
+                            ? parent.height * 1.5
+                            : parent.height;
                     image-fit: contain;
+                }
+
+                viewer-pan := TouchArea {
+                    enabled: root.viewer-zoom > 100;
+                    private property <length> pan-start-x;
+                    private property <length> pan-start-y;
+
+                    changed pressed => {
+                        if self.pressed {
+                            self.pan-start-x = root.viewer-pan-x;
+                            self.pan-start-y = root.viewer-pan-y;
+                        }
+                    }
+
+                    moved => {
+                        if self.pressed {
+                            root.viewer-pan-x =
+                                self.pan-start-x + self.mouse-x - self.pressed-x;
+                            root.viewer-pan-y =
+                                self.pan-start-y + self.mouse-y - self.pressed-y;
+                        }
+                    }
                 }
             }
         }
