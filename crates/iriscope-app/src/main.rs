@@ -315,14 +315,16 @@ fn camera_control_key(id: &CameraControlId) -> String {
             "uvc:{unit}:{selector}:{}",
             guid.as_deref().unwrap_or_default()
         ),
+        _ => format!("unknown:{id:?}"),
     }
 }
 
-fn default_camera_control_value(kind: &CameraControlKind) -> CameraControlValue {
+fn default_camera_control_value(kind: &CameraControlKind) -> Option<CameraControlValue> {
     match kind {
-        CameraControlKind::Integer { default, .. } => CameraControlValue::Integer(*default),
-        CameraControlKind::Boolean { default } => CameraControlValue::Boolean(*default),
-        CameraControlKind::Menu { default, .. } => CameraControlValue::Menu(*default),
+        CameraControlKind::Integer { default, .. } => Some(CameraControlValue::Integer(*default)),
+        CameraControlKind::Boolean { default } => Some(CameraControlValue::Boolean(*default)),
+        CameraControlKind::Menu { default, .. } => Some(CameraControlValue::Menu(*default)),
+        _ => None,
     }
 }
 
@@ -376,12 +378,14 @@ fn camera_control_ui_data(state: &CameraControlRuntimeState) -> CameraControlUiD
             data.value = *value as f32;
         }
         (kind, _) => {
-            let fallback = default_camera_control_value(kind);
-            return camera_control_ui_data(&CameraControlRuntimeState {
-                key: state.key.clone(),
-                descriptor: state.descriptor.clone(),
-                value: fallback,
-            });
+            if let Some(fallback) = default_camera_control_value(kind) {
+                return camera_control_ui_data(&CameraControlRuntimeState {
+                    key: state.key.clone(),
+                    descriptor: state.descriptor.clone(),
+                    value: fallback,
+                });
+            }
+            data.read_only = true;
         }
     }
 
@@ -491,15 +495,14 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 .controls
                 .iter()
                 .cloned()
-                .map(|descriptor| {
-                    let value = device
-                        .control_value(&descriptor.id)
-                        .unwrap_or_else(|_| default_camera_control_value(&descriptor.kind));
-                    CameraControlRuntimeState {
+                .filter_map(|descriptor| {
+                    let fallback = default_camera_control_value(&descriptor.kind)?;
+                    let value = device.control_value(&descriptor.id).unwrap_or(fallback);
+                    Some(CameraControlRuntimeState {
                         key: camera_control_key(&descriptor.id),
                         descriptor,
                         value,
-                    }
+                    })
                 })
                 .collect::<Vec<_>>();
             if let Ok(mut controls) = camera_controls_worker.lock() {
@@ -1216,7 +1219,9 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         };
         if let Ok(mut controls) = controls_reset.lock() {
             for state in controls.iter_mut() {
-                state.value = default_camera_control_value(&state.descriptor.kind);
+                if let Some(value) = default_camera_control_value(&state.descriptor.kind) {
+                    state.value = value;
+                }
             }
             set_camera_control_model(&win, &controls);
         }
