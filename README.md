@@ -6,7 +6,7 @@ d'un iridoscope Firefly DE400 / Infoxelle Digital Microscope.
 ## État du développement
 
 Les étapes 1 à 4 mettent en place le workspace Rust partagé, sa validation
-continue, l'abstraction caméra commune et la détection native. Les crates sont
+locale, l'abstraction caméra commune et la détection native. Les crates sont
 séparées selon leurs responsabilités afin de garder le cœur métier indépendant
 des API caméra natives :
 
@@ -29,18 +29,24 @@ L'énumération utilise V4L2 sous Linux, Media Foundation sous Windows et
 AVFoundation sous macOS. Le backend Linux ignore les nœuds de métadonnées et
 associe les nœuds de capture à l'identité USB trouvée dans sysfs.
 
-## Intégration continue
+## Validation locale
 
-Le workflow GitHub Actions vérifie chaque push et chaque pull request sur :
+Les vérifications sont exécutées sur la machine de développement avec :
 
-- Linux x86_64 ;
-- Windows x86_64 ;
-- macOS Intel ;
-- macOS Apple Silicon.
+```text
+./scripts/ci-local.sh
+```
 
-Il compile et teste le workspace avec Rust 1.89.0. Un job Linux séparé vérifie
-également le formatage et exécute Clippy avec les avertissements traités comme
-des erreurs.
+Ce script vérifie le formatage, compile, exécute Clippy et lance les tests sur
+Linux. Il contrôle aussi par compilation croisée les cibles Windows x86_64,
+macOS Intel et macOS Apple Silicon. Les binaires natifs Windows et macOS devront
+être exécutés sur les machines correspondantes lorsqu'elles seront disponibles.
+
+Pour inclure la détection de la caméra branchée :
+
+```text
+./scripts/ci-local.sh --hardware
+```
 
 ## Vérification locale
 
