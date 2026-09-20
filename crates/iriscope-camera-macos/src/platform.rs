@@ -10,7 +10,12 @@ use std::{
 };
 
 use av_foundation::{
-    capture_device::{AVCaptureDevice, AVCaptureDeviceFormat},
+    capture_device::{
+        AVCaptureDevice, AVCaptureDeviceFormat, AVCaptureExposureModeAutoExpose,
+        AVCaptureExposureModeContinuousAutoExposure, AVCaptureExposureModeCustom,
+        AVCaptureExposureModeLocked, AVCaptureWhiteBalanceModeAutoWhiteBalance,
+        AVCaptureWhiteBalanceModeContinuousAutoWhiteBalance, AVCaptureWhiteBalanceModeLocked,
+    },
     capture_input::AVCaptureDeviceInput,
     capture_output_base::AVCaptureOutput,
     capture_session::{AVCaptureConnection, AVCaptureSession},
@@ -39,8 +44,9 @@ use iriscope_core::camera::{
     StreamConfiguration,
 };
 use iriscope_core::capabilities::{
-    CameraCapabilities, CameraControlId, CameraControlValue, CameraMode, FrameRate, PixelFormat,
-    Resolution,
+    CameraCapabilities, CameraControlDescriptor, CameraControlId, CameraControlKind,
+    CameraControlMenuItem, CameraControlValue, CameraMode, FrameRate, PixelFormat, Resolution,
+    StandardCameraControl,
 };
 use objc2::{
     AnyThread, define_class, msg_send,
@@ -130,6 +136,16 @@ struct MacAvFoundationDevice {
 enum WorkerCommand {
     Start(StreamConfiguration, SyncSender<CameraResult<()>>),
     Stop(SyncSender<CameraResult<()>>),
+    GetControl(
+        CameraControlId,
+        SyncSender<CameraResult<CameraControlValue>>,
+    ),
+    SetControl(
+        CameraControlId,
+        CameraControlValue,
+        SyncSender<CameraResult<()>>,
+    ),
+    ResetControls(SyncSender<CameraResult<()>>),
     Shutdown,
 }
 
@@ -193,20 +209,54 @@ impl CameraDevice for MacAvFoundationDevice {
         }
     }
 
-    fn control_value(&self, _control_id: &CameraControlId) -> CameraResult<CameraControlValue> {
-        Err(controls_unavailable())
+    fn control_value(&self, control_id: &CameraControlId) -> CameraResult<CameraControlValue> {
+        let (response_sender, response_receiver) = mpsc::sync_channel(1);
+        self.command_sender
+            .send(WorkerCommand::GetControl(
+                control_id.clone(),
+                response_sender,
+            ))
+            .map_err(|error| worker_channel_error("reading an AVFoundation control", error))?;
+        response_receiver.recv().map_err(|error| {
+            CameraError::new(
+                CameraErrorKind::Backend,
+                format!("AVFoundation worker stopped while reading a control: {error}"),
+            )
+        })?
     }
 
     fn set_control_value(
         &mut self,
-        _control_id: &CameraControlId,
-        _value: &CameraControlValue,
+        control_id: &CameraControlId,
+        value: &CameraControlValue,
     ) -> CameraResult<()> {
-        Err(controls_unavailable())
+        let (response_sender, response_receiver) = mpsc::sync_channel(1);
+        self.command_sender
+            .send(WorkerCommand::SetControl(
+                control_id.clone(),
+                value.clone(),
+                response_sender,
+            ))
+            .map_err(|error| worker_channel_error("setting an AVFoundation control", error))?;
+        response_receiver.recv().map_err(|error| {
+            CameraError::new(
+                CameraErrorKind::Backend,
+                format!("AVFoundation worker stopped while setting a control: {error}"),
+            )
+        })?
     }
 
     fn reset_controls(&mut self) -> CameraResult<()> {
-        Ok(())
+        let (response_sender, response_receiver) = mpsc::sync_channel(1);
+        self.command_sender
+            .send(WorkerCommand::ResetControls(response_sender))
+            .map_err(|error| worker_channel_error("resetting AVFoundation controls", error))?;
+        response_receiver.recv().map_err(|error| {
+            CameraError::new(
+                CameraErrorKind::Backend,
+                format!("AVFoundation worker stopped while resetting controls: {error}"),
+            )
+        })?
     }
 }
 
@@ -328,6 +378,15 @@ fn mac_device_worker(
                     stop_mac_stream(&stream);
                 }
                 let _ = response_sender.send(Ok(()));
+            }
+            WorkerCommand::GetControl(control_id, response_sender) => {
+                let _ = response_sender.send(mac_control_value(&device, &control_id));
+            }
+            WorkerCommand::SetControl(control_id, value, response_sender) => {
+                let _ = response_sender.send(set_mac_control_value(&device, &control_id, &value));
+            }
+            WorkerCommand::ResetControls(response_sender) => {
+                let _ = response_sender.send(reset_mac_controls(&device));
             }
             WorkerCommand::Shutdown => break,
         }
@@ -805,7 +864,7 @@ fn capabilities_from_device(device: &AVCaptureDevice) -> CameraCapabilities {
 
     CameraCapabilities {
         modes,
-        controls: Vec::new(),
+        controls: mac_control_descriptors(device),
     }
 }
 
@@ -823,9 +882,230 @@ fn worker_channel_error<T: std::fmt::Display>(context: &str, error: T) -> Camera
     CameraError::new(CameraErrorKind::Backend, format!("{context}: {error}"))
 }
 
-fn controls_unavailable() -> CameraError {
-    CameraError::new(
-        CameraErrorKind::Unsupported,
-        "AVFoundation camera controls are not implemented yet",
-    )
+fn mac_control_descriptors(device: &AVCaptureDevice) -> Vec<CameraControlDescriptor> {
+    let mut controls = Vec::new();
+
+    let white_balance_auto_supported =
+        device
+            .is_white_balance_mode_supported(AVCaptureWhiteBalanceModeContinuousAutoWhiteBalance)
+            .is_true()
+            || device
+                .is_white_balance_mode_supported(AVCaptureWhiteBalanceModeAutoWhiteBalance)
+                .is_true();
+    let white_balance_lock_supported = device
+        .is_white_balance_mode_supported(AVCaptureWhiteBalanceModeLocked)
+        .is_true();
+
+    if white_balance_auto_supported && white_balance_lock_supported {
+        controls.push(CameraControlDescriptor {
+            id: CameraControlId::Standard(StandardCameraControl::WhiteBalanceAutomatic),
+            name: "Balance des blancs automatique".to_owned(),
+            kind: CameraControlKind::Boolean {
+                default: device.white_balance_mode() != AVCaptureWhiteBalanceModeLocked,
+            },
+            read_only: false,
+        });
+    }
+
+    let mut exposure_items = Vec::new();
+    for (value, mode, label) in [
+        (0_i64, AVCaptureExposureModeLocked, "Verrouillée"),
+        (1_i64, AVCaptureExposureModeAutoExpose, "Automatique"),
+        (
+            2_i64,
+            AVCaptureExposureModeContinuousAutoExposure,
+            "Automatique continue",
+        ),
+        (3_i64, AVCaptureExposureModeCustom, "Manuelle"),
+    ] {
+        if device.is_exposure_mode_supported(mode).is_true() {
+            exposure_items.push(CameraControlMenuItem {
+                value,
+                label: label.to_owned(),
+            });
+        }
+    }
+
+    if exposure_items.len() > 1 {
+        controls.push(CameraControlDescriptor {
+            id: CameraControlId::Standard(StandardCameraControl::ExposureMode),
+            name: "Mode d'exposition".to_owned(),
+            kind: CameraControlKind::Menu {
+                items: exposure_items,
+                default: mac_exposure_mode_value(device.exposure_mode()),
+            },
+            read_only: false,
+        });
+    }
+
+    controls
+}
+
+fn mac_exposure_mode_value(mode: isize) -> i64 {
+    if mode == AVCaptureExposureModeLocked {
+        0
+    } else if mode == AVCaptureExposureModeAutoExpose {
+        1
+    } else if mode == AVCaptureExposureModeContinuousAutoExposure {
+        2
+    } else if mode == AVCaptureExposureModeCustom {
+        3
+    } else {
+        0
+    }
+}
+
+fn exposure_mode_from_value(value: i64) -> Option<isize> {
+    match value {
+        0 => Some(AVCaptureExposureModeLocked),
+        1 => Some(AVCaptureExposureModeAutoExpose),
+        2 => Some(AVCaptureExposureModeContinuousAutoExposure),
+        3 => Some(AVCaptureExposureModeCustom),
+        _ => None,
+    }
+}
+
+fn mac_control_value(
+    device: &AVCaptureDevice,
+    control_id: &CameraControlId,
+) -> CameraResult<CameraControlValue> {
+    match control_id {
+        CameraControlId::Standard(StandardCameraControl::WhiteBalanceAutomatic) => {
+            Ok(CameraControlValue::Boolean(
+                device.white_balance_mode() != AVCaptureWhiteBalanceModeLocked,
+            ))
+        }
+        CameraControlId::Standard(StandardCameraControl::ExposureMode) => Ok(
+            CameraControlValue::Menu(mac_exposure_mode_value(device.exposure_mode())),
+        ),
+        _ => Err(CameraError::new(
+            CameraErrorKind::Unsupported,
+            "AVFoundation does not expose this camera control",
+        )),
+    }
+}
+
+fn set_mac_control_value(
+    device: &AVCaptureDevice,
+    control_id: &CameraControlId,
+    value: &CameraControlValue,
+) -> CameraResult<()> {
+    match (control_id, value) {
+        (
+            CameraControlId::Standard(StandardCameraControl::WhiteBalanceAutomatic),
+            CameraControlValue::Boolean(automatic),
+        ) => {
+            let requested = if *automatic
+                && device
+                    .is_white_balance_mode_supported(
+                        AVCaptureWhiteBalanceModeContinuousAutoWhiteBalance,
+                    )
+                    .is_true()
+            {
+                AVCaptureWhiteBalanceModeContinuousAutoWhiteBalance
+            } else if *automatic {
+                AVCaptureWhiteBalanceModeAutoWhiteBalance
+            } else {
+                AVCaptureWhiteBalanceModeLocked
+            };
+
+            if !device.is_white_balance_mode_supported(requested).is_true() {
+                return Err(CameraError::new(
+                    CameraErrorKind::Unsupported,
+                    "requested AVFoundation white-balance mode is unavailable",
+                ));
+            }
+
+            device.lock_for_configuration().map_err(|error| {
+                CameraError::new(
+                    CameraErrorKind::Backend,
+                    format!("locking AVFoundation white-balance control: {error:?}"),
+                )
+            })?;
+            device.set_white_balance_mode(requested);
+            device.unlock_for_configuration();
+            Ok(())
+        }
+        (
+            CameraControlId::Standard(StandardCameraControl::ExposureMode),
+            CameraControlValue::Menu(value),
+        ) => {
+            let requested = exposure_mode_from_value(*value).ok_or_else(|| {
+                CameraError::new(
+                    CameraErrorKind::InvalidConfiguration,
+                    "unknown AVFoundation exposure mode",
+                )
+            })?;
+            if !device.is_exposure_mode_supported(requested).is_true() {
+                return Err(CameraError::new(
+                    CameraErrorKind::Unsupported,
+                    "requested AVFoundation exposure mode is unavailable",
+                ));
+            }
+
+            device.lock_for_configuration().map_err(|error| {
+                CameraError::new(
+                    CameraErrorKind::Backend,
+                    format!("locking AVFoundation exposure control: {error:?}"),
+                )
+            })?;
+            device.set_exposure_mode(requested);
+            device.unlock_for_configuration();
+            Ok(())
+        }
+        _ => Err(CameraError::new(
+            CameraErrorKind::InvalidConfiguration,
+            "camera control value does not match the AVFoundation control",
+        )),
+    }
+}
+
+fn reset_mac_controls(device: &AVCaptureDevice) -> CameraResult<()> {
+    let white_balance = if device
+        .is_white_balance_mode_supported(AVCaptureWhiteBalanceModeContinuousAutoWhiteBalance)
+        .is_true()
+    {
+        Some(AVCaptureWhiteBalanceModeContinuousAutoWhiteBalance)
+    } else if device
+        .is_white_balance_mode_supported(AVCaptureWhiteBalanceModeAutoWhiteBalance)
+        .is_true()
+    {
+        Some(AVCaptureWhiteBalanceModeAutoWhiteBalance)
+    } else {
+        None
+    };
+
+    let exposure = if device
+        .is_exposure_mode_supported(AVCaptureExposureModeContinuousAutoExposure)
+        .is_true()
+    {
+        Some(AVCaptureExposureModeContinuousAutoExposure)
+    } else if device
+        .is_exposure_mode_supported(AVCaptureExposureModeAutoExpose)
+        .is_true()
+    {
+        Some(AVCaptureExposureModeAutoExpose)
+    } else {
+        None
+    };
+
+    if white_balance.is_none() && exposure.is_none() {
+        return Ok(());
+    }
+
+    device.lock_for_configuration().map_err(|error| {
+        CameraError::new(
+            CameraErrorKind::Backend,
+            format!("locking AVFoundation controls for reset: {error:?}"),
+        )
+    })?;
+
+    if let Some(mode) = white_balance {
+        device.set_white_balance_mode(mode);
+    }
+    if let Some(mode) = exposure {
+        device.set_exposure_mode(mode);
+    }
+    device.unlock_for_configuration();
+    Ok(())
 }
