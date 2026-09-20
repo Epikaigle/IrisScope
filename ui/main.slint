@@ -640,11 +640,6 @@ export component MainWindow inherits Window {
                                         primary: root.selected-eye == 2;
                                         clicked => { root.selected-eye = 2; }
                                     }
-                                    Button {
-                                        text: "—";
-                                        primary: root.selected-eye == 0;
-                                        clicked => { root.selected-eye = 0; }
-                                    }
                                 }
                             }
 
@@ -680,7 +675,11 @@ export component MainWindow inherits Window {
                             Button {
                                 text: root.is-video-mode ? (root.is-recording ? "■ Arrêter Enreg." : "● Démarrer Vidéo") : "📷 Capturer Photo";
                                 primary: true;
-                                enabled: root.is-streaming;
+                                enabled: root.is-recording
+                                    || (root.is-streaming
+                                        && root.patient-first-name != ""
+                                        && root.patient-last-name != ""
+                                        && root.selected-eye != 0);
                                 clicked => {
                                     if root.is-video-mode {
                                         root.toggle-recording();
@@ -688,6 +687,16 @@ export component MainWindow inherits Window {
                                         root.trigger-capture();
                                     }
                                 }
+                            }
+
+                            if !root.is-recording
+                                && (root.patient-first-name == ""
+                                    || root.patient-last-name == ""
+                                    || root.selected-eye == 0): Text {
+                                text: "Prénom, nom et œil requis";
+                                color: #f59e0b;
+                                font-size: 11px;
+                                vertical-alignment: center;
                             }
                         }
 

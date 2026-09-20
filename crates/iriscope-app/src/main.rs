@@ -105,6 +105,23 @@ fn physical_button_mode_index(behavior: PhysicalButtonBehavior) -> i32 {
     }
 }
 
+fn capture_session_from_window(win: &MainWindow) -> Result<CaptureSession, &'static str> {
+    let first_name = win.get_patient_first_name().to_string();
+    let last_name = win.get_patient_last_name().to_string();
+
+    if first_name.trim().is_empty() || last_name.trim().is_empty() {
+        return Err("Renseignez le prénom et le nom avant la capture.");
+    }
+
+    let eye = match win.get_selected_eye() {
+        1 => Eye::Left,
+        2 => Eye::Right,
+        _ => return Err("Sélectionnez l'œil gauche ou droit avant la capture."),
+    };
+
+    Ok(CaptureSession::new(first_name, last_name, eye))
+}
+
 fn dispatch_hardware_button(win: &MainWindow, behavior: PhysicalButtonBehavior) {
     match behavior {
         PhysicalButtonBehavior::FollowMode => {
@@ -860,15 +877,14 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             return;
         };
 
-        let first = win.get_patient_first_name().to_string();
-        let last = win.get_patient_last_name().to_string();
-        let eye = match win.get_selected_eye() {
-            1 => Eye::Left,
-            2 => Eye::Right,
-            _ => Eye::Unspecified,
+        let session = match capture_session_from_window(&win) {
+            Ok(session) => session,
+            Err(message) => {
+                win.set_last_capture_message(message.into());
+                win.set_show_last_capture(true);
+                return;
+            }
         };
-
-        let session = CaptureSession::new(&first, &last, eye);
         if let Ok(mut guard) = session_cap.lock() {
             *guard = session.clone();
         }
@@ -1050,15 +1066,14 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             refresh_lib_for_win(&win, &recording_settings.capture_directory, &session_rec);
         } else {
             // Start recording
-            let first = win.get_patient_first_name().to_string();
-            let last = win.get_patient_last_name().to_string();
-            let eye = match win.get_selected_eye() {
-                1 => Eye::Left,
-                2 => Eye::Right,
-                _ => Eye::Unspecified,
+            let session = match capture_session_from_window(&win) {
+                Ok(session) => session,
+                Err(message) => {
+                    win.set_last_capture_message(message.into());
+                    win.set_show_last_capture(true);
+                    return;
+                }
             };
-
-            let session = CaptureSession::new(&first, &last, eye);
             if let Ok(mut current_session) = session_rec.lock() {
                 *current_session = session.clone();
             }
