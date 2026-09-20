@@ -50,7 +50,7 @@ use objc2_foundation::{NSObject, NSObjectProtocol, NSString};
 
 use crate::capabilities::{frame_rate_from_duration_parts, merge_mode, pixel_format_from_ostype};
 
-/// Native macOS camera backend using AVFoundation.
+/// Native macOS camera backend using `AVFoundation`.
 #[derive(Debug, Default)]
 pub struct MacAvFoundationBackend;
 
@@ -289,7 +289,7 @@ fn mac_device_worker(
         match command {
             WorkerCommand::Start(configuration, response_sender) => {
                 if let Some(stream) = active_stream.take() {
-                    stop_mac_stream(stream);
+                    stop_mac_stream(&stream);
                 }
                 let result = start_mac_stream(&device, &configuration, event_sender.clone());
                 match result {
@@ -304,7 +304,7 @@ fn mac_device_worker(
             }
             WorkerCommand::Stop(response_sender) => {
                 if let Some(stream) = active_stream.take() {
-                    stop_mac_stream(stream);
+                    stop_mac_stream(&stream);
                 }
                 let _ = response_sender.send(Ok(()));
             }
@@ -313,7 +313,7 @@ fn mac_device_worker(
     }
 
     if let Some(stream) = active_stream {
-        stop_mac_stream(stream);
+        stop_mac_stream(&stream);
     }
 }
 
@@ -385,7 +385,7 @@ fn start_mac_stream(
     })
 }
 
-fn stop_mac_stream(stream: MacStream) {
+fn stop_mac_stream(stream: &MacStream) {
     stream.session.stop_running();
     set_callback_state(None, None);
 }
@@ -552,8 +552,9 @@ fn handle_sample_buffer(sample_buffer_ref: CMSampleBufferRef) {
     let result = frame_from_sample_buffer(&sample_buffer, &configuration, sequence_number);
     if let Some(event) = result.transpose() {
         match sender.try_send(event.map(CameraEvent::Frame)) {
-            Ok(()) | Err(TrySendError::Full(_)) => {}
-            Err(TrySendError::Disconnected(_)) => {}
+            Ok(())
+            | Err(TrySendError::Full(_))
+            | Err(TrySendError::Disconnected(_)) => {}
         }
     }
 }
