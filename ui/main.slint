@@ -720,7 +720,7 @@ export component MainWindow inherits Window {
                             Button {
                                 text: "↻ " + root.rotation-angle + "°";
                                 clicked => {
-                                    root.rotation-angle = (root.rotation-angle + 90) % 360;
+                                    root.rotation-angle = Math.mod(root.rotation-angle + 90, 360);
                                 }
                             }
 

@@ -348,6 +348,7 @@ fn default_camera_control_value(kind: &CameraControlKind) -> Option<CameraContro
     }
 }
 
+#[allow(clippy::cast_precision_loss)]
 fn camera_control_ui_data(state: &CameraControlRuntimeState) -> CameraControlUiData {
     let mut data = CameraControlUiData {
         key: state.key.clone().into(),
@@ -420,6 +421,7 @@ fn set_camera_control_model(win: &MainWindow, states: &[CameraControlRuntimeStat
     win.set_camera_controls(ModelRc::new(VecModel::from(rows)));
 }
 
+#[allow(clippy::cast_possible_truncation)]
 fn snap_integer_control_value(
     descriptor: &CameraControlDescriptor,
     requested: f32,
@@ -533,7 +535,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 })
                 .collect::<Vec<_>>();
             if let Ok(mut controls) = camera_controls_worker.lock() {
-                *controls = discovered_controls.clone();
+                controls.clone_from(&discovered_controls);
             }
 
             let Some((pref_mode, pref_fps)) = device.capabilities().preferred_mode() else {
