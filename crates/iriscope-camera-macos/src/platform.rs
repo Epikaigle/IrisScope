@@ -552,9 +552,7 @@ fn handle_sample_buffer(sample_buffer_ref: CMSampleBufferRef) {
     let result = frame_from_sample_buffer(&sample_buffer, &configuration, sequence_number);
     if let Some(event) = result.transpose() {
         match sender.try_send(event.map(CameraEvent::Frame)) {
-            Ok(())
-            | Err(TrySendError::Full(_))
-            | Err(TrySendError::Disconnected(_)) => {}
+            Ok(()) | Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_)) => {}
         }
     }
 }
