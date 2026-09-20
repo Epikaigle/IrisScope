@@ -885,13 +885,12 @@ fn worker_channel_error<T: std::fmt::Display>(context: &str, error: T) -> Camera
 fn mac_control_descriptors(device: &AVCaptureDevice) -> Vec<CameraControlDescriptor> {
     let mut controls = Vec::new();
 
-    let white_balance_auto_supported =
-        device
-            .is_white_balance_mode_supported(AVCaptureWhiteBalanceModeContinuousAutoWhiteBalance)
-            .is_true()
-            || device
-                .is_white_balance_mode_supported(AVCaptureWhiteBalanceModeAutoWhiteBalance)
-                .is_true();
+    let white_balance_auto_supported = device
+        .is_white_balance_mode_supported(AVCaptureWhiteBalanceModeContinuousAutoWhiteBalance)
+        .is_true()
+        || device
+            .is_white_balance_mode_supported(AVCaptureWhiteBalanceModeAutoWhiteBalance)
+            .is_true();
     let white_balance_lock_supported = device
         .is_white_balance_mode_supported(AVCaptureWhiteBalanceModeLocked)
         .is_true();
