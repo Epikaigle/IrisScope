@@ -1383,10 +1383,11 @@ fn spawn_hardware_button_listener(
 
             if is_button_event && last_trigger.elapsed() >= Duration::from_millis(600) {
                 last_trigger = Instant::now();
+                let settings_event = Arc::clone(&settings);
                 let _ = weak_win.upgrade_in_event_loop(move |win| {
                     dispatch_hardware_button(
                         &win,
-                        settings_snapshot(&settings).physical_button_behavior,
+                        settings_snapshot(&settings_event).physical_button_behavior,
                     );
                 });
             }
