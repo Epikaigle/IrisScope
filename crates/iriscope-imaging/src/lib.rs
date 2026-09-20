@@ -168,6 +168,11 @@ pub fn resize_rgb8_to_fit(
 }
 
 /// Converts packed BGRA8 bytes into packed RGB8 bytes.
+///
+/// # Errors
+///
+/// Returns `ImagingError::InvalidBufferSize` when the source buffer is smaller
+/// than the dimensions require or the calculated frame size overflows.
 pub fn convert_bgra8_to_rgb8(
     bgra: &[u8],
     width: u32,
