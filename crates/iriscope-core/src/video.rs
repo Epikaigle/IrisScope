@@ -65,6 +65,11 @@ impl AviMjpegWriter {
     ///
     /// When the requested filename already exists, a numeric suffix is appended
     /// before the extension until a new file can be created atomically.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error when the filename is invalid, the destination directory
+    /// cannot be created, or the file cannot be opened for writing.
     pub fn create_unique(
         directory: &Path,
         file_name: &str,

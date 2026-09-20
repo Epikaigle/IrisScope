@@ -132,9 +132,7 @@ pub fn decode_mjpeg_to_rgb8(jpeg_data: &[u8]) -> Result<(u32, u32, Vec<u8>), Ima
 }
 
 /// Decodes a supported still-image file (JPEG or PNG) into RGB8.
-pub fn decode_image_to_rgb8(
-    image_data: &[u8],
-) -> Result<(u32, u32, Vec<u8>), ImagingError> {
+pub fn decode_image_to_rgb8(image_data: &[u8]) -> Result<(u32, u32, Vec<u8>), ImagingError> {
     let decoded = image::load_from_memory(image_data)
         .map_err(|error| ImagingError::ImageDecode(error.to_string()))?;
     let rgb = decoded.to_rgb8();

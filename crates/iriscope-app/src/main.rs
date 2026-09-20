@@ -822,8 +822,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             if let Ok(bytes) = std::fs::read(path)
                 && let Ok((width, height, rgb)) = decode_image_to_rgb8(&bytes)
             {
-                let pixels =
-                    SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(&rgb, width, height);
+                let pixels = SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(&rgb, width, height);
                 win.set_viewer_image(slint::Image::from_rgb8(pixels));
                 win.set_viewer_open(true);
             }
