@@ -124,8 +124,7 @@ pub fn record_capture_metadata(
     index.entries.insert(
         file_name.to_owned(),
         StoredCaptureMetadata {
-            first_name: (!session.first_name().is_empty())
-                .then(|| session.first_name().to_owned()),
+            first_name: (!session.first_name().is_empty()).then(|| session.first_name().to_owned()),
             last_name: (!session.last_name().is_empty()).then(|| session.last_name().to_owned()),
             eye: session.eye(),
             kind,
@@ -220,8 +219,7 @@ pub fn scan_library_directory(directory: &Path) -> Vec<LibraryEntry> {
                     .file_stem()
                     .and_then(|stem| stem.to_str())
                     .unwrap_or("");
-                let (first_name, last_name, eye, date_str, time_str) =
-                    parse_filename(file_stem);
+                let (first_name, last_name, eye, date_str, time_str) = parse_filename(file_stem);
                 (first_name, last_name, eye, date_str, time_str, None)
             };
 
@@ -439,14 +437,8 @@ mod tests {
             second: 12,
         };
 
-        record_capture_metadata(
-            &dir,
-            &file,
-            &session,
-            CaptureKind::Photo,
-            timestamp,
-        )
-        .expect("record capture metadata");
+        record_capture_metadata(&dir, &file, &session, CaptureKind::Photo, timestamp)
+            .expect("record capture metadata");
 
         let entries = scan_library_directory(&dir);
         assert_eq!(entries.len(), 1);
@@ -458,5 +450,4 @@ mod tests {
 
         std::fs::remove_dir_all(dir).expect("remove test directory");
     }
-
 }
