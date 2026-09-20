@@ -14,7 +14,7 @@ use std::{
 
 use crate::capabilities::FrameRate;
 
-/// Lightweight reader for MJPEG AVI files produced by IrisScope.
+/// Lightweight reader for MJPEG AVI files produced by `IrisScope`.
 ///
 /// Only compressed-frame offsets are kept in memory. JPEG payloads are read lazily.
 pub struct AviMjpegReader {
@@ -24,7 +24,7 @@ pub struct AviMjpegReader {
 }
 
 impl AviMjpegReader {
-    /// Opens an IrisScope MJPEG AVI and indexes its video frames.
+    /// Opens an `IrisScope` MJPEG AVI and indexes its video frames.
     ///
     /// # Errors
     ///
@@ -48,11 +48,13 @@ impl AviMjpegReader {
             ));
         }
 
-        let microseconds_per_frame = u32::from_le_bytes(
-            header[32..36]
-                .try_into()
-                .expect("four-byte AVI timing field"),
-        );
+        let timing_bytes = header.get(32..36).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "AVI timing field is missing")
+        })?;
+        let timing_bytes: [u8; 4] = timing_bytes.try_into().map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidData, "AVI timing field is invalid")
+        })?;
+        let microseconds_per_frame = u32::from_le_bytes(timing_bytes);
         let frame_rate = FrameRate::new(1_000_000, microseconds_per_frame).ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidData, "invalid AVI frame timing")
         })?;
@@ -66,8 +68,12 @@ impl AviMjpegReader {
             file.read_exact(&mut chunk_header)?;
 
             let chunk_id = &chunk_header[..4];
-            let size =
-                u32::from_le_bytes(chunk_header[4..8].try_into().expect("four-byte chunk size"));
+            let size = u32::from_le_bytes([
+                chunk_header[4],
+                chunk_header[5],
+                chunk_header[6],
+                chunk_header[7],
+            ]);
 
             if chunk_id == b"idx1" {
                 break;
@@ -126,8 +132,10 @@ impl AviMjpegReader {
         })?;
 
         self.file.seek(SeekFrom::Start(offset))?;
-        let mut bytes =
-            vec![0_u8; usize::try_from(size).expect("u32 AVI frame size always fits usize")];
+        let frame_size = usize::try_from(size).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidData, "AVI frame is too large for this platform")
+        })?;
+        let mut bytes = vec![0_u8; frame_size];
         self.file.read_exact(&mut bytes)?;
         Ok(bytes)
     }

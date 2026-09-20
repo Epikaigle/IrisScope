@@ -732,10 +732,9 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                                     return;
                                 }
 
-                                let pixel_buffer =
-                                    SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(
-                                        &raw_rgb, width, height,
-                                    );
+                                let pixel_buffer = SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(
+                                    &raw_rgb, width, height,
+                                );
                                 win.set_live_frame(slint::Image::from_rgb8(pixel_buffer));
                             });
                         }
