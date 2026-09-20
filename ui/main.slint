@@ -26,6 +26,18 @@ export struct LibraryItemData {
     is-current-session: bool,
 }
 
+export struct CameraControlUiData {
+    key: string,
+    name: string,
+    kind: int, // 0: integer, 1: boolean, 2: menu
+    minimum: float,
+    maximum: float,
+    value: float,
+    boolean-value: bool,
+    menu-label: string,
+    read-only: bool,
+}
+
 export component MainWindow inherits Window {
     title: "IrisScope - Digital Microscope";
     min-width: 1024px;
@@ -70,16 +82,8 @@ export component MainWindow inherits Window {
     in-out property <string> last-capture-path: "";
     in-out property <int> session-photo-count: 0;
 
-    // Réglages caméra
-    in-out property <float> brightness-val: 127;
-    in-out property <float> contrast-val: 15;
-    in-out property <float> saturation-val: 15;
-    in-out property <float> hue-val: 0;
-    in-out property <float> gamma-val: 64;
-    in-out property <float> sharpness-val: 13;
-    in-out property <bool> white-balance-auto: true;
-    in-out property <float> white-balance-manual: 128;
-    in-out property <int> power-line-frequency: 2; // 0: Off, 1: 50Hz, 2: 60Hz
+    // Réglages caméra détectés au runtime
+    in-out property <[CameraControlUiData]> camera-controls: [];
 
     // Bibliothèque
     in-out property <[LibraryItemData]> library-items: [];
@@ -98,8 +102,9 @@ export component MainWindow inherits Window {
     callback clear-session();
     callback toggle-freeze();
     callback reset-camera-controls();
-    callback set-control-requested(string, float);
-    callback set-white-balance-auto-requested(bool);
+    callback set-camera-control-value(string, float);
+    callback set-camera-control-bool(string, bool);
+    callback cycle-camera-control-menu(string);
     callback refresh-library();
     callback open-capture-directory();
 
@@ -664,128 +669,119 @@ export component MainWindow inherits Window {
             if root.current-tab == 1: VerticalBox {
                 padding: 24px;
                 spacing: 16px;
-                alignment: start;
-
-                Text {
-                    text: "Réglages Caméra en Temps Réel";
-                    font-size: 20px;
-                    font-weight: 700;
-                    color: #ffffff;
-                }
 
                 HorizontalBox {
-                    spacing: 24px;
+                    alignment: space-between;
 
                     VerticalBox {
-                        width: 400px;
-                        spacing: 12px;
-
-                        Text { text: "Luminosité (" + root.brightness-val + ")"; color: #e5e7eb; }
-                        Slider {
-                            minimum: 0;
-                            maximum: 255;
-                            value <=> root.brightness-val;
-                            changed => { root.set-control-requested("brightness", self.value); }
+                        spacing: 4px;
+                        Text {
+                            text: "Réglages caméra en temps réel";
+                            font-size: 20px;
+                            font-weight: 700;
+                            color: #ffffff;
                         }
-
-                        Text { text: "Contraste (" + root.contrast-val + ")"; color: #e5e7eb; }
-                        Slider {
-                            minimum: 0;
-                            maximum: 31;
-                            value <=> root.contrast-val;
-                            changed => { root.set-control-requested("contrast", self.value); }
-                        }
-
-                        Text { text: "Saturation (" + root.saturation-val + ")"; color: #e5e7eb; }
-                        Slider {
-                            minimum: 0;
-                            maximum: 31;
-                            value <=> root.saturation-val;
-                            changed => { root.set-control-requested("saturation", self.value); }
-                        }
-
-                        Text { text: "Teinte (" + root.hue-val + ")"; color: #e5e7eb; }
-                        Slider {
-                            minimum: -180;
-                            maximum: 180;
-                            value <=> root.hue-val;
-                            changed => { root.set-control-requested("hue", self.value); }
+                        Text {
+                            text: "Les contrôles affichés proviennent directement de la caméra connectée.";
+                            font-size: 12px;
+                            color: #9ca3af;
                         }
                     }
 
+                    Button {
+                        text: "Valeurs d'origine";
+                        enabled: root.camera-controls.length > 0;
+                        clicked => { root.reset-camera-controls(); }
+                    }
+                }
+
+                if root.camera-controls.length == 0: Rectangle {
+                    height: 90px;
+                    border-radius: 8px;
+                    background: #1c2127;
+
+                    Text {
+                        text: root.camera-connected
+                            ? "Aucun contrôle caméra n'est exposé par ce backend pour le moment."
+                            : "Connectez le DE400 pour afficher ses réglages.";
+                        color: #9ca3af;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        wrap: word-wrap;
+                    }
+                }
+
+                ScrollView {
                     VerticalBox {
-                        width: 400px;
-                        spacing: 12px;
+                        spacing: 10px;
 
-                        Text { text: "Gamma (" + root.gamma-val + ")"; color: #e5e7eb; }
-                        Slider {
-                            minimum: 0;
-                            maximum: 127;
-                            value <=> root.gamma-val;
-                            changed => { root.set-control-requested("gamma", self.value); }
-                        }
+                        for control in root.camera-controls: Rectangle {
+                            height: control.kind == 0 ? 94px : 68px;
+                            border-radius: 8px;
+                            background: #1c2127;
 
-                        Text { text: "Netteté (" + root.sharpness-val + ")"; color: #e5e7eb; }
-                        Slider {
-                            minimum: 0;
-                            maximum: 15;
-                            value <=> root.sharpness-val;
-                            changed => { root.set-control-requested("sharpness", self.value); }
-                        }
+                            VerticalBox {
+                                padding: 12px;
+                                spacing: 8px;
 
-                        HorizontalBox {
-                            Text { text: "Balance des blancs auto"; color: #e5e7eb; vertical-alignment: center; }
-                            Button {
-                                text: root.white-balance-auto ? "Activée" : "Manuelle";
-                                clicked => {
-                                    root.white-balance-auto = !root.white-balance-auto;
-                                    root.set-white-balance-auto-requested(root.white-balance-auto);
+                                HorizontalBox {
+                                    alignment: space-between;
+
+                                    Text {
+                                        text: control.name;
+                                        color: #e5e7eb;
+                                        font-size: 14px;
+                                        font-weight: 600;
+                                    }
+
+                                    if control.read-only: Text {
+                                        text: "Lecture seule";
+                                        color: #9ca3af;
+                                        font-size: 11px;
+                                    }
+                                }
+
+                                if control.kind == 0: HorizontalBox {
+                                    spacing: 12px;
+
+                                    Slider {
+                                        minimum: control.minimum;
+                                        maximum: control.maximum;
+                                        value: control.value;
+                                        enabled: !control.read-only;
+                                        changed => {
+                                            root.set-camera-control-value(control.key, self.value);
+                                        }
+                                    }
+
+                                    Text {
+                                        width: 72px;
+                                        text: round(control.value * 100) / 100;
+                                        color: #ffffff;
+                                        horizontal-alignment: right;
+                                        vertical-alignment: center;
+                                    }
+                                }
+
+                                if control.kind == 1: Button {
+                                    text: control.boolean-value ? "Activé" : "Désactivé";
+                                    enabled: !control.read-only;
+                                    clicked => {
+                                        root.set-camera-control-bool(
+                                            control.key,
+                                            !control.boolean-value
+                                        );
+                                    }
+                                }
+
+                                if control.kind == 2: Button {
+                                    text: control.menu-label;
+                                    enabled: !control.read-only;
+                                    clicked => {
+                                        root.cycle-camera-control-menu(control.key);
+                                    }
                                 }
                             }
-                        }
-
-                        if !root.white-balance-auto: VerticalBox {
-                            spacing: 4px;
-                            Text { text: "Balance manuelle (" + root.white-balance-manual + ")"; color: #e5e7eb; }
-                            Slider {
-                                minimum: 0;
-                                maximum: 255;
-                                value <=> root.white-balance-manual;
-                                changed => { root.set-control-requested("white_balance_temperature", self.value); }
-                            }
-                        }
-
-                        HorizontalBox {
-                            Text { text: "Anti-scintillement: "; color: #e5e7eb; vertical-alignment: center; }
-                            Button {
-                                text: "Off";
-                                primary: root.power-line-frequency == 0;
-                                clicked => {
-                                    root.power-line-frequency = 0;
-                                    root.set-control-requested("power_line_frequency", 0);
-                                }
-                            }
-                            Button {
-                                text: "50 Hz";
-                                primary: root.power-line-frequency == 1;
-                                clicked => {
-                                    root.power-line-frequency = 1;
-                                    root.set-control-requested("power_line_frequency", 1);
-                                }
-                            }
-                            Button {
-                                text: "60 Hz";
-                                primary: root.power-line-frequency == 2;
-                                clicked => {
-                                    root.power-line-frequency = 2;
-                                    root.set-control-requested("power_line_frequency", 2);
-                                }
-                            }
-                        }
-
-                        Button {
-                            text: "Réinitialiser les réglages aux valeurs par défaut";
-                            clicked => { root.reset-camera-controls(); }
                         }
                     }
                 }

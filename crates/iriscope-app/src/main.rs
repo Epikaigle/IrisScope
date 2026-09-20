@@ -10,7 +10,10 @@ use std::{
 
 use iriscope_core::{
     camera::{CameraEvent, CapturedFrame, StreamConfiguration},
-    capabilities::{CameraControlId, CameraControlValue, PixelFormat, StandardCameraControl},
+    capabilities::{
+        CameraControlDescriptor, CameraControlId, CameraControlKind, CameraControlValue,
+        PixelFormat,
+    },
     capture::LatestFrame,
     library::{CaptureKind, LibraryFilter, present_library_items, scan_library_directory},
     session::{CaptureSession, Eye},
@@ -293,6 +296,127 @@ fn load_library_items(
         .collect()
 }
 
+#[derive(Clone)]
+struct CameraControlRuntimeState {
+    key: String,
+    descriptor: CameraControlDescriptor,
+    value: CameraControlValue,
+}
+
+fn camera_control_key(id: &CameraControlId) -> String {
+    match id {
+        CameraControlId::Standard(control) => format!("standard:{control:?}"),
+        CameraControlId::PlatformSpecific(name) => format!("platform:{name}"),
+        CameraControlId::UvcExtension {
+            unit,
+            selector,
+            guid,
+        } => format!(
+            "uvc:{unit}:{selector}:{}",
+            guid.as_deref().unwrap_or_default()
+        ),
+    }
+}
+
+fn default_camera_control_value(kind: &CameraControlKind) -> CameraControlValue {
+    match kind {
+        CameraControlKind::Integer { default, .. } => CameraControlValue::Integer(*default),
+        CameraControlKind::Boolean { default } => CameraControlValue::Boolean(*default),
+        CameraControlKind::Menu { default, .. } => CameraControlValue::Menu(*default),
+    }
+}
+
+fn camera_control_ui_data(state: &CameraControlRuntimeState) -> CameraControlUiData {
+    let mut data = CameraControlUiData {
+        key: state.key.clone().into(),
+        name: state.descriptor.name.clone().into(),
+        kind: 0,
+        minimum: 0.0,
+        maximum: 1.0,
+        value: 0.0,
+        boolean_value: false,
+        menu_label: "".into(),
+        read_only: state.descriptor.read_only,
+    };
+
+    match (&state.descriptor.kind, &state.value) {
+        (
+            CameraControlKind::Integer {
+                minimum,
+                maximum,
+                default,
+                ..
+            },
+            CameraControlValue::Integer(value),
+        ) => {
+            data.kind = 0;
+            data.minimum = *minimum as f32;
+            data.maximum = *maximum as f32;
+            data.value = *value as f32;
+            if !data.value.is_finite() {
+                data.value = *default as f32;
+            }
+        }
+        (CameraControlKind::Boolean { default }, CameraControlValue::Boolean(value)) => {
+            data.kind = 1;
+            data.boolean_value = *value;
+            if state.descriptor.read_only {
+                data.boolean_value = *default;
+            }
+        }
+        (CameraControlKind::Menu { items, default }, CameraControlValue::Menu(value)) => {
+            data.kind = 2;
+            let active = items
+                .iter()
+                .find(|item| item.value == *value)
+                .or_else(|| items.iter().find(|item| item.value == *default));
+            data.menu_label = active
+                .map_or_else(|| value.to_string(), |item| item.label.clone())
+                .into();
+            data.value = *value as f32;
+        }
+        (kind, _) => {
+            let fallback = default_camera_control_value(kind);
+            return camera_control_ui_data(&CameraControlRuntimeState {
+                key: state.key.clone(),
+                descriptor: state.descriptor.clone(),
+                value: fallback,
+            });
+        }
+    }
+
+    data
+}
+
+fn set_camera_control_model(win: &MainWindow, states: &[CameraControlRuntimeState]) {
+    let rows = states
+        .iter()
+        .map(camera_control_ui_data)
+        .collect::<Vec<_>>();
+    win.set_camera_controls(ModelRc::new(VecModel::from(rows)));
+}
+
+fn snap_integer_control_value(
+    descriptor: &CameraControlDescriptor,
+    requested: f32,
+) -> Option<CameraControlValue> {
+    let CameraControlKind::Integer {
+        minimum,
+        maximum,
+        step,
+        ..
+    } = descriptor.kind
+    else {
+        return None;
+    };
+
+    let step = step.max(1);
+    let requested = requested.round() as i64;
+    let clamped = requested.clamp(minimum, maximum);
+    let snapped = minimum + ((clamped - minimum) / step) * step;
+    Some(CameraControlValue::Integer(snapped))
+}
+
 #[allow(clippy::too_many_lines)]
 fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     let main_window = MainWindow::new()?;
@@ -311,6 +435,8 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     let recording_start: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
     let last_toast_time: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
     let frozen_frame: Arc<Mutex<Option<CapturedFrame>>> = Arc::new(Mutex::new(None));
+    let camera_controls: Arc<Mutex<Vec<CameraControlRuntimeState>>> =
+        Arc::new(Mutex::new(Vec::new()));
 
     let (cmd_tx, cmd_rx) = mpsc::channel::<WorkerCommand>();
 
@@ -322,6 +448,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     let rec_start_clone = Arc::clone(&recording_start);
     let toast_clone = Arc::clone(&last_toast_time);
     let active_stream_configuration_worker = Arc::clone(&active_stream_configuration);
+    let camera_controls_worker = Arc::clone(&camera_controls);
     let settings_worker = Arc::clone(&settings);
 
     thread::spawn(move || {
@@ -359,6 +486,26 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             };
 
+            let discovered_controls = device
+                .capabilities()
+                .controls
+                .iter()
+                .cloned()
+                .map(|descriptor| {
+                    let value = device
+                        .control_value(&descriptor.id)
+                        .unwrap_or_else(|_| default_camera_control_value(&descriptor.kind));
+                    CameraControlRuntimeState {
+                        key: camera_control_key(&descriptor.id),
+                        descriptor,
+                        value,
+                    }
+                })
+                .collect::<Vec<_>>();
+            if let Ok(mut controls) = camera_controls_worker.lock() {
+                *controls = discovered_controls.clone();
+            }
+
             let Some((pref_mode, pref_fps)) = device.capabilities().preferred_mode() else {
                 thread::sleep(Duration::from_secs(1));
                 continue;
@@ -387,6 +534,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 let format_text = config.pixel_format.to_string();
                 let res_text = config.resolution.to_string();
                 let fps_text = format!("{:.2} fps", config.frame_rate.frames_per_second());
+                let controls = discovered_controls.clone();
 
                 move |win| {
                     win.set_camera_connected(true);
@@ -402,6 +550,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                     diag.active_resolution = res_text.into();
                     diag.active_fps = fps_text.into();
                     win.set_diagnostics(diag);
+                    set_camera_control_model(&win, &controls);
                 }
             });
 
@@ -538,6 +687,12 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                         if let Ok(mut active) = active_stream_configuration_worker.lock() {
                             *active = None;
                         }
+                        if let Ok(mut controls) = camera_controls_worker.lock() {
+                            controls.clear();
+                        }
+                        let _ = main_weak.upgrade_in_event_loop(|win| {
+                            win.set_camera_controls(ModelRc::new(VecModel::from(Vec::new())));
+                        });
                         break;
                     }
                     _ => {}
@@ -921,39 +1076,116 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // Camera control adjustments
-    let cmd_tx_ctrl = cmd_tx.clone();
-    main_window.on_set_control_requested(move |name, value| {
-        let id = match name.as_str() {
-            "brightness" => CameraControlId::Standard(StandardCameraControl::Brightness),
-            "contrast" => CameraControlId::Standard(StandardCameraControl::Contrast),
-            "saturation" => CameraControlId::Standard(StandardCameraControl::Saturation),
-            "hue" => CameraControlId::Standard(StandardCameraControl::Hue),
-            "gamma" => CameraControlId::Standard(StandardCameraControl::Gamma),
-            "sharpness" => CameraControlId::Standard(StandardCameraControl::Sharpness),
-            "white_balance_temperature" => {
-                CameraControlId::Standard(StandardCameraControl::WhiteBalanceManual)
-            }
-            "power_line_frequency" => {
-                CameraControlId::Standard(StandardCameraControl::PowerLineFrequency)
-            }
-            _ => CameraControlId::PlatformSpecific(name.to_string()),
+    // Camera controls discovered dynamically from the active backend.
+    let cmd_tx_value = cmd_tx.clone();
+    let controls_value = Arc::clone(&camera_controls);
+    let weak_value = main_window.as_weak();
+    main_window.on_set_camera_control_value(move |key, requested| {
+        let Some(win) = weak_value.upgrade() else {
+            return;
         };
-
-        #[allow(clippy::cast_possible_truncation)]
-        let val = CameraControlValue::Integer(value.round() as i64);
-        let _ = cmd_tx_ctrl.send(WorkerCommand::SetControl(id, val));
+        let Ok(mut controls) = controls_value.lock() else {
+            return;
+        };
+        let Some(state) = controls.iter_mut().find(|state| state.key == key.as_str()) else {
+            return;
+        };
+        if state.descriptor.read_only {
+            return;
+        }
+        let Some(value) = snap_integer_control_value(&state.descriptor, requested) else {
+            return;
+        };
+        state.value = value.clone();
+        let _ = cmd_tx_value.send(WorkerCommand::SetControl(
+            state.descriptor.id.clone(),
+            value,
+        ));
+        set_camera_control_model(&win, &controls);
     });
 
-    let cmd_tx_wb = cmd_tx.clone();
-    main_window.on_set_white_balance_auto_requested(move |is_auto| {
-        let id = CameraControlId::Standard(StandardCameraControl::WhiteBalanceAutomatic);
-        let val = CameraControlValue::Boolean(is_auto);
-        let _ = cmd_tx_wb.send(WorkerCommand::SetControl(id, val));
+    let cmd_tx_bool = cmd_tx.clone();
+    let controls_bool = Arc::clone(&camera_controls);
+    let weak_bool = main_window.as_weak();
+    main_window.on_set_camera_control_bool(move |key, requested| {
+        let Some(win) = weak_bool.upgrade() else {
+            return;
+        };
+        let Ok(mut controls) = controls_bool.lock() else {
+            return;
+        };
+        let Some(state) = controls.iter_mut().find(|state| state.key == key.as_str()) else {
+            return;
+        };
+        if state.descriptor.read_only
+            || !matches!(state.descriptor.kind, CameraControlKind::Boolean { .. })
+        {
+            return;
+        }
+        let value = CameraControlValue::Boolean(requested);
+        state.value = value.clone();
+        let _ = cmd_tx_bool.send(WorkerCommand::SetControl(
+            state.descriptor.id.clone(),
+            value,
+        ));
+        set_camera_control_model(&win, &controls);
+    });
+
+    let cmd_tx_menu = cmd_tx.clone();
+    let controls_menu = Arc::clone(&camera_controls);
+    let weak_menu = main_window.as_weak();
+    main_window.on_cycle_camera_control_menu(move |key| {
+        let Some(win) = weak_menu.upgrade() else {
+            return;
+        };
+        let Ok(mut controls) = controls_menu.lock() else {
+            return;
+        };
+        let Some(state) = controls.iter_mut().find(|state| state.key == key.as_str()) else {
+            return;
+        };
+        if state.descriptor.read_only {
+            return;
+        }
+
+        let CameraControlKind::Menu { items, .. } = &state.descriptor.kind else {
+            return;
+        };
+        if items.is_empty() {
+            return;
+        }
+
+        let current = match state.value {
+            CameraControlValue::Menu(value) => value,
+            _ => items[0].value,
+        };
+        let current_index = items
+            .iter()
+            .position(|item| item.value == current)
+            .unwrap_or_default();
+        let next = items[(current_index + 1) % items.len()].value;
+        let value = CameraControlValue::Menu(next);
+        state.value = value.clone();
+        let _ = cmd_tx_menu.send(WorkerCommand::SetControl(
+            state.descriptor.id.clone(),
+            value,
+        ));
+        set_camera_control_model(&win, &controls);
     });
 
     let cmd_tx_reset = cmd_tx.clone();
+    let controls_reset = Arc::clone(&camera_controls);
+    let weak_reset = main_window.as_weak();
     main_window.on_reset_camera_controls(move || {
+        let Some(win) = weak_reset.upgrade() else {
+            return;
+        };
+        if let Ok(mut controls) = controls_reset.lock() {
+            for state in controls.iter_mut() {
+                state.value = default_camera_control_value(&state.descriptor.kind);
+            }
+            set_camera_control_model(&win, &controls);
+        }
         let _ = cmd_tx_reset.send(WorkerCommand::ResetControls);
     });
 
