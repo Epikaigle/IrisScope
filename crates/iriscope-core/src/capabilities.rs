@@ -279,13 +279,15 @@ impl CameraCapabilities {
             .find(|mode| mode.pixel_format == *pixel_format && mode.resolution == resolution)
     }
 
-    /// Selects the strongest advertised mode before runtime measurements are available.
+    /// Returns advertised modes from strongest to weakest before runtime measurements exist.
     ///
     /// Resolution is ranked first, followed by advertised frame rate and a deterministic
-    /// format preference. Runtime benchmarks may replace this initial choice later.
+    /// format preference. Each format/resolution pair appears once with its highest advertised
+    /// frame rate.
     #[must_use]
-    pub fn preferred_mode(&self) -> Option<(&CameraMode, FrameRate)> {
-        self.modes
+    pub fn ranked_modes(&self) -> Vec<(&CameraMode, FrameRate)> {
+        let mut modes = self
+            .modes
             .iter()
             .filter_map(|mode| {
                 mode.frame_rates
@@ -294,13 +296,25 @@ impl CameraCapabilities {
                     .max()
                     .map(|frame_rate| (mode, frame_rate))
             })
-            .max_by_key(|(mode, frame_rate)| {
-                (
-                    mode.resolution.pixel_count(),
-                    *frame_rate,
-                    pixel_format_preference(&mode.pixel_format),
-                )
-            })
+            .collect::<Vec<_>>();
+
+        modes.sort_by_key(|(mode, frame_rate)| {
+            std::cmp::Reverse((
+                mode.resolution.pixel_count(),
+                *frame_rate,
+                pixel_format_preference(&mode.pixel_format),
+            ))
+        });
+        modes
+    }
+
+    /// Selects the strongest advertised mode before runtime measurements are available.
+    ///
+    /// Runtime benchmarks or backend start failures may cause callers to choose a later
+    /// candidate from Self::ranked_modes.
+    #[must_use]
+    pub fn preferred_mode(&self) -> Option<(&CameraMode, FrameRate)> {
+        self.ranked_modes().into_iter().next()
     }
 }
 
@@ -353,6 +367,40 @@ mod tests {
 
         assert!(mode.supports_frame_rate(frame_rate));
         assert_eq!(resolution.pixel_count(), 1_310_720);
+    }
+
+    #[test]
+    fn ranked_modes_preserve_preference_order_for_fallbacks() {
+        let high_resolution = Resolution::new(1280, 1024);
+        let capabilities = CameraCapabilities {
+            modes: vec![
+                CameraMode {
+                    pixel_format: PixelFormat::Yuyv,
+                    resolution: high_resolution,
+                    frame_rates: vec![FrameRate::new(25, 4).expect("valid frame rate")],
+                },
+                CameraMode {
+                    pixel_format: PixelFormat::Mjpeg,
+                    resolution: high_resolution,
+                    frame_rates: vec![FrameRate::new(25, 4).expect("valid frame rate")],
+                },
+                CameraMode {
+                    pixel_format: PixelFormat::Mjpeg,
+                    resolution: Resolution::new(640, 480),
+                    frame_rates: vec![FrameRate::new(30, 1).expect("valid frame rate")],
+                },
+            ],
+            controls: Vec::new(),
+        };
+
+        let ranked = capabilities.ranked_modes();
+
+        assert_eq!(ranked.len(), 3);
+        assert_eq!(ranked[0].0.pixel_format, PixelFormat::Mjpeg);
+        assert_eq!(ranked[0].0.resolution, high_resolution);
+        assert_eq!(ranked[0].1, FrameRate::new(25, 4).expect("valid frame rate"));
+        assert_eq!(ranked[1].0.pixel_format, PixelFormat::Yuyv);
+        assert_eq!(ranked[2].0.resolution, Resolution::new(640, 480));
     }
 
     #[test]
