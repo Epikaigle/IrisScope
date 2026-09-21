@@ -311,7 +311,7 @@ impl CameraCapabilities {
     /// Selects the strongest advertised mode before runtime measurements are available.
     ///
     /// Runtime benchmarks or backend start failures may cause callers to choose a later
-    /// candidate from Self::ranked_modes.
+    /// candidate from `Self::ranked_modes`.
     #[must_use]
     pub fn preferred_mode(&self) -> Option<(&CameraMode, FrameRate)> {
         self.ranked_modes().into_iter().next()
