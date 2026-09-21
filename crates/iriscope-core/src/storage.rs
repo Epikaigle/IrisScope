@@ -1,5 +1,6 @@
 //! Capture naming and storage policies.
 
+use chrono::{Datelike, Local, Timelike};
 use std::{
     ffi::OsStr,
     fs::{self, OpenOptions},
@@ -30,31 +31,18 @@ pub struct CaptureTimestamp {
 }
 
 impl CaptureTimestamp {
-    /// Obtains the current UTC timestamp.
+    /// Obtains the current local timestamp.
     #[must_use]
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_possible_wrap,
-        clippy::cast_sign_loss
-    )]
     pub fn now() -> Self {
-        let duration = std::time::SystemTime::now()
-            .duration_since(std::time::SystemTime::UNIX_EPOCH)
-            .unwrap_or_default();
-        let secs = duration.as_secs();
-        let second = (secs % 60) as u8;
-        let minute = ((secs / 60) % 60) as u8;
-        let hour = ((secs / 3600) % 24) as u8;
-        let days = (secs / 86400) as i64;
-        let (year, month, day) = days_to_civil(days);
+        let now = Local::now();
 
         Self {
-            year: year as u16,
-            month: month as u8,
-            day: day as u8,
-            hour,
-            minute,
-            second,
+            year: u16::try_from(now.year()).unwrap_or(1970),
+            month: u8::try_from(now.month()).unwrap_or(1),
+            day: u8::try_from(now.day()).unwrap_or(1),
+            hour: u8::try_from(now.hour()).unwrap_or_default(),
+            minute: u8::try_from(now.minute()).unwrap_or_default(),
+            second: u8::try_from(now.second()).unwrap_or_default(),
         }
     }
 
@@ -65,26 +53,6 @@ impl CaptureTimestamp {
     fn time(self) -> String {
         format!("{:02}-{:02}-{:02}", self.hour, self.minute, self.second)
     }
-}
-
-#[allow(
-    clippy::cast_possible_truncation,
-    clippy::cast_possible_wrap,
-    clippy::cast_sign_loss,
-    clippy::similar_names
-)]
-const fn days_to_civil(days: i64) -> (i32, u32, u32) {
-    let z = days + 719_468;
-    let era = (if z >= 0 { z } else { z - 146_096 }) / 146_097;
-    let doe = (z - era * 146_097) as u32;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
-    let y = (yoe as i64) + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    (y as i32, m, d)
 }
 
 /// Configurable policy used to name captures without changing their pixels.
