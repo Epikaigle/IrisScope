@@ -112,6 +112,31 @@ fn video_frame_for_progress(progress: f32, frame_count: u64) -> u64 {
     (normalized * frame_count.saturating_sub(1) as f32).round() as u64
 }
 
+#[cfg(test)]
+mod playback_tests {
+    use super::{format_playback_time, video_frame_for_progress, video_progress};
+
+    #[test]
+    fn formats_video_time_for_short_and_long_clips() {
+        assert_eq!(format_playback_time(65.9), "01:05");
+        assert_eq!(format_playback_time(3_661.2), "01:01:01");
+    }
+
+    #[test]
+    fn converts_timeline_progress_to_frame_index() {
+        assert_eq!(video_frame_for_progress(0.0, 101), 0);
+        assert_eq!(video_frame_for_progress(500.0, 101), 50);
+        assert_eq!(video_frame_for_progress(1_000.0, 101), 100);
+        assert_eq!(video_frame_for_progress(1_500.0, 101), 100);
+    }
+
+    #[test]
+    fn converts_frame_index_to_timeline_progress() {
+        let progress = video_progress(50, 101);
+        assert!((progress - 500.0).abs() < f32::EPSILON);
+    }
+}
+
 enum WorkerCommand {
     SetControl(CameraControlId, CameraControlValue),
     ResetControls,
