@@ -47,6 +47,7 @@ slint::include_modules!();
 
 const DE400_VENDOR_ID: u16 = 0x21cd;
 const DE400_PRODUCT_ID: u16 = 0x603b;
+const NO_VIDEO_SEEK: u64 = u64::MAX;
 
 fn is_de400(descriptor: &CameraDescriptor) -> bool {
     descriptor
@@ -67,6 +68,48 @@ fn camera_error_status(kind: CameraErrorKind) -> &'static str {
         }
         _ => "Erreur caméra",
     }
+}
+
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn format_playback_time(seconds: f64) -> String {
+    let total_seconds = seconds.max(0.0).floor() as u64;
+    let hours = total_seconds / 3_600;
+    let minutes = (total_seconds % 3_600) / 60;
+    let seconds = total_seconds % 60;
+
+    if hours > 0 {
+        format!("{hours:02}:{minutes:02}:{seconds:02}")
+    } else {
+        format!("{minutes:02}:{seconds:02}")
+    }
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn video_time_seconds(frame_index: usize, fps: f64) -> f64 {
+    frame_index as f64 / fps.max(0.5)
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn video_progress(frame_index: usize, frame_count: usize) -> f32 {
+    if frame_count <= 1 {
+        return 0.0;
+    }
+
+    (frame_index as f32 / (frame_count - 1) as f32) * 1_000.0
+}
+
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss
+)]
+fn video_frame_for_progress(progress: f32, frame_count: u64) -> u64 {
+    if frame_count <= 1 {
+        return 0;
+    }
+
+    let normalized = progress.clamp(0.0, 1_000.0) / 1_000.0;
+    (normalized * frame_count.saturating_sub(1) as f32).round() as u64
 }
 
 enum WorkerCommand {
@@ -580,6 +623,8 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     let frozen_frame: Arc<Mutex<Option<CapturedFrame>>> = Arc::new(Mutex::new(None));
     let viewer_generation = Arc::new(AtomicU64::new(0));
     let viewer_video_playing = Arc::new(AtomicBool::new(false));
+    let viewer_video_frame_count = Arc::new(AtomicU64::new(0));
+    let viewer_video_seek_request = Arc::new(AtomicU64::new(NO_VIDEO_SEEK));
     let camera_controls: Arc<Mutex<Vec<CameraControlRuntimeState>>> =
         Arc::new(Mutex::new(Vec::new()));
 
@@ -1299,6 +1344,8 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     let weak_viewer = main_window.as_weak();
     let viewer_generation_open = Arc::clone(&viewer_generation);
     let viewer_playing_open = Arc::clone(&viewer_video_playing);
+    let viewer_frame_count_open = Arc::clone(&viewer_video_frame_count);
+    let viewer_seek_open = Arc::clone(&viewer_video_seek_request);
     main_window.on_open_capture_file(move |file_path_str| {
         let Some(win) = weak_viewer.upgrade() else {
             return;
@@ -1317,6 +1364,8 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         if matches!(extension.as_str(), "jpg" | "jpeg" | "png") {
             viewer_generation_open.fetch_add(1, Ordering::Relaxed);
             viewer_playing_open.store(false, Ordering::Relaxed);
+            viewer_frame_count_open.store(0, Ordering::Relaxed);
+            viewer_seek_open.store(NO_VIDEO_SEEK, Ordering::Relaxed);
 
             if let Ok(bytes) = std::fs::read(&path)
                 && let Ok((width, height, rgb)) = decode_image_to_rgb8(&bytes)
@@ -1325,6 +1374,9 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 win.set_viewer_image(slint::Image::from_rgb8(pixels));
                 win.set_viewer_is_video(false);
                 win.set_viewer_video_playing(false);
+                win.set_viewer_video_progress(0.0);
+                win.set_viewer_video_position("00:00".into());
+                win.set_viewer_video_duration("00:00".into());
                 win.set_viewer_open(true);
             }
             return;
@@ -1344,58 +1396,101 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             return;
         };
 
+        let frame_count = reader.frame_count();
+        let fps = reader.frame_rate().frames_per_second().max(0.5);
+        let frame_count_u64 = u64::try_from(frame_count).unwrap_or(u64::MAX);
         let generation = viewer_generation_open
             .fetch_add(1, Ordering::Relaxed)
             .saturating_add(1);
         viewer_playing_open.store(true, Ordering::Relaxed);
+        viewer_frame_count_open.store(frame_count_u64, Ordering::Relaxed);
+        viewer_seek_open.store(NO_VIDEO_SEEK, Ordering::Relaxed);
         win.set_viewer_is_video(true);
         win.set_viewer_video_playing(true);
+        win.set_viewer_video_progress(0.0);
+        win.set_viewer_video_position("00:00".into());
+        win.set_viewer_video_duration(format_playback_time(video_time_seconds(frame_count, fps)).into());
         win.set_viewer_open(true);
 
         let weak_playback = weak_viewer.clone();
         let generation_state = Arc::clone(&viewer_generation_open);
         let playing_state = Arc::clone(&viewer_playing_open);
+        let seek_state = Arc::clone(&viewer_seek_open);
 
         thread::spawn(move || {
-            let frame_count = reader.frame_count();
-            let fps = reader.frame_rate().frames_per_second().max(0.5);
             let frame_duration = Duration::from_secs_f64(1.0 / fps);
             let mut frame_index = 0_usize;
+            let mut rendered_once = false;
 
             while generation_state.load(Ordering::Relaxed) == generation {
-                if !playing_state.load(Ordering::Relaxed) {
+                let requested_seek = seek_state.swap(NO_VIDEO_SEEK, Ordering::Relaxed);
+                if requested_seek != NO_VIDEO_SEEK {
+                    frame_index = usize::try_from(requested_seek)
+                        .unwrap_or(usize::MAX)
+                        .min(frame_count.saturating_sub(1));
+                }
+
+                let playing = playing_state.load(Ordering::Relaxed);
+                if !playing && requested_seek == NO_VIDEO_SEEK && rendered_once {
                     thread::sleep(Duration::from_millis(20));
                     continue;
                 }
 
+                let frame_started = Instant::now();
                 let Ok(jpeg) = reader.read_frame(frame_index) else {
                     break;
                 };
                 let jpeg = ensure_jpeg_has_dht(&jpeg);
 
                 if let Ok((width, height, rgb)) = decode_mjpeg_to_rgb8(&jpeg) {
+                    let progress = video_progress(frame_index, frame_count);
+                    let position = format_playback_time(video_time_seconds(frame_index, fps));
                     let _ = weak_playback.upgrade_in_event_loop(move |viewer| {
                         let pixels =
                             SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(&rgb, width, height);
                         viewer.set_viewer_image(slint::Image::from_rgb8(pixels));
+                        viewer.set_viewer_video_progress(progress);
+                        viewer.set_viewer_video_position(position.into());
                     });
+                    rendered_once = true;
                 }
 
-                frame_index = (frame_index + 1) % frame_count;
-                thread::sleep(frame_duration);
+                if playing {
+                    frame_index = (frame_index + 1) % frame_count;
+                    let remaining = frame_duration.saturating_sub(frame_started.elapsed());
+                    if !remaining.is_zero() {
+                        thread::sleep(remaining);
+                    }
+                } else {
+                    thread::sleep(Duration::from_millis(20));
+                }
+            }
+
+            if generation_state.load(Ordering::Relaxed) == generation {
+                playing_state.store(false, Ordering::Relaxed);
+                let _ = weak_playback.upgrade_in_event_loop(|viewer| {
+                    viewer.set_viewer_video_playing(false);
+                });
             }
         });
     });
 
     let viewer_generation_close = Arc::clone(&viewer_generation);
     let viewer_playing_close = Arc::clone(&viewer_video_playing);
+    let viewer_frame_count_close = Arc::clone(&viewer_video_frame_count);
+    let viewer_seek_close = Arc::clone(&viewer_video_seek_request);
     let weak_close_viewer = main_window.as_weak();
     main_window.on_close_viewer(move || {
         viewer_generation_close.fetch_add(1, Ordering::Relaxed);
         viewer_playing_close.store(false, Ordering::Relaxed);
+        viewer_frame_count_close.store(0, Ordering::Relaxed);
+        viewer_seek_close.store(NO_VIDEO_SEEK, Ordering::Relaxed);
         if let Some(win) = weak_close_viewer.upgrade() {
             win.set_viewer_is_video(false);
             win.set_viewer_video_playing(false);
+            win.set_viewer_video_progress(0.0);
+            win.set_viewer_video_position("00:00".into());
+            win.set_viewer_video_duration("00:00".into());
         }
     });
 
@@ -1407,6 +1502,18 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         if let Some(win) = weak_toggle_viewer.upgrade() {
             win.set_viewer_video_playing(playing);
         }
+    });
+
+    let viewer_frame_count_seek = Arc::clone(&viewer_video_frame_count);
+    let viewer_seek_request = Arc::clone(&viewer_video_seek_request);
+    main_window.on_seek_viewer_video(move |progress| {
+        let frame_count = viewer_frame_count_seek.load(Ordering::Relaxed);
+        if frame_count == 0 {
+            return;
+        }
+
+        let frame_index = video_frame_for_progress(progress, frame_count);
+        viewer_seek_request.store(frame_index, Ordering::Relaxed);
     });
 
     // Freeze frame
