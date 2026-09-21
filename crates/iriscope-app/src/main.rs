@@ -595,6 +595,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     let active_stream_configuration_worker = Arc::clone(&active_stream_configuration);
     let camera_controls_worker = Arc::clone(&camera_controls);
     let settings_worker = Arc::clone(&settings);
+    let frozen_frame_worker = Arc::clone(&frozen_frame);
 
     thread::spawn(move || {
         let mut backend = platform_camera::create_backend();
@@ -698,6 +699,10 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 thread::sleep(Duration::from_secs(1));
                 continue;
             };
+            let _ = latest_frame_clone.take();
+            if let Ok(mut frozen) = frozen_frame_worker.lock() {
+                *frozen = None;
+            }
             if let Ok(mut active) = active_stream_configuration_worker.lock() {
                 *active = Some(config.clone());
             }
@@ -714,8 +719,9 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
 
                 move |win| {
                     win.set_camera_connected(true);
-                    win.set_is_streaming(true);
-                    win.set_status_text("DE400 Connecté".into());
+                    win.set_is_streaming(false);
+                    win.set_is_frozen(false);
+                    win.set_status_text("DE400 connecté — démarrage du flux...".into());
 
                     let mut diag = win.get_diagnostics();
                     diag.device_name = dev_name.into();
@@ -734,6 +740,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             let mut frame_count: u64 = 0;
             let mut last_stat_time = Instant::now();
             let mut stat_frames = 0;
+            let mut stream_ready_announced = false;
 
             loop {
                 // Check commands
@@ -763,6 +770,14 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                         stat_frames += 1;
 
                         latest_frame_clone.publish(frame.clone());
+
+                        if !stream_ready_announced {
+                            stream_ready_announced = true;
+                            let _ = main_weak.upgrade_in_event_loop(|win| {
+                                win.set_is_streaming(true);
+                                win.set_status_text("DE400 Connecté".into());
+                            });
+                        }
 
                         // Decode frame for Slint
                         let decode_start = Instant::now();
@@ -872,6 +887,10 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                             &rec_start_clone,
                         );
                         let _ = device.stop_stream();
+                        let _ = latest_frame_clone.take();
+                        if let Ok(mut frozen) = frozen_frame_worker.lock() {
+                            *frozen = None;
+                        }
                         if let Ok(mut active) = active_stream_configuration_worker.lock() {
                             *active = None;
                         }
@@ -882,6 +901,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                             win.set_camera_connected(false);
                             win.set_is_streaming(false);
                             win.set_is_recording(false);
+                            win.set_is_frozen(false);
                             win.set_recording_duration("00:00".into());
                             win.set_status_text(
                                 "DE400 déconnecté — reconnexion en cours...".into(),
@@ -905,6 +925,10 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                             &rec_start_clone,
                         );
                         let _ = device.stop_stream();
+                        let _ = latest_frame_clone.take();
+                        if let Ok(mut frozen) = frozen_frame_worker.lock() {
+                            *frozen = None;
+                        }
                         if let Ok(mut active) = active_stream_configuration_worker.lock() {
                             *active = None;
                         }
@@ -926,6 +950,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                             win.set_camera_connected(false);
                             win.set_is_streaming(false);
                             win.set_is_recording(false);
+                            win.set_is_frozen(false);
                             win.set_recording_duration("00:00".into());
                             win.set_status_text(status.into());
                             if recording_was_active {
