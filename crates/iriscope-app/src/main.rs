@@ -865,43 +865,6 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                             dispatch_hardware_button(&win, behavior);
                         });
                     }
-                    Err(error)
-                        if matches!(
-                            error.kind(),
-                            iriscope_core::camera::CameraErrorKind::Disconnected
-                                | iriscope_core::camera::CameraErrorKind::DeviceNotFound
-                        ) =>
-                    {
-                        let recording_was_active = finalize_recording(
-                            &is_rec_clone,
-                            &video_writer_clone,
-                            &rec_start_clone,
-                        );
-                        let _ = device.stop_stream();
-                        if let Ok(mut active) = active_stream_configuration_worker.lock() {
-                            *active = None;
-                        }
-                        if let Ok(mut controls) = camera_controls_worker.lock() {
-                            controls.clear();
-                        }
-                        let _ = main_weak.upgrade_in_event_loop(move |win| {
-                            win.set_camera_connected(false);
-                            win.set_is_streaming(false);
-                            win.set_is_recording(false);
-                            win.set_recording_duration("00:00".into());
-                            win.set_status_text(
-                                "DE400 déconnecté — reconnexion en cours...".into(),
-                            );
-                            if recording_was_active {
-                                win.set_last_capture_message(
-                                    "Vidéo arrêtée et finalisée après déconnexion caméra.".into(),
-                                );
-                                win.set_show_last_capture(true);
-                            }
-                            win.set_camera_controls(ModelRc::new(VecModel::from(Vec::new())));
-                        });
-                        break;
-                    }
                     Ok(CameraEvent::Disconnected) => {
                         let recording_was_active = finalize_recording(
                             &is_rec_clone,
@@ -935,11 +898,43 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     Err(error) if error.kind() == CameraErrorKind::TimedOut => {}
                     Err(error) => {
-                        let status = camera_error_status(error.kind());
+                        let error_kind = error.kind();
+                        let recording_was_active = finalize_recording(
+                            &is_rec_clone,
+                            &video_writer_clone,
+                            &rec_start_clone,
+                        );
+                        let _ = device.stop_stream();
+                        if let Ok(mut active) = active_stream_configuration_worker.lock() {
+                            *active = None;
+                        }
+                        if let Ok(mut controls) = camera_controls_worker.lock() {
+                            controls.clear();
+                        }
+                        let status = if matches!(
+                            error_kind,
+                            CameraErrorKind::Disconnected | CameraErrorKind::DeviceNotFound
+                        ) {
+                            "DE400 déconnecté — reconnexion en cours...".to_owned()
+                        } else {
+                            format!("{} — reconnexion en cours...", camera_error_status(error_kind))
+                        };
                         let _ = main_weak.upgrade_in_event_loop(move |win| {
+                            win.set_camera_connected(false);
+                            win.set_is_streaming(false);
+                            win.set_is_recording(false);
+                            win.set_recording_duration("00:00".into());
                             win.set_status_text(status.into());
+                            if recording_was_active {
+                                win.set_last_capture_message(
+                                    "Vidéo arrêtée et finalisée après interruption caméra.".into(),
+                                );
+                                win.set_show_last_capture(true);
+                            }
+                            win.set_camera_controls(ModelRc::new(VecModel::from(Vec::new())));
                         });
-                        thread::sleep(Duration::from_millis(50));
+                        thread::sleep(Duration::from_millis(100));
+                        break;
                     }
                     Ok(_) => {}
                 }
