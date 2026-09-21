@@ -41,7 +41,7 @@ use dispatch2::{DispatchQueue, DispatchQueueAttr, DispatchRetained};
 use iriscope_core::camera::{
     CameraBackend, CameraBackendKind, CameraDescriptor, CameraDevice, CameraDeviceEvent,
     CameraDeviceId, CameraError, CameraErrorKind, CameraEvent, CameraResult, CapturedFrame,
-    StreamConfiguration,
+    StreamConfiguration, UsbDeviceIdentity,
 };
 use iriscope_core::capabilities::{
     CameraCapabilities, CameraControlDescriptor, CameraControlId, CameraControlKind,
@@ -809,12 +809,34 @@ fn sample_timestamp(sample_buffer: &CMSampleBuffer) -> Duration {
 }
 
 fn descriptor_from_device(device: &AVCaptureDevice) -> CameraDescriptor {
+    let unique_id = device.unique_id().to_string();
+
     CameraDescriptor {
-        id: CameraDeviceId::new(device.unique_id().to_string()),
+        id: CameraDeviceId::new(unique_id.clone()),
         display_name: device.localized_name().to_string(),
         backend: CameraBackendKind::AvFoundation,
-        usb: None,
+        usb: parse_usb_identity(&unique_id),
     }
+}
+
+fn parse_usb_identity(unique_id: &str) -> Option<UsbDeviceIdentity> {
+    let hexadecimal = unique_id
+        .strip_prefix("0x")
+        .or_else(|| unique_id.strip_prefix("0X"))?;
+    let value = u64::from_str_radix(hexadecimal, 16).ok()?;
+    let vendor_id = u16::try_from((value >> 16) & 0xffff).ok()?;
+    let product_id = u16::try_from(value & 0xffff).ok()?;
+
+    if vendor_id == 0 || product_id == 0 {
+        return None;
+    }
+
+    Some(UsbDeviceIdentity {
+        vendor_id,
+        product_id,
+        serial_number: None,
+        hardware_revision: None,
+    })
 }
 
 fn capabilities_from_device(device: &AVCaptureDevice) -> CameraCapabilities {
@@ -1107,4 +1129,25 @@ fn reset_mac_controls(device: &AVCaptureDevice) -> CameraResult<()> {
     }
     device.unlock_for_configuration();
     Ok(())
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::parse_usb_identity;
+
+    #[test]
+    fn extracts_usb_identity_from_avfoundation_uvc_unique_id() {
+        let identity = parse_usb_identity("0x1420000021cd603b")
+            .expect("the AVFoundation UVC unique ID contains VID and PID");
+
+        assert_eq!(identity.vendor_id, 0x21cd);
+        assert_eq!(identity.product_id, 0x603b);
+    }
+
+    #[test]
+    fn ignores_non_uvc_avfoundation_unique_id() {
+        assert!(parse_usb_identity("FaceTime HD Camera").is_none());
+        assert!(parse_usb_identity("0x0000000000000000").is_none());
+    }
 }

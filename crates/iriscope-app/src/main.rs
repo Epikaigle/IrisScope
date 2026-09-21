@@ -9,7 +9,7 @@ use std::{
 };
 
 use iriscope_core::{
-    camera::{CameraEvent, CapturedFrame, StreamConfiguration},
+    camera::{CameraDescriptor, CameraEvent, CapturedFrame, StreamConfiguration},
     capabilities::{
         CameraControlDescriptor, CameraControlId, CameraControlKind, CameraControlValue,
         PixelFormat,
@@ -44,6 +44,15 @@ use iriscope_camera_windows as platform_camera;
 compile_error!("IrisScope currently supports Linux, Windows, and macOS");
 
 slint::include_modules!();
+
+const DE400_VENDOR_ID: u16 = 0x21cd;
+const DE400_PRODUCT_ID: u16 = 0x603b;
+
+fn is_de400(descriptor: &CameraDescriptor) -> bool {
+    descriptor.usb.as_ref().is_some_and(|usb| {
+        usb.vendor_id == DE400_VENDOR_ID && usb.product_id == DE400_PRODUCT_ID
+    })
+}
 
 enum WorkerCommand {
     SetControl(CameraControlId, CameraControlValue),
@@ -184,14 +193,10 @@ fn run_diagnose() {
         }
     }
 
-    let target = devices
-        .iter()
-        .find(|d| {
-            d.usb
-                .as_ref()
-                .is_some_and(|u| u.vendor_id == 0x21cd && u.product_id == 0x603b)
-        })
-        .unwrap_or(&devices[0]);
+    let Some(target) = devices.iter().find(|device| is_de400(device)) else {
+        println!("\nFirefly DE400 not detected.");
+        return;
+    };
 
     println!("\nOpening device: {} [{}]", target.display_name, target.id);
     let mut dev = match backend.open(&target.id) {
@@ -590,16 +595,15 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             }
 
-            // Find DE400 or use first camera
-            let target = devices
-                .iter()
-                .find(|d| {
-                    d.usb
-                        .as_ref()
-                        .is_some_and(|u| u.vendor_id == 0x21cd && u.product_id == 0x603b)
-                })
-                .unwrap_or(&devices[0])
-                .clone();
+            let Some(target) = devices.iter().find(|device| is_de400(device)).cloned() else {
+                let _ = main_weak.upgrade_in_event_loop(|win| {
+                    win.set_camera_connected(false);
+                    win.set_is_streaming(false);
+                    win.set_status_text("DE400 non détecté".into());
+                });
+                thread::sleep(Duration::from_secs(1));
+                continue;
+            };
 
             let usb_info = target.usb.as_ref().map_or_else(
                 || "N/A".to_string(),
