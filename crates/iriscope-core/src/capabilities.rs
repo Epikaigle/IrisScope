@@ -398,7 +398,10 @@ mod tests {
         assert_eq!(ranked.len(), 3);
         assert_eq!(ranked[0].0.pixel_format, PixelFormat::Mjpeg);
         assert_eq!(ranked[0].0.resolution, high_resolution);
-        assert_eq!(ranked[0].1, FrameRate::new(25, 4).expect("valid frame rate"));
+        assert_eq!(
+            ranked[0].1,
+            FrameRate::new(25, 4).expect("valid frame rate")
+        );
         assert_eq!(ranked[1].0.pixel_format, PixelFormat::Yuyv);
         assert_eq!(ranked[2].0.resolution, Resolution::new(640, 480));
     }
