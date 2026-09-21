@@ -235,20 +235,15 @@ fn decode_camera_frame_to_rgb8(frame: &CapturedFrame) -> Option<(u32, u32, Vec<u
     match frame.pixel_format {
         PixelFormat::Mjpeg => decode_mjpeg_to_rgb8(&frame.data).ok(),
         PixelFormat::Yuyv => {
-            let rgb = convert_yuyv_to_rgb8(
-                &frame.data,
-                frame.resolution.width,
-                frame.resolution.height,
-            );
+            let rgb =
+                convert_yuyv_to_rgb8(&frame.data, frame.resolution.width, frame.resolution.height);
             Some((frame.resolution.width, frame.resolution.height, rgb))
         }
-        PixelFormat::Bgra8 => convert_bgra8_to_rgb8(
-            &frame.data,
-            frame.resolution.width,
-            frame.resolution.height,
-        )
-        .ok()
-        .map(|rgb| (frame.resolution.width, frame.resolution.height, rgb)),
+        PixelFormat::Bgra8 => {
+            convert_bgra8_to_rgb8(&frame.data, frame.resolution.width, frame.resolution.height)
+                .ok()
+                .map(|rgb| (frame.resolution.width, frame.resolution.height, rgb))
+        }
         _ => None,
     }
 }
