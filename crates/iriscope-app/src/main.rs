@@ -917,7 +917,10 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                         ) {
                             "DE400 déconnecté — reconnexion en cours...".to_owned()
                         } else {
-                            format!("{} — reconnexion en cours...", camera_error_status(error_kind))
+                            format!(
+                                "{} — reconnexion en cours...",
+                                camera_error_status(error_kind)
+                            )
                         };
                         let _ = main_weak.upgrade_in_event_loop(move |win| {
                             win.set_camera_connected(false);
