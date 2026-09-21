@@ -61,7 +61,8 @@ Jean_Dupont_Droit_2026-09-20_18-42-16.jpg
 - démarrage / arrêt depuis l'interface ;
 - finalisation propre du fichier en cas de déconnexion de la caméra ;
 - classement dans la même bibliothèque que les photos ;
-- lecteur vidéo privé intégré avec lecture / pause ;
+- lecteur vidéo privé intégré avec lecture / pause, position, durée et navigation dans la timeline ;
+- cadence de lecture compensée par le temps de décodage pour rester proche du FPS enregistré ;
 - affichage du temps d'enregistrement.
 
 ### Session et nommage
@@ -88,13 +89,13 @@ IrisScope doit permettre de retrouver les captures sans devoir parcourir les dos
 La bibliothèque propose actuellement :
 
 - photos et vidéos réunies au même endroit ;
-- miniatures pour les photos ;
+- miniatures pour les photos et pour les vidéos AVI à partir de leur première image ;
 - filtres Tous / Photos / Vidéos / Session actuelle ;
 - ouverture par défaut sur la session courante lorsqu'une personne est renseignée ;
 - anonymisation du titre des captures appartenant à d'autres personnes ;
 - index local caché de métadonnées, indépendant du modèle de nom de fichier ;
 - visionneuse photo privée intégrée avec zoom / déplacement ;
-- lecteur vidéo MJPEG privé intégré ;
+- lecteur vidéo MJPEG privé intégré avec timeline et recherche dans la vidéo ;
 - accès rapide au dossier de stockage.
 
 Le stockage reste local à l'ordinateur. Aucun compte ou cloud n'est requis.
