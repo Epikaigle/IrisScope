@@ -49,9 +49,10 @@ const DE400_VENDOR_ID: u16 = 0x21cd;
 const DE400_PRODUCT_ID: u16 = 0x603b;
 
 fn is_de400(descriptor: &CameraDescriptor) -> bool {
-    descriptor.usb.as_ref().is_some_and(|usb| {
-        usb.vendor_id == DE400_VENDOR_ID && usb.product_id == DE400_PRODUCT_ID
-    })
+    descriptor
+        .usb
+        .as_ref()
+        .is_some_and(|usb| usb.vendor_id == DE400_VENDOR_ID && usb.product_id == DE400_PRODUCT_ID)
 }
 
 enum WorkerCommand {

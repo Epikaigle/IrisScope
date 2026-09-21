@@ -1131,7 +1131,6 @@ fn reset_mac_controls(device: &AVCaptureDevice) -> CameraResult<()> {
     Ok(())
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::parse_usb_identity;
