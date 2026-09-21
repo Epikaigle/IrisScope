@@ -519,7 +519,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     let settings_path = settings_file_path();
     let mut loaded_settings = AppSettings::load_from_file(&settings_path);
     if !filename_template_preserves_identity(&loaded_settings.filename_template) {
-        loaded_settings.filename_template = DEFAULT_FILENAME_TEMPLATE.to_owned();
+        DEFAULT_FILENAME_TEMPLATE.clone_into(&mut loaded_settings.filename_template);
     }
     let _ = loaded_settings.save_to_file(&settings_path);
     main_window.set_settings_capture_directory(
