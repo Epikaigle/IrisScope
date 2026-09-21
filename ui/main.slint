@@ -120,6 +120,9 @@ export component MainWindow inherits Window {
     in-out property <length> viewer-pan-y: 0px;
     in-out property <bool> viewer-is-video: false;
     in-out property <bool> viewer-video-playing: false;
+    in-out property <float> viewer-video-progress: 0;
+    in-out property <string> viewer-video-position: "00:00";
+    in-out property <string> viewer-video-duration: "00:00";
 
     // Callbacks
     callback trigger-capture();
@@ -139,6 +142,7 @@ export component MainWindow inherits Window {
     callback update-iridology-symbols-path(string);
     callback close-viewer();
     callback toggle-viewer-video();
+    callback seek-viewer-video(float);
 
     VerticalBox {
         padding: 0px;
@@ -1543,6 +1547,36 @@ export component MainWindow inherits Window {
                                 self.pan-start-y + self.mouse-y - self.pressed-y;
                         }
                     }
+                }
+            }
+
+            if root.viewer-is-video: HorizontalBox {
+                spacing: 12px;
+
+                Text {
+                    width: 56px;
+                    text: root.viewer-video-position;
+                    color: #d1d5db;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+
+                Slider {
+                    minimum: 0;
+                    maximum: 1000;
+                    value: root.viewer-video-progress;
+                    changed => {
+                        root.seek-viewer-video(self.value);
+                    }
+                }
+
+                Text {
+                    width: 56px;
+                    text: root.viewer-video-duration;
+                    color: #9ca3af;
+                    font-size: 12px;
+                    horizontal-alignment: right;
+                    vertical-alignment: center;
                 }
             }
         }
