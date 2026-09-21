@@ -423,6 +423,18 @@ fn load_thumbnail(path: &std::path::Path) -> Option<slint::Image> {
     Some(slint::Image::from_rgb8(pixels))
 }
 
+fn load_video_thumbnail(path: &std::path::Path) -> Option<slint::Image> {
+    let mut reader = AviMjpegReader::open(path).ok()?;
+    let jpeg = reader.read_frame(0).ok()?;
+    let jpeg = ensure_jpeg_has_dht(&jpeg);
+    let (width, height, rgb) = decode_mjpeg_to_rgb8(&jpeg).ok()?;
+    let (thumb_width, thumb_height, thumbnail) =
+        resize_rgb8_to_fit(&rgb, width, height, 240).ok()?;
+    let pixels =
+        SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(&thumbnail, thumb_width, thumb_height);
+    Some(slint::Image::from_rgb8(pixels))
+}
+
 fn load_library_items(
     dir: &std::path::Path,
     active_session: &CaptureSession,
@@ -433,10 +445,9 @@ fn load_library_items(
         .into_iter()
         .enumerate()
         .map(|(idx, item)| {
-            let thumbnail = if matches!(item.kind, CaptureKind::Photo) {
-                load_thumbnail(&item.file_path)
-            } else {
-                None
+            let thumbnail = match item.kind {
+                CaptureKind::Photo => load_thumbnail(&item.file_path),
+                CaptureKind::Video => load_video_thumbnail(&item.file_path),
             };
 
             LibraryItemData {
