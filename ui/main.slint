@@ -1565,8 +1565,8 @@ export component MainWindow inherits Window {
                     minimum: 0;
                     maximum: 1000;
                     value: root.viewer-video-progress;
-                    changed => {
-                        root.seek-viewer-video(self.value);
+                    released(value) => {
+                        root.seek-viewer-video(value);
                     }
                 }
 
