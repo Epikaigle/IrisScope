@@ -9,7 +9,7 @@ use std::{
 };
 
 use iriscope_core::{
-    camera::{CameraDescriptor, CameraEvent, CapturedFrame, StreamConfiguration},
+    camera::{CameraDescriptor, CameraErrorKind, CameraEvent, CapturedFrame, StreamConfiguration},
     capabilities::{
         CameraControlDescriptor, CameraControlId, CameraControlKind, CameraControlValue,
         PixelFormat,
@@ -53,6 +53,20 @@ fn is_de400(descriptor: &CameraDescriptor) -> bool {
         .usb
         .as_ref()
         .is_some_and(|usb| usb.vendor_id == DE400_VENDOR_ID && usb.product_id == DE400_PRODUCT_ID)
+}
+
+fn camera_error_status(kind: CameraErrorKind) -> &'static str {
+    match kind {
+        CameraErrorKind::PermissionDenied => "Accès caméra refusé",
+        CameraErrorKind::DeviceBusy => "DE400 déjà utilisé",
+        CameraErrorKind::BackendUnavailable | CameraErrorKind::Backend => "Caméra indisponible",
+        CameraErrorKind::DeviceNotFound | CameraErrorKind::Disconnected => "DE400 non détecté",
+        CameraErrorKind::TimedOut => "La caméra ne répond pas",
+        CameraErrorKind::Unsupported | CameraErrorKind::InvalidConfiguration => {
+            "Flux DE400 indisponible"
+        }
+        _ => "Erreur caméra",
+    }
 }
 
 enum WorkerCommand {
@@ -585,7 +599,19 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     thread::spawn(move || {
         let mut backend = platform_camera::create_backend();
         loop {
-            let devices = backend.enumerate_devices().unwrap_or_default();
+            let devices = match backend.enumerate_devices() {
+                Ok(devices) => devices,
+                Err(error) => {
+                    let status = camera_error_status(error.kind());
+                    let _ = main_weak.upgrade_in_event_loop(move |win| {
+                        win.set_camera_connected(false);
+                        win.set_is_streaming(false);
+                        win.set_status_text(status.into());
+                    });
+                    thread::sleep(Duration::from_secs(1));
+                    continue;
+                }
+            };
             if devices.is_empty() {
                 let _ = main_weak.upgrade_in_event_loop(|win| {
                     win.set_camera_connected(false);
@@ -611,9 +637,18 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 |u| format!("{:04x}:{:04x}", u.vendor_id, u.product_id),
             );
 
-            let Ok(mut device) = backend.open(&target.id) else {
-                thread::sleep(Duration::from_millis(500));
-                continue;
+            let mut device = match backend.open(&target.id) {
+                Ok(device) => device,
+                Err(error) => {
+                    let status = camera_error_status(error.kind());
+                    let _ = main_weak.upgrade_in_event_loop(move |win| {
+                        win.set_camera_connected(false);
+                        win.set_is_streaming(false);
+                        win.set_status_text(status.into());
+                    });
+                    thread::sleep(Duration::from_millis(500));
+                    continue;
+                }
             };
 
             let discovered_controls = device
@@ -655,6 +690,11 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             let Some(config) = active_config else {
+                let _ = main_weak.upgrade_in_event_loop(|win| {
+                    win.set_camera_connected(false);
+                    win.set_is_streaming(false);
+                    win.set_status_text("Flux DE400 indisponible".into());
+                });
                 thread::sleep(Duration::from_secs(1));
                 continue;
             };
@@ -893,12 +933,11 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                         });
                         break;
                     }
-                    Err(error)
-                        if error.kind() == iriscope_core::camera::CameraErrorKind::TimedOut => {}
+                    Err(error) if error.kind() == CameraErrorKind::TimedOut => {}
                     Err(error) => {
-                        let message = format!("Erreur caméra : {error}");
+                        let status = camera_error_status(error.kind());
                         let _ = main_weak.upgrade_in_event_loop(move |win| {
-                            win.set_status_text(message.into());
+                            win.set_status_text(status.into());
                         });
                         thread::sleep(Duration::from_millis(50));
                     }
