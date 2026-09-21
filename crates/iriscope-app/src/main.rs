@@ -635,22 +635,29 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 controls.clone_from(&discovered_controls);
             }
 
-            let Some((pref_mode, pref_fps)) = device.capabilities().preferred_mode() else {
-                thread::sleep(Duration::from_secs(1));
-                continue;
-            };
-            let (pref_mode, pref_fps) = (pref_mode.clone(), pref_fps);
+            let candidates = device
+                .capabilities()
+                .ranked_modes()
+                .into_iter()
+                .map(|(mode, frame_rate)| StreamConfiguration {
+                    pixel_format: mode.pixel_format.clone(),
+                    resolution: mode.resolution,
+                    frame_rate,
+                })
+                .collect::<Vec<_>>();
 
-            let config = StreamConfiguration {
-                pixel_format: pref_mode.pixel_format.clone(),
-                resolution: pref_mode.resolution,
-                frame_rate: pref_fps,
-            };
-
-            if device.start_stream(&config).is_err() {
-                thread::sleep(Duration::from_secs(1));
-                continue;
+            let mut active_config = None;
+            for candidate in candidates {
+                if device.start_stream(&candidate).is_ok() {
+                    active_config = Some(candidate);
+                    break;
+                }
             }
+
+            let Some(config) = active_config else {
+                thread::sleep(Duration::from_secs(1));
+                continue;
+            };
             if let Ok(mut active) = active_stream_configuration_worker.lock() {
                 *active = Some(config.clone());
             }
