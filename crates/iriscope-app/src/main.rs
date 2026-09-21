@@ -1233,7 +1233,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 win.set_session_photo_count(new_count);
 
                 // 4. Update thumbnail preview card
-                if let Ok((tw, th, raw_rgb)) = decode_mjpeg_to_rgb8(&data_to_save) {
+                if let Ok((tw, th, raw_rgb)) = decode_image_to_rgb8(&data_to_save) {
                     let pixel_buffer =
                         SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(&raw_rgb, tw, th);
                     win.set_last_capture_thumbnail(slint::Image::from_rgb8(pixel_buffer));
