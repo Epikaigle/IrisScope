@@ -231,6 +231,28 @@ fn dispatch_hardware_button(win: &MainWindow, behavior: PhysicalButtonBehavior) 
     }
 }
 
+fn decode_camera_frame_to_rgb8(frame: &CapturedFrame) -> Option<(u32, u32, Vec<u8>)> {
+    match frame.pixel_format {
+        PixelFormat::Mjpeg => decode_mjpeg_to_rgb8(&frame.data).ok(),
+        PixelFormat::Yuyv => {
+            let rgb = convert_yuyv_to_rgb8(
+                &frame.data,
+                frame.resolution.width,
+                frame.resolution.height,
+            );
+            Some((frame.resolution.width, frame.resolution.height, rgb))
+        }
+        PixelFormat::Bgra8 => convert_bgra8_to_rgb8(
+            &frame.data,
+            frame.resolution.width,
+            frame.resolution.height,
+        )
+        .ok()
+        .map(|rgb| (frame.resolution.width, frame.resolution.height, rgb)),
+        _ => None,
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|arg| arg == "--diagnose") {
@@ -319,30 +341,54 @@ fn run_diagnose() {
         );
     }
 
-    let Some((pref_mode, pref_fps)) = caps.preferred_mode() else {
+    let candidates = caps
+        .ranked_modes()
+        .into_iter()
+        .map(|(mode, frame_rate)| StreamConfiguration {
+            pixel_format: mode.pixel_format.clone(),
+            resolution: mode.resolution,
+            frame_rate,
+        })
+        .collect::<Vec<_>>();
+
+    if candidates.is_empty() {
         println!("No usable mode found.");
         return;
+    }
+
+    let mut active_configuration = None;
+    println!("\nTrying camera modes in preferred order...");
+    for candidate in candidates {
+        print!(
+            "  {} at {} with {:.2} fps... ",
+            candidate.pixel_format,
+            candidate.resolution,
+            candidate.frame_rate.frames_per_second()
+        );
+
+        match dev.start_stream(&candidate) {
+            Ok(()) => {
+                println!("OK");
+                active_configuration = Some(candidate);
+                break;
+            }
+            Err(error) => {
+                println!("failed ({error})");
+            }
+        }
+    }
+
+    let Some(config) = active_configuration else {
+        eprintln!("No advertised camera mode could be started.");
+        std::process::exit(1);
     };
 
     println!(
-        "\nSelected preferred mode: {} at {} with {:.2} fps",
-        pref_mode.pixel_format,
-        pref_mode.resolution,
-        pref_fps.frames_per_second()
+        "Stream started successfully with {} at {} / {:.2} fps. Capturing 3 test frames...",
+        config.pixel_format,
+        config.resolution,
+        config.frame_rate.frames_per_second()
     );
-    let config = StreamConfiguration {
-        pixel_format: pref_mode.pixel_format.clone(),
-        resolution: pref_mode.resolution,
-        frame_rate: pref_fps,
-    };
-
-    println!("Starting stream...");
-    if let Err(err) = dev.start_stream(&config) {
-        eprintln!("Failed to start stream: {err}");
-        std::process::exit(1);
-    }
-
-    println!("Stream started successfully. Capturing 3 test frames...");
     let start_time = Instant::now();
     let mut captured = 0;
     while captured < 3 && start_time.elapsed() < Duration::from_secs(5) {
@@ -356,16 +402,17 @@ fn run_diagnose() {
                     frame.sequence_number,
                     frame.timestamp
                 );
-                match decode_mjpeg_to_rgb8(&frame.data) {
-                    Ok((w, h, rgb)) => {
-                        println!(
-                            "  ✓ Successfully decoded to RGB8: {w}×{h} ({} bytes)",
-                            rgb.len()
-                        );
-                    }
-                    Err(err) => {
-                        eprintln!("  ✗ Decode error: {err}");
-                    }
+                if let Some((width, height, rgb)) = decode_camera_frame_to_rgb8(&frame) {
+                    println!(
+                        "  ✓ Successfully decoded {} to RGB8: {width}×{height} ({} bytes)",
+                        frame.pixel_format,
+                        rgb.len()
+                    );
+                } else {
+                    eprintln!(
+                        "  ✗ No RGB8 diagnostic decoder is available for {}",
+                        frame.pixel_format
+                    );
                 }
             }
             Ok(other) => {
@@ -862,25 +909,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
 
                         // Decode frame for Slint
                         let decode_start = Instant::now();
-                        let rgb_opt = match frame.pixel_format {
-                            PixelFormat::Mjpeg => decode_mjpeg_to_rgb8(&frame.data).ok(),
-                            PixelFormat::Yuyv => {
-                                let rgb = convert_yuyv_to_rgb8(
-                                    &frame.data,
-                                    frame.resolution.width,
-                                    frame.resolution.height,
-                                );
-                                Some((frame.resolution.width, frame.resolution.height, rgb))
-                            }
-                            PixelFormat::Bgra8 => convert_bgra8_to_rgb8(
-                                &frame.data,
-                                frame.resolution.width,
-                                frame.resolution.height,
-                            )
-                            .ok()
-                            .map(|rgb| (frame.resolution.width, frame.resolution.height, rgb)),
-                            _ => None,
-                        };
+                        let rgb_opt = decode_camera_frame_to_rgb8(&frame);
                         let decode_dur = decode_start.elapsed();
 
                         if is_rec_clone.load(Ordering::Relaxed)
