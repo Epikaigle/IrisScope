@@ -11,8 +11,8 @@ use std::{
 use iriscope_core::{
     camera::{CameraDescriptor, CameraErrorKind, CameraEvent, CapturedFrame, StreamConfiguration},
     capabilities::{
-        CameraControlDescriptor, CameraControlId, CameraControlKind, CameraControlValue,
-        PixelFormat,
+        CameraCapabilities, CameraControlDescriptor, CameraControlId, CameraControlKind,
+        CameraControlValue, PixelFormat,
     },
     capture::LatestFrame,
     library::{
@@ -253,6 +253,18 @@ fn decode_camera_frame_to_rgb8(frame: &CapturedFrame) -> Option<(u32, u32, Vec<u
     }
 }
 
+fn ranked_stream_configurations(capabilities: &CameraCapabilities) -> Vec<StreamConfiguration> {
+    capabilities
+        .ranked_modes()
+        .into_iter()
+        .map(|(mode, frame_rate)| StreamConfiguration {
+            pixel_format: mode.pixel_format.clone(),
+            resolution: mode.resolution,
+            frame_rate,
+        })
+        .collect()
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|arg| arg == "--diagnose") {
@@ -341,15 +353,7 @@ fn run_diagnose() {
         );
     }
 
-    let candidates = caps
-        .ranked_modes()
-        .into_iter()
-        .map(|(mode, frame_rate)| StreamConfiguration {
-            pixel_format: mode.pixel_format.clone(),
-            resolution: mode.resolution,
-            frame_rate,
-        })
-        .collect::<Vec<_>>();
+    let candidates = ranked_stream_configurations(caps);
 
     if candidates.is_empty() {
         println!("No usable mode found.");
@@ -799,16 +803,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 controls.clone_from(&discovered_controls);
             }
 
-            let candidates = device
-                .capabilities()
-                .ranked_modes()
-                .into_iter()
-                .map(|(mode, frame_rate)| StreamConfiguration {
-                    pixel_format: mode.pixel_format.clone(),
-                    resolution: mode.resolution,
-                    frame_rate,
-                })
-                .collect::<Vec<_>>();
+            let candidates = ranked_stream_configurations(device.capabilities());
 
             let mut active_config = None;
             for candidate in candidates {
