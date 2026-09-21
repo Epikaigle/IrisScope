@@ -1409,7 +1409,9 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         win.set_viewer_video_playing(true);
         win.set_viewer_video_progress(0.0);
         win.set_viewer_video_position("00:00".into());
-        win.set_viewer_video_duration(format_playback_time(video_time_seconds(frame_count, fps)).into());
+        win.set_viewer_video_duration(
+            format_playback_time(video_time_seconds(frame_count, fps)).into(),
+        );
         win.set_viewer_open(true);
 
         let weak_playback = weak_viewer.clone();
