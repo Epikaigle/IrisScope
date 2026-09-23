@@ -1,6 +1,7 @@
 use std::{
+    collections::VecDeque,
     sync::{
-        Arc, Mutex,
+        Arc, Condvar, Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc,
     },
@@ -12,7 +13,7 @@ use iriscope_core::{
     camera::{CameraDescriptor, CameraErrorKind, CameraEvent, CapturedFrame, StreamConfiguration},
     capabilities::{
         CameraCapabilities, CameraControlDescriptor, CameraControlId, CameraControlKind,
-        CameraControlValue, PixelFormat,
+        CameraControlValue, FrameRate, PixelFormat,
     },
     capture::LatestFrame,
     library::{
@@ -28,8 +29,9 @@ use iriscope_core::{
     video::{AviMjpegReader, AviMjpegWriter},
 };
 use iriscope_imaging::{
-    convert_bgra8_to_rgb8, convert_yuyv_to_rgb8, decode_image_to_rgb8, decode_mjpeg_to_rgb8,
-    encode_rgb8_jpeg, encode_rgb8_png, ensure_jpeg_has_dht, resize_rgb8_to_fit,
+    convert_bgra8_to_rgb8, convert_nv12_to_rgb8, convert_yuyv_to_rgb8, decode_image_to_rgb8,
+    decode_mjpeg_to_rgb8, encode_rgb8_jpeg, encode_rgb8_png, ensure_jpeg_has_dht,
+    resize_rgb8_to_fit,
 };
 use slint::{ComponentHandle, ModelRc, Rgb8Pixel, SharedPixelBuffer, VecModel};
 
@@ -48,6 +50,8 @@ slint::include_modules!();
 const DE400_VENDOR_ID: u16 = 0x21cd;
 const DE400_PRODUCT_ID: u16 = 0x603b;
 const NO_VIDEO_SEEK: u64 = u64::MAX;
+const MAX_QUEUED_RECORDING_FRAMES: usize = 8;
+type DecodedFrame = (u32, u32, Vec<u8>);
 
 fn is_de400(descriptor: &CameraDescriptor) -> bool {
     descriptor
@@ -141,6 +145,232 @@ enum WorkerCommand {
     SetControl(CameraControlId, CameraControlValue),
     ResetControls,
     Stop,
+}
+
+struct RecordingRequest {
+    directory: std::path::PathBuf,
+    file_name: String,
+    session: CaptureSession,
+    timestamp: CaptureTimestamp,
+    width: u32,
+    height: u32,
+    frame_rate: FrameRate,
+}
+
+#[derive(Clone, Copy)]
+enum RecordingStopReason {
+    User,
+    Disconnected,
+    Interrupted,
+}
+
+enum RecordingCommand {
+    Start(u64, RecordingRequest),
+    Frame(u64, CapturedFrame),
+    Stop(u64, RecordingStopReason, u64),
+}
+
+#[derive(Default)]
+struct RecordingMailbox {
+    state: Mutex<RecordingMailboxState>,
+    ready: Condvar,
+}
+
+#[derive(Default)]
+struct RecordingMailboxState {
+    commands: VecDeque<RecordingCommand>,
+    active_generation: Option<u64>,
+    next_generation: u64,
+    queued_frames: usize,
+    dropped_frames: u64,
+    closed: bool,
+}
+
+impl RecordingMailbox {
+    fn active_generation(&self) -> Option<u64> {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .active_generation
+    }
+
+    fn start(&self, request: RecordingRequest) -> Option<u64> {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if state.closed || state.active_generation.is_some() {
+            return None;
+        }
+        state.next_generation = state.next_generation.saturating_add(1);
+        let generation = state.next_generation;
+        state.active_generation = Some(generation);
+        state.dropped_frames = 0;
+        state
+            .commands
+            .push_back(RecordingCommand::Start(generation, request));
+        self.ready.notify_one();
+        Some(generation)
+    }
+
+    fn publish_frame(&self, frame: CapturedFrame) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(generation) = state.active_generation else {
+            return;
+        };
+        if state.queued_frames >= MAX_QUEUED_RECORDING_FRAMES {
+            state.dropped_frames = state.dropped_frames.saturating_add(1);
+            return;
+        }
+        state
+            .commands
+            .push_back(RecordingCommand::Frame(generation, frame));
+        state.queued_frames += 1;
+        self.ready.notify_one();
+    }
+
+    fn stop(&self, reason: RecordingStopReason) -> bool {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(generation) = state.active_generation.take() else {
+            return false;
+        };
+        let dropped = state.dropped_frames;
+        state
+            .commands
+            .push_back(RecordingCommand::Stop(generation, reason, dropped));
+        self.ready.notify_one();
+        true
+    }
+
+    fn abort(&self, generation: u64) -> bool {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if state.active_generation == Some(generation) {
+            state.active_generation = None;
+            return true;
+        }
+        false
+    }
+
+    fn receive(&self) -> Option<RecordingCommand> {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        loop {
+            if let Some(command) = state.commands.pop_front() {
+                if matches!(command, RecordingCommand::Frame(..)) {
+                    state.queued_frames -= 1;
+                }
+                return Some(command);
+            }
+            if state.closed {
+                return None;
+            }
+            state = self
+                .ready
+                .wait(state)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+    }
+
+    fn close(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(generation) = state.active_generation.take() {
+            let dropped = state.dropped_frames;
+            state.commands.push_back(RecordingCommand::Stop(
+                generation,
+                RecordingStopReason::Interrupted,
+                dropped,
+            ));
+        }
+        state.closed = true;
+        self.ready.notify_all();
+    }
+}
+
+#[derive(Debug, Default)]
+struct DecodeMailbox {
+    state: Mutex<DecodeMailboxState>,
+    ready: Condvar,
+}
+
+#[derive(Debug, Default)]
+struct DecodeMailboxState {
+    frame: Option<QueuedDecodeFrame>,
+    closed: bool,
+}
+
+#[derive(Debug)]
+struct QueuedDecodeFrame {
+    generation: u64,
+    frame: CapturedFrame,
+}
+
+impl QueuedDecodeFrame {
+    fn is_current(&self, generation: &AtomicU64) -> bool {
+        self.generation == generation.load(Ordering::Acquire)
+    }
+}
+
+impl DecodeMailbox {
+    fn publish(&self, generation: u64, frame: CapturedFrame) -> bool {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if state.closed {
+            return false;
+        }
+        let replaced = state
+            .frame
+            .replace(QueuedDecodeFrame { generation, frame })
+            .is_some();
+        self.ready.notify_one();
+        replaced
+    }
+
+    fn receive(&self) -> Option<QueuedDecodeFrame> {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        while state.frame.is_none() && !state.closed {
+            state = self
+                .ready
+                .wait(state)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+        state.frame.take()
+    }
+
+    fn clear(&self) {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .frame = None;
+    }
+
+    fn close(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.closed = true;
+        state.frame = None;
+        self.ready.notify_all();
+    }
 }
 
 fn settings_file_path() -> std::path::PathBuf {
@@ -237,10 +467,15 @@ fn decode_camera_frame_to_rgb8(frame: &CapturedFrame) -> Option<(u32, u32, Vec<u
         PixelFormat::Yuyv => {
             let rgb =
                 convert_yuyv_to_rgb8(&frame.data, frame.resolution.width, frame.resolution.height);
-            Some((frame.resolution.width, frame.resolution.height, rgb))
+            (!rgb.is_empty()).then_some((frame.resolution.width, frame.resolution.height, rgb))
         }
         PixelFormat::Bgra8 => {
             convert_bgra8_to_rgb8(&frame.data, frame.resolution.width, frame.resolution.height)
+                .ok()
+                .map(|rgb| (frame.resolution.width, frame.resolution.height, rgb))
+        }
+        PixelFormat::Nv12 => {
+            convert_nv12_to_rgb8(&frame.data, frame.resolution.width, frame.resolution.height)
                 .ok()
                 .map(|rgb| (frame.resolution.width, frame.resolution.height, rgb))
         }
@@ -459,32 +694,35 @@ fn apply_reference_images(win: &MainWindow, settings: &AppSettings) {
     }
 }
 
-fn load_thumbnail(path: &std::path::Path) -> Option<slint::Image> {
+fn load_thumbnail(path: &std::path::Path) -> Option<DecodedFrame> {
     let bytes = std::fs::read(path).ok()?;
     let (width, height, rgb) = decode_image_to_rgb8(&bytes).ok()?;
-    let (thumb_width, thumb_height, thumbnail) =
-        resize_rgb8_to_fit(&rgb, width, height, 240).ok()?;
-    let pixels =
-        SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(&thumbnail, thumb_width, thumb_height);
-    Some(slint::Image::from_rgb8(pixels))
+    resize_rgb8_to_fit(&rgb, width, height, 240).ok()
 }
 
-fn load_video_thumbnail(path: &std::path::Path) -> Option<slint::Image> {
+fn load_video_thumbnail(path: &std::path::Path) -> Option<DecodedFrame> {
     let mut reader = AviMjpegReader::open(path).ok()?;
     let jpeg = reader.read_frame(0).ok()?;
     let jpeg = ensure_jpeg_has_dht(&jpeg);
     let (width, height, rgb) = decode_mjpeg_to_rgb8(&jpeg).ok()?;
-    let (thumb_width, thumb_height, thumbnail) =
-        resize_rgb8_to_fit(&rgb, width, height, 240).ok()?;
-    let pixels =
-        SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(&thumbnail, thumb_width, thumb_height);
-    Some(slint::Image::from_rgb8(pixels))
+    resize_rgb8_to_fit(&rgb, width, height, 240).ok()
 }
 
-fn load_library_items(
+struct LibraryItemPayload {
+    date_time: String,
+    eye_label: String,
+    file_path: String,
+    id: String,
+    is_current_session: bool,
+    is_video: bool,
+    thumbnail: Option<DecodedFrame>,
+    title: String,
+}
+
+fn load_library_payloads(
     dir: &std::path::Path,
     active_session: &CaptureSession,
-) -> Vec<LibraryItemData> {
+) -> Vec<LibraryItemPayload> {
     let raw_entries = scan_library_directory(dir);
     let presented = present_library_items(&raw_entries, active_session, LibraryFilter::All);
     presented
@@ -496,19 +734,52 @@ fn load_library_items(
                 CaptureKind::Video => load_video_thumbnail(&item.file_path),
             };
 
-            LibraryItemData {
-                date_time: item.date_time.into(),
-                eye_label: item.eye_label.into(),
-                file_path: item.file_path.to_string_lossy().to_string().into(),
-                has_thumbnail: thumbnail.is_some(),
-                id: idx.to_string().into(),
+            LibraryItemPayload {
+                date_time: item.date_time,
+                eye_label: item.eye_label,
+                file_path: item.file_path.to_string_lossy().to_string(),
+                id: idx.to_string(),
                 is_current_session: item.is_current_session,
                 is_video: matches!(item.kind, CaptureKind::Video),
-                thumbnail: thumbnail.unwrap_or_default(),
-                title: item.display_title.into(),
+                thumbnail,
+                title: item.display_title,
             }
         })
         .collect()
+}
+
+fn present_library_payloads(payloads: Vec<LibraryItemPayload>) -> Vec<LibraryItemData> {
+    payloads
+        .into_iter()
+        .map(|item| {
+            let has_thumbnail = item.thumbnail.is_some();
+            let thumbnail =
+                item.thumbnail
+                    .map_or_else(slint::Image::default, |(width, height, rgb)| {
+                        let pixels =
+                            SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(&rgb, width, height);
+                        slint::Image::from_rgb8(pixels)
+                    });
+            LibraryItemData {
+                date_time: item.date_time.into(),
+                eye_label: item.eye_label.into(),
+                file_path: item.file_path.into(),
+                has_thumbnail,
+                id: item.id.into(),
+                is_current_session: item.is_current_session,
+                is_video: item.is_video,
+                thumbnail,
+                title: item.title.into(),
+            }
+        })
+        .collect()
+}
+
+fn load_library_items(
+    dir: &std::path::Path,
+    active_session: &CaptureSession,
+) -> Vec<LibraryItemData> {
+    present_library_payloads(load_library_payloads(dir, active_session))
 }
 
 #[derive(Clone)]
@@ -638,24 +909,479 @@ fn snap_integer_control_value(
     Some(CameraControlValue::Integer(snapped))
 }
 
-fn finalize_recording(
-    is_recording: &AtomicBool,
-    video_writer: &Mutex<Option<AviMjpegWriter>>,
+fn stop_recording(
+    mailbox: &RecordingMailbox,
     recording_start: &Mutex<Option<Instant>>,
+    reason: RecordingStopReason,
 ) -> bool {
-    let was_recording = is_recording.swap(false, Ordering::Relaxed);
-
-    if let Ok(mut start) = recording_start.lock() {
+    let stopped = mailbox.stop(reason);
+    if stopped && let Ok(mut start) = recording_start.lock() {
         *start = None;
     }
+    stopped
+}
 
-    if let Ok(mut writer_guard) = video_writer.lock()
-        && let Some(mut writer) = writer_guard.take()
-    {
-        let _ = writer.finish();
+fn measured_recording_frame_rate(
+    first: Option<Duration>,
+    last: Option<Duration>,
+    written_frames: u64,
+) -> Option<FrameRate> {
+    if written_frames < 2 {
+        return None;
+    }
+    let elapsed_us = last?.checked_sub(first?)?.as_micros();
+    if elapsed_us == 0 {
+        return None;
+    }
+    let intervals = u128::from(written_frames - 1);
+    let millifps = intervals
+        .saturating_mul(1_000_000_000)
+        .saturating_add(elapsed_us / 2)
+        / elapsed_us;
+    FrameRate::new(u32::try_from(millifps).ok()?, 1_000)
+}
+
+struct ActiveRecording {
+    generation: u64,
+    writer: AviMjpegWriter,
+    saved_path: std::path::PathBuf,
+    directory: std::path::PathBuf,
+    session: CaptureSession,
+    first_timestamp: Option<Duration>,
+    last_timestamp: Option<Duration>,
+    written_frames: u64,
+    error: Option<String>,
+}
+
+fn refresh_library_in_background(
+    weak: slint::Weak<MainWindow>,
+    settings: Arc<Mutex<AppSettings>>,
+    active_session: Arc<Mutex<CaptureSession>>,
+) {
+    thread::spawn(move || {
+        let directory = settings_snapshot(&settings).capture_directory;
+        let session = active_session
+            .lock()
+            .map_or_else(|_| CaptureSession::default(), |guard| guard.clone());
+        let payloads = load_library_payloads(&directory, &session);
+        let settings_for_ui = Arc::clone(&settings);
+        let session_for_ui = Arc::clone(&active_session);
+        let _ = weak.upgrade_in_event_loop(move |win| {
+            if !library_context_matches(&settings_for_ui, &session_for_ui, &directory, &session) {
+                return;
+            }
+            win.set_library_items(ModelRc::new(VecModel::from(present_library_payloads(
+                payloads,
+            ))));
+        });
+    });
+}
+
+fn library_context_matches(
+    settings: &Arc<Mutex<AppSettings>>,
+    active_session: &Arc<Mutex<CaptureSession>>,
+    directory: &std::path::Path,
+    session: &CaptureSession,
+) -> bool {
+    settings_snapshot(settings).capture_directory == directory
+        && active_session
+            .lock()
+            .is_ok_and(|current| *current == *session)
+}
+
+fn recording_context_matches(
+    settings: &Arc<Mutex<AppSettings>>,
+    active_session: &Arc<Mutex<CaptureSession>>,
+    directory: &std::path::Path,
+    recorded_session: &CaptureSession,
+    form_session: Option<&CaptureSession>,
+) -> bool {
+    form_session.is_some_and(|current| current == recorded_session)
+        && library_context_matches(settings, active_session, directory, recorded_session)
+}
+
+#[allow(clippy::too_many_lines)]
+fn run_recording_worker(
+    mailbox: &Arc<RecordingMailbox>,
+    weak: &slint::Weak<MainWindow>,
+    settings: &Arc<Mutex<AppSettings>>,
+    active_session: &Arc<Mutex<CaptureSession>>,
+    recording_start: &Arc<Mutex<Option<Instant>>>,
+    last_toast_time: &Arc<Mutex<Option<Instant>>>,
+) {
+    let mut active: Option<ActiveRecording> = None;
+    while let Some(command) = mailbox.receive() {
+        match command {
+            RecordingCommand::Start(generation, request) => {
+                match AviMjpegWriter::create_unique(
+                    &request.directory,
+                    &request.file_name,
+                    request.width,
+                    request.height,
+                    request.frame_rate,
+                ) {
+                    Ok((writer, saved_path)) => {
+                        if let Err(error) = record_capture_metadata(
+                            &request.directory,
+                            &saved_path,
+                            &request.session,
+                            CaptureKind::Video,
+                            request.timestamp,
+                        ) {
+                            eprintln!("[IrisScope] Index bibliothèque non mis à jour : {error}");
+                        }
+                        let path_for_ui = saved_path.clone();
+                        let mailbox_for_ui = Arc::clone(mailbox);
+                        let settings_for_ui = Arc::clone(settings);
+                        let active_session_for_ui = Arc::clone(active_session);
+                        let directory_for_ui = request.directory.clone();
+                        let session_for_ui = request.session.clone();
+                        let _ = weak.upgrade_in_event_loop(move |win| {
+                            let form_session = capture_session_from_window(&win).ok();
+                            if mailbox_for_ui.active_generation() == Some(generation)
+                                && recording_context_matches(
+                                    &settings_for_ui,
+                                    &active_session_for_ui,
+                                    &directory_for_ui,
+                                    &session_for_ui,
+                                    form_session.as_ref(),
+                                )
+                            {
+                                win.set_last_capture_path(
+                                    path_for_ui.to_string_lossy().to_string().into(),
+                                );
+                                if let Some(name) =
+                                    path_for_ui.file_name().and_then(|value| value.to_str())
+                                {
+                                    win.set_last_capture_file_name(name.into());
+                                }
+                            }
+                        });
+                        active = Some(ActiveRecording {
+                            generation,
+                            writer,
+                            saved_path,
+                            directory: request.directory,
+                            session: request.session,
+                            first_timestamp: None,
+                            last_timestamp: None,
+                            written_frames: 0,
+                            error: None,
+                        });
+                    }
+                    Err(error) => {
+                        mailbox.abort(generation);
+                        let mailbox_for_ui = Arc::clone(mailbox);
+                        let recording_start_for_ui = Arc::clone(recording_start);
+                        let message = format!("Erreur vidéo : {error}");
+                        let _ = weak.upgrade_in_event_loop(move |win| {
+                            if mailbox_for_ui.active_generation().is_none() {
+                                if let Ok(mut start) = recording_start_for_ui.lock() {
+                                    *start = None;
+                                }
+                                win.set_is_recording(false);
+                                win.set_recording_duration("00:00".into());
+                                win.set_last_capture_message(message.into());
+                                win.set_show_last_capture(true);
+                            }
+                        });
+                    }
+                }
+            }
+            RecordingCommand::Frame(generation, frame) => {
+                let Some(recording) = active
+                    .as_mut()
+                    .filter(|recording| recording.generation == generation)
+                else {
+                    continue;
+                };
+                if recording.error.is_some() {
+                    continue;
+                }
+                let jpeg = match frame.pixel_format {
+                    PixelFormat::Mjpeg => Ok(ensure_jpeg_has_dht(&frame.data)),
+                    _ => decode_camera_frame_to_rgb8(&frame)
+                        .ok_or_else(|| "format caméra non décodable".to_owned())
+                        .and_then(|(width, height, rgb)| {
+                            encode_rgb8_jpeg(&rgb, width, height, 95)
+                                .map(std::borrow::Cow::Owned)
+                                .map_err(|error| error.to_string())
+                        }),
+                };
+                let result = jpeg.map_err(|error| error.to_string()).and_then(|jpeg| {
+                    recording
+                        .writer
+                        .write_frame(jpeg.as_ref())
+                        .map_err(|error| error.to_string())
+                });
+                match result {
+                    Ok(()) => {
+                        recording.first_timestamp.get_or_insert(frame.timestamp);
+                        recording.last_timestamp = Some(frame.timestamp);
+                        recording.written_frames = recording.written_frames.saturating_add(1);
+                    }
+                    Err(error) => recording.error = Some(error),
+                }
+            }
+            RecordingCommand::Stop(generation, reason, dropped_frames) => {
+                if active
+                    .as_ref()
+                    .is_none_or(|recording| recording.generation != generation)
+                {
+                    continue;
+                }
+                let mut recording = active.take().expect("matching active recording");
+                if let Some(rate) = measured_recording_frame_rate(
+                    recording.first_timestamp,
+                    recording.last_timestamp,
+                    recording.written_frames,
+                ) {
+                    recording.writer.set_frame_rate(rate);
+                }
+                let finish_result = recording.writer.finish();
+                let result = recording
+                    .error
+                    .or_else(|| finish_result.err().map(|error| error.to_string()));
+                let message = if let Some(error) = result {
+                    format!("Erreur de finalisation vidéo : {error}")
+                } else if recording.written_frames == 0 {
+                    "Vidéo sans image enregistrée.".to_owned()
+                } else {
+                    let prefix = match reason {
+                        RecordingStopReason::User => "✓ Vidéo enregistrée",
+                        RecordingStopReason::Disconnected => {
+                            "Vidéo arrêtée et finalisée après déconnexion caméra."
+                        }
+                        RecordingStopReason::Interrupted => {
+                            "Vidéo arrêtée et finalisée après interruption caméra."
+                        }
+                    };
+                    if dropped_frames == 0 {
+                        prefix.to_owned()
+                    } else {
+                        format!("{prefix} ({dropped_frames} images ignorées)")
+                    }
+                };
+                if let Ok(mut toast) = last_toast_time.lock() {
+                    *toast = Some(Instant::now());
+                }
+                let mailbox_for_ui = Arc::clone(mailbox);
+                let path_for_ui = recording.saved_path;
+                let settings_for_ui = Arc::clone(settings);
+                let active_session_for_ui = Arc::clone(active_session);
+                let directory_for_ui = recording.directory;
+                let session_for_ui = recording.session;
+                let _ = weak.upgrade_in_event_loop(move |win| {
+                    let form_session = capture_session_from_window(&win).ok();
+                    if mailbox_for_ui.active_generation().is_none()
+                        && recording_context_matches(
+                            &settings_for_ui,
+                            &active_session_for_ui,
+                            &directory_for_ui,
+                            &session_for_ui,
+                            form_session.as_ref(),
+                        )
+                    {
+                        win.set_is_recording(false);
+                        win.set_recording_duration("00:00".into());
+                        win.set_last_capture_path(path_for_ui.to_string_lossy().to_string().into());
+                        if let Some(name) = path_for_ui.file_name().and_then(|value| value.to_str())
+                        {
+                            win.set_last_capture_file_name(name.into());
+                        }
+                        win.set_last_capture_message(message.into());
+                        win.set_show_last_capture(true);
+                    }
+                });
+                refresh_library_in_background(
+                    weak.clone(),
+                    Arc::clone(settings),
+                    Arc::clone(active_session),
+                );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod recording_pipeline_tests {
+    use std::{
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
+
+    use iriscope_core::{
+        camera::CapturedFrame,
+        capabilities::{FrameRate, PixelFormat, Resolution},
+        session::{CaptureSession, Eye},
+        settings::AppSettings,
+        storage::CaptureTimestamp,
+    };
+
+    use super::{
+        DecodeMailbox, RecordingCommand, RecordingMailbox, RecordingRequest, RecordingStopReason,
+        decode_camera_frame_to_rgb8, library_context_matches, measured_recording_frame_rate,
+        recording_context_matches,
+    };
+
+    fn frame(sequence_number: u64) -> CapturedFrame {
+        CapturedFrame {
+            sequence_number,
+            timestamp: Duration::from_millis(sequence_number * 160),
+            pixel_format: PixelFormat::Mjpeg,
+            resolution: Resolution::new(640, 480),
+            data: Arc::from([0xff, 0xd8, 0xff, 0xd9]),
+        }
     }
 
-    was_recording
+    fn request() -> RecordingRequest {
+        RecordingRequest {
+            directory: std::env::temp_dir(),
+            file_name: "unused.avi".to_owned(),
+            session: CaptureSession::default(),
+            timestamp: CaptureTimestamp::now(),
+            width: 640,
+            height: 480,
+            frame_rate: FrameRate::new(30, 1).expect("valid rate"),
+        }
+    }
+
+    #[test]
+    fn recording_queue_bounds_frames_and_orders_stop_after_accepted_frames() {
+        let mailbox = RecordingMailbox::default();
+        let generation = mailbox.start(request()).expect("recording starts");
+        for sequence in 0..10 {
+            mailbox.publish_frame(frame(sequence));
+        }
+        assert!(mailbox.stop(RecordingStopReason::User));
+        assert!(
+            matches!(mailbox.receive(), Some(RecordingCommand::Start(id, _)) if id == generation)
+        );
+        for sequence in 0..8 {
+            assert!(matches!(
+                mailbox.receive(),
+                Some(RecordingCommand::Frame(id, frame))
+                    if id == generation && frame.sequence_number == sequence
+            ));
+        }
+        assert!(matches!(
+            mailbox.receive(),
+            Some(RecordingCommand::Stop(id, RecordingStopReason::User, 2)) if id == generation
+        ));
+        assert!(mailbox.active_generation().is_none());
+    }
+
+    #[test]
+    fn measured_rate_uses_written_frame_timestamps() {
+        assert_eq!(
+            measured_recording_frame_rate(
+                Some(Duration::ZERO),
+                Some(Duration::from_millis(2_240)),
+                15,
+            ),
+            FrameRate::new(25, 4),
+        );
+        assert_eq!(
+            measured_recording_frame_rate(Some(Duration::ZERO), Some(Duration::ZERO), 2),
+            None,
+        );
+    }
+
+    #[test]
+    fn old_decode_generation_is_rejected_after_reconnect() {
+        let mailbox = DecodeMailbox::default();
+        let generation = std::sync::atomic::AtomicU64::new(1);
+        assert!(!mailbox.publish(1, frame(1)));
+        let in_flight = mailbox.receive().expect("first frame");
+        generation.store(2, std::sync::atomic::Ordering::Release);
+        mailbox.clear();
+        assert!(!in_flight.is_current(&generation));
+        assert!(!mailbox.publish(2, frame(2)));
+        assert!(
+            mailbox
+                .receive()
+                .expect("new frame")
+                .is_current(&generation)
+        );
+    }
+
+    #[test]
+    fn old_library_result_cannot_replace_new_session_or_directory() {
+        let settings = Arc::new(Mutex::new(AppSettings::default()));
+        let session = Arc::new(Mutex::new(CaptureSession::new("A", "B", Eye::Left)));
+        let directory = settings.lock().expect("settings").capture_directory.clone();
+        let original_session = session.lock().expect("session").clone();
+        assert!(library_context_matches(
+            &settings,
+            &session,
+            &directory,
+            &original_session,
+        ));
+
+        *session.lock().expect("session") = CaptureSession::default();
+        assert!(!library_context_matches(
+            &settings,
+            &session,
+            &directory,
+            &original_session,
+        ));
+
+        *session.lock().expect("session") = original_session.clone();
+        settings.lock().expect("settings").capture_directory = directory.join("another");
+        assert!(!library_context_matches(
+            &settings,
+            &session,
+            &directory,
+            &original_session,
+        ));
+    }
+
+    #[test]
+    fn old_recording_result_cannot_replace_new_patient_capture() {
+        let settings = Arc::new(Mutex::new(AppSettings::default()));
+        let recorded_session = CaptureSession::new("A", "B", Eye::Left);
+        let active_session = Arc::new(Mutex::new(recorded_session.clone()));
+        let directory = settings.lock().expect("settings").capture_directory.clone();
+        assert!(recording_context_matches(
+            &settings,
+            &active_session,
+            &directory,
+            &recorded_session,
+            Some(&recorded_session),
+        ));
+
+        let new_patient = CaptureSession::new("C", "D", Eye::Right);
+        assert!(!recording_context_matches(
+            &settings,
+            &active_session,
+            &directory,
+            &recorded_session,
+            Some(&new_patient),
+        ));
+        *active_session.lock().expect("session") = new_patient.clone();
+        assert!(!recording_context_matches(
+            &settings,
+            &active_session,
+            &directory,
+            &recorded_session,
+            Some(&new_patient),
+        ));
+        assert!(!recording_context_matches(
+            &settings,
+            &active_session,
+            &directory,
+            &recorded_session,
+            None,
+        ));
+    }
+
+    #[test]
+    fn truncated_yuyv_frame_is_not_published_for_preview() {
+        let mut frame = frame(1);
+        frame.pixel_format = PixelFormat::Yuyv;
+        frame.data = Arc::from([0_u8, 0_u8]);
+        assert!(decode_camera_frame_to_rgb8(&frame).is_none());
+    }
 }
 
 #[allow(clippy::too_many_lines)]
@@ -695,10 +1421,15 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     apply_reference_images(&main_window, &loaded_settings);
     let settings = Arc::new(Mutex::new(loaded_settings));
     let latest_frame = Arc::new(LatestFrame::new());
+    let decode_mailbox = Arc::new(DecodeMailbox::default());
+    let stream_generation = Arc::new(AtomicU64::new(0));
+    let latest_decoded_frame: Arc<Mutex<Option<(u64, DecodedFrame)>>> = Arc::new(Mutex::new(None));
+    let decoded_frame_update_pending = Arc::new(AtomicBool::new(false));
+    let decode_time_micros = Arc::new(AtomicU64::new(0));
+    let dropped_decode_frames = Arc::new(AtomicU64::new(0));
     let active_stream_configuration: Arc<Mutex<Option<StreamConfiguration>>> =
         Arc::new(Mutex::new(None));
-    let is_recording = Arc::new(AtomicBool::new(false));
-    let video_writer: Arc<Mutex<Option<AviMjpegWriter>>> = Arc::new(Mutex::new(None));
+    let recording_mailbox = Arc::new(RecordingMailbox::default());
     let active_session = Arc::new(Mutex::new(CaptureSession::default()));
     let recording_start: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
     let last_toast_time: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
@@ -712,11 +1443,98 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
 
     let (cmd_tx, cmd_rx) = mpsc::channel::<WorkerCommand>();
 
+    let recorder_worker = thread::spawn({
+        let mailbox = Arc::clone(&recording_mailbox);
+        let weak = main_window.as_weak();
+        let settings = Arc::clone(&settings);
+        let active_session = Arc::clone(&active_session);
+        let recording_start = Arc::clone(&recording_start);
+        let last_toast_time = Arc::clone(&last_toast_time);
+        move || {
+            run_recording_worker(
+                &mailbox,
+                &weak,
+                &settings,
+                &active_session,
+                &recording_start,
+                &last_toast_time,
+            );
+        }
+    });
+
+    // Decode away from the camera thread. The mailbox contains at most one frame,
+    // so a slow decoder always skips ahead instead of increasing display latency.
+    let decode_mailbox_worker = Arc::clone(&decode_mailbox);
+    let latest_decoded_frame_worker = Arc::clone(&latest_decoded_frame);
+    let decoded_frame_update_pending_worker = Arc::clone(&decoded_frame_update_pending);
+    let decode_time_micros_worker = Arc::clone(&decode_time_micros);
+    let stream_generation_decoder = Arc::clone(&stream_generation);
+    let decode_weak = main_window.as_weak();
+    let decoder_worker = thread::spawn(move || {
+        while let Some(job) = decode_mailbox_worker.receive() {
+            if !job.is_current(&stream_generation_decoder) {
+                continue;
+            }
+            let decode_start = Instant::now();
+            let decoded_frame = decode_camera_frame_to_rgb8(&job.frame);
+            let elapsed_micros =
+                u64::try_from(decode_start.elapsed().as_micros()).unwrap_or(u64::MAX);
+            decode_time_micros_worker.store(elapsed_micros, Ordering::Relaxed);
+
+            let Some(decoded_frame) = decoded_frame else {
+                continue;
+            };
+            if !job.is_current(&stream_generation_decoder) {
+                continue;
+            }
+            if let Ok(mut latest) = latest_decoded_frame_worker.lock() {
+                *latest = Some((job.generation, decoded_frame));
+            }
+
+            if decoded_frame_update_pending_worker.swap(true, Ordering::AcqRel) {
+                continue;
+            }
+
+            let latest = Arc::clone(&latest_decoded_frame_worker);
+            let pending = Arc::clone(&decoded_frame_update_pending_worker);
+            let generation = Arc::clone(&stream_generation_decoder);
+            let update_result = decode_weak.upgrade_in_event_loop(move |win| {
+                // Clear the gate before taking the slot. A concurrent publisher can
+                // queue one follow-up update, while the queue remains strictly bounded.
+                pending.store(false, Ordering::Release);
+                let decoded = latest.lock().ok().and_then(|mut slot| slot.take());
+                if win.get_is_frozen() {
+                    return;
+                }
+                let Some((job_generation, (width, height, raw_rgb))) = decoded else {
+                    return;
+                };
+                if job_generation != generation.load(Ordering::Acquire) {
+                    return;
+                }
+
+                let pixel_buffer =
+                    SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(&raw_rgb, width, height);
+                if job_generation != generation.load(Ordering::Acquire) {
+                    return;
+                }
+                win.set_live_frame(slint::Image::from_rgb8(pixel_buffer));
+            });
+            if update_result.is_err() {
+                decoded_frame_update_pending_worker.store(false, Ordering::Release);
+            }
+        }
+    });
+
     // Spawn camera capture worker thread
     let main_weak = main_window.as_weak();
     let latest_frame_clone = Arc::clone(&latest_frame);
-    let is_rec_clone = Arc::clone(&is_recording);
-    let video_writer_clone = Arc::clone(&video_writer);
+    let decode_mailbox_camera = Arc::clone(&decode_mailbox);
+    let latest_decoded_frame_camera = Arc::clone(&latest_decoded_frame);
+    let stream_generation_camera = Arc::clone(&stream_generation);
+    let decode_time_micros_camera = Arc::clone(&decode_time_micros);
+    let dropped_decode_frames_camera = Arc::clone(&dropped_decode_frames);
+    let recording_mailbox_camera = Arc::clone(&recording_mailbox);
     let rec_start_clone = Arc::clone(&recording_start);
     let toast_clone = Arc::clone(&last_toast_time);
     let active_stream_configuration_worker = Arc::clone(&active_stream_configuration);
@@ -817,7 +1635,14 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 thread::sleep(Duration::from_secs(1));
                 continue;
             };
+            let generation = stream_generation_camera.fetch_add(1, Ordering::AcqRel) + 1;
             let _ = latest_frame_clone.take();
+            decode_mailbox_camera.clear();
+            if let Ok(mut latest) = latest_decoded_frame_camera.lock() {
+                *latest = None;
+            }
+            decode_time_micros_camera.store(0, Ordering::Relaxed);
+            dropped_decode_frames_camera.store(0, Ordering::Relaxed);
             if let Ok(mut frozen) = frozen_frame_worker.lock() {
                 *frozen = None;
             }
@@ -834,11 +1659,16 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 let res_text = config.resolution.to_string();
                 let fps_text = format!("{:.2} fps", config.frame_rate.frames_per_second());
                 let controls = discovered_controls.clone();
+                let ui_generation = Arc::clone(&stream_generation_camera);
 
                 move |win| {
+                    if ui_generation.load(Ordering::Acquire) != generation {
+                        return;
+                    }
                     win.set_camera_connected(true);
                     win.set_is_streaming(false);
                     win.set_is_frozen(false);
+                    win.set_live_frame(slint::Image::default());
                     win.set_status_text("DE400 connecté — démarrage du flux...".into());
 
                     let mut diag = win.get_diagnostics();
@@ -871,10 +1701,10 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                             let _ = device.reset_controls();
                         }
                         WorkerCommand::Stop => {
-                            finalize_recording(
-                                &is_rec_clone,
-                                &video_writer_clone,
+                            stop_recording(
+                                &recording_mailbox_camera,
                                 &rec_start_clone,
+                                RecordingStopReason::Interrupted,
                             );
                             let _ = device.stop_stream();
                             return;
@@ -888,6 +1718,10 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                         stat_frames += 1;
 
                         latest_frame_clone.publish(frame.clone());
+                        if decode_mailbox_camera.publish(generation, frame.clone()) {
+                            dropped_decode_frames_camera.fetch_add(1, Ordering::Relaxed);
+                        }
+                        recording_mailbox_camera.publish_frame(frame);
 
                         if !stream_ready_announced {
                             stream_ready_announced = true;
@@ -897,47 +1731,17 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                             });
                         }
 
-                        // Decode frame for Slint
-                        let decode_start = Instant::now();
-                        let rgb_opt = decode_camera_frame_to_rgb8(&frame);
-                        let decode_dur = decode_start.elapsed();
-
-                        if is_rec_clone.load(Ordering::Relaxed)
-                            && let Ok(mut writer_guard) = video_writer_clone.lock()
-                            && let Some(writer) = writer_guard.as_mut()
-                        {
-                            match frame.pixel_format {
-                                PixelFormat::Mjpeg => {
-                                    let jpeg = ensure_jpeg_has_dht(&frame.data);
-                                    let _ = writer.write_frame(jpeg.as_ref());
-                                }
-                                _ => {
-                                    if let Some((width, height, rgb)) = rgb_opt.as_ref()
-                                        && let Ok(jpeg) = encode_rgb8_jpeg(rgb, *width, *height, 95)
-                                    {
-                                        let _ = writer.write_frame(&jpeg);
-                                    }
-                                }
-                            }
-                        }
-
-                        if let Some((width, height, raw_rgb)) = rgb_opt {
-                            let _ = main_weak.upgrade_in_event_loop(move |win| {
-                                if win.get_is_frozen() {
-                                    return;
-                                }
-
-                                let pixel_buffer = SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(
-                                    &raw_rgb, width, height,
-                                );
-                                win.set_live_frame(slint::Image::from_rgb8(pixel_buffer));
-                            });
-                        }
-
                         // Update FPS & Timer metrics every 1s
                         if last_stat_time.elapsed() >= Duration::from_secs(1) {
                             let fps =
                                 f64::from(stat_frames) / last_stat_time.elapsed().as_secs_f64();
+                            let decode_ms = Duration::from_micros(
+                                decode_time_micros_camera.load(Ordering::Relaxed),
+                            )
+                            .as_secs_f64()
+                                * 1_000.0;
+                            let dropped_frames =
+                                dropped_decode_frames_camera.load(Ordering::Relaxed);
                             last_stat_time = Instant::now();
                             stat_frames = 0;
 
@@ -960,9 +1764,10 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                             let _ = main_weak.upgrade_in_event_loop(move |win| {
                                 let mut diag = win.get_diagnostics();
                                 diag.measured_fps = format!("{fps:.2} fps").into();
-                                diag.decode_time_ms =
-                                    format!("{:.1} ms", decode_dur.as_secs_f64() * 1000.0).into();
+                                diag.decode_time_ms = format!("{decode_ms:.1} ms").into();
                                 diag.frame_count = i32::try_from(frame_count).unwrap_or(i32::MAX);
+                                diag.dropped_frames =
+                                    i32::try_from(dropped_frames).unwrap_or(i32::MAX);
                                 win.set_diagnostics(diag);
 
                                 if let Some(dur) = rec_dur_str {
@@ -981,10 +1786,16 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                         });
                     }
                     Ok(CameraEvent::Disconnected) => {
-                        let recording_was_active = finalize_recording(
-                            &is_rec_clone,
-                            &video_writer_clone,
+                        let disconnected_generation =
+                            stream_generation_camera.fetch_add(1, Ordering::AcqRel) + 1;
+                        decode_mailbox_camera.clear();
+                        if let Ok(mut latest) = latest_decoded_frame_camera.lock() {
+                            *latest = None;
+                        }
+                        stop_recording(
+                            &recording_mailbox_camera,
                             &rec_start_clone,
+                            RecordingStopReason::Disconnected,
                         );
                         let _ = device.stop_stream();
                         let _ = latest_frame_clone.take();
@@ -997,32 +1808,37 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                         if let Ok(mut controls) = camera_controls_worker.lock() {
                             controls.clear();
                         }
+                        let ui_generation = Arc::clone(&stream_generation_camera);
                         let _ = main_weak.upgrade_in_event_loop(move |win| {
+                            if ui_generation.load(Ordering::Acquire) != disconnected_generation {
+                                return;
+                            }
                             win.set_camera_connected(false);
                             win.set_is_streaming(false);
                             win.set_is_recording(false);
                             win.set_is_frozen(false);
+                            win.set_live_frame(slint::Image::default());
                             win.set_recording_duration("00:00".into());
                             win.set_status_text(
                                 "DE400 déconnecté — reconnexion en cours...".into(),
                             );
-                            if recording_was_active {
-                                win.set_last_capture_message(
-                                    "Vidéo arrêtée et finalisée après déconnexion caméra.".into(),
-                                );
-                                win.set_show_last_capture(true);
-                            }
                             win.set_camera_controls(ModelRc::new(VecModel::from(Vec::new())));
                         });
                         break;
                     }
                     Err(error) if error.kind() == CameraErrorKind::TimedOut => {}
                     Err(error) => {
+                        let interrupted_generation =
+                            stream_generation_camera.fetch_add(1, Ordering::AcqRel) + 1;
+                        decode_mailbox_camera.clear();
+                        if let Ok(mut latest) = latest_decoded_frame_camera.lock() {
+                            *latest = None;
+                        }
                         let error_kind = error.kind();
-                        let recording_was_active = finalize_recording(
-                            &is_rec_clone,
-                            &video_writer_clone,
+                        stop_recording(
+                            &recording_mailbox_camera,
                             &rec_start_clone,
+                            RecordingStopReason::Interrupted,
                         );
                         let _ = device.stop_stream();
                         let _ = latest_frame_clone.take();
@@ -1046,19 +1862,18 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                                 camera_error_status(error_kind)
                             )
                         };
+                        let ui_generation = Arc::clone(&stream_generation_camera);
                         let _ = main_weak.upgrade_in_event_loop(move |win| {
+                            if ui_generation.load(Ordering::Acquire) != interrupted_generation {
+                                return;
+                            }
                             win.set_camera_connected(false);
                             win.set_is_streaming(false);
                             win.set_is_recording(false);
                             win.set_is_frozen(false);
+                            win.set_live_frame(slint::Image::default());
                             win.set_recording_duration("00:00".into());
                             win.set_status_text(status.into());
-                            if recording_was_active {
-                                win.set_last_capture_message(
-                                    "Vidéo arrêtée et finalisée après interruption caméra.".into(),
-                                );
-                                win.set_show_last_capture(true);
-                            }
                             win.set_camera_controls(ModelRc::new(VecModel::from(Vec::new())));
                         });
                         thread::sleep(Duration::from_millis(100));
@@ -1145,6 +1960,34 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             }
             PixelFormat::Bgra8 => {
                 let rgb = match convert_bgra8_to_rgb8(
+                    &frame.data,
+                    frame.resolution.width,
+                    frame.resolution.height,
+                ) {
+                    Ok(rgb) => rgb,
+                    Err(error) => {
+                        win.set_last_capture_message(
+                            format!("Erreur de conversion photo : {error}").into(),
+                        );
+                        win.set_show_last_capture(true);
+                        return;
+                    }
+                };
+                let png =
+                    match encode_rgb8_png(&rgb, frame.resolution.width, frame.resolution.height) {
+                        Ok(png) => png,
+                        Err(error) => {
+                            win.set_last_capture_message(
+                                format!("Erreur de conversion photo : {error}").into(),
+                            );
+                            win.set_show_last_capture(true);
+                            return;
+                        }
+                    };
+                ("png", std::borrow::Cow::Owned(png))
+            }
+            PixelFormat::Nv12 => {
+                let rgb = match convert_nv12_to_rgb8(
                     &frame.data,
                     frame.resolution.width,
                     frame.resolution.height,
@@ -1261,8 +2104,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
 
     // Recording callback
     let weak_rec = main_window.as_weak();
-    let is_rec = Arc::clone(&is_recording);
-    let video_writer_rec = Arc::clone(&video_writer);
+    let recording_mailbox_rec = Arc::clone(&recording_mailbox);
     let settings_rec = Arc::clone(&settings);
     let session_rec = Arc::clone(&active_session);
     let rec_start_rec = Arc::clone(&recording_start);
@@ -1274,20 +2116,23 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         let Some(win) = weak_rec.upgrade() else {
             return;
         };
-        let currently_recording = is_rec.load(Ordering::Relaxed);
+        let currently_recording = recording_mailbox_rec.active_generation().is_some();
         let recording_settings = settings_snapshot(&settings_rec);
 
         if currently_recording {
             // Stop recording
-            finalize_recording(&is_rec, &video_writer_rec, &rec_start_rec);
+            stop_recording(
+                &recording_mailbox_rec,
+                &rec_start_rec,
+                RecordingStopReason::User,
+            );
             win.set_is_recording(false);
             win.set_recording_duration("00:00".into());
-            win.set_last_capture_message("✓ Vidéo enregistrée".into());
+            win.set_last_capture_message("Finalisation de la vidéo en cours...".into());
             win.set_show_last_capture(true);
             if let Ok(mut g) = toast_rec.lock() {
                 *g = Some(Instant::now());
             }
-            refresh_lib_for_win(&win, &recording_settings.capture_directory, &session_rec);
         } else {
             // Start recording
             let session = match capture_session_from_window(&win) {
@@ -1323,42 +2168,21 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             let policy = CaptureNamingPolicy::new(&recording_settings.filename_template);
             let file_name = policy.filename(&session, timestamp, "avi");
 
-            match AviMjpegWriter::create_unique(
-                &recording_settings.capture_directory,
-                &file_name,
-                current_frame.resolution.width,
-                current_frame.resolution.height,
-                configuration.frame_rate,
-            ) {
-                Ok((writer, saved_path)) => {
-                    if let Err(error) = record_capture_metadata(
-                        &recording_settings.capture_directory,
-                        &saved_path,
-                        &session,
-                        CaptureKind::Video,
-                        timestamp,
-                    ) {
-                        eprintln!("[IrisScope] Index bibliothèque non mis à jour : {error}");
-                    }
-
-                    if let Ok(mut writer_guard) = video_writer_rec.lock() {
-                        *writer_guard = Some(writer);
-                    }
-                    is_rec.store(true, Ordering::Relaxed);
-                    if let Ok(mut g) = rec_start_rec.lock() {
-                        *g = Some(Instant::now());
-                    }
-                    win.set_is_recording(true);
-                    win.set_recording_duration("00:00".into());
-                    win.set_last_capture_path(saved_path.to_string_lossy().to_string().into());
-                    if let Some(name) = saved_path.file_name().and_then(|value| value.to_str()) {
-                        win.set_last_capture_file_name(name.into());
-                    }
+            let request = RecordingRequest {
+                directory: recording_settings.capture_directory,
+                file_name,
+                session,
+                timestamp,
+                width: current_frame.resolution.width,
+                height: current_frame.resolution.height,
+                frame_rate: configuration.frame_rate,
+            };
+            if recording_mailbox_rec.start(request).is_some() {
+                if let Ok(mut g) = rec_start_rec.lock() {
+                    *g = Some(Instant::now());
                 }
-                Err(err) => {
-                    win.set_last_capture_message(format!("Erreur vidéo : {err}").into());
-                    win.set_show_last_capture(true);
-                }
+                win.set_is_recording(true);
+                win.set_recording_duration("00:00".into());
             }
         }
     });
@@ -1834,5 +2658,9 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
 
     main_window.run()?;
     let _ = cmd_tx.send(WorkerCommand::Stop);
+    recording_mailbox.close();
+    decode_mailbox.close();
+    let _ = decoder_worker.join();
+    let _ = recorder_worker.join();
     Ok(())
 }

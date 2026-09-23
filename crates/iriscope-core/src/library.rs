@@ -4,6 +4,7 @@ use std::{
     collections::HashMap,
     fs, io,
     path::{Path, PathBuf},
+    sync::Mutex,
     time::SystemTime,
 };
 
@@ -15,6 +16,7 @@ use crate::{
 };
 
 const LIBRARY_INDEX_FILE: &str = ".iriscope-index.json";
+static LIBRARY_INDEX_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 struct LibraryIndex {
@@ -110,6 +112,10 @@ pub fn record_capture_metadata(
     kind: CaptureKind,
     timestamp: CaptureTimestamp,
 ) -> io::Result<()> {
+    // Photo capture and video recording can update the same index on different threads.
+    let _write_guard = LIBRARY_INDEX_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     fs::create_dir_all(directory)?;
 
     let Some(file_name) = file_path.file_name().and_then(|name| name.to_str()) else {
@@ -343,7 +349,12 @@ fn parse_eye(label: &str) -> Eye {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, time::SystemTime};
+    use std::{
+        path::PathBuf,
+        sync::{Arc, Barrier},
+        thread,
+        time::SystemTime,
+    };
 
     use crate::{
         session::{CaptureSession, Eye},
@@ -448,6 +459,51 @@ mod tests {
         assert_eq!(entries[0].date_str, "2026-09-20");
         assert_eq!(entries[0].time_str, "18:45:12");
 
+        std::fs::remove_dir_all(dir).expect("remove test directory");
+    }
+
+    #[test]
+    fn concurrent_capture_metadata_updates_keep_every_entry() {
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("clock is valid")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("iris_test_index_concurrent_{unique}"));
+        std::fs::create_dir_all(&dir).expect("create test directory");
+        let barrier = Arc::new(Barrier::new(8));
+        let handles = (0..8)
+            .map(|number| {
+                let dir = dir.clone();
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    let file = dir.join(format!("capture-{number}.jpg"));
+                    std::fs::write(&file, b"test").expect("write capture");
+                    let session =
+                        CaptureSession::new(format!("Patient{number}"), "Test", Eye::Left);
+                    barrier.wait();
+                    record_capture_metadata(
+                        &dir,
+                        &file,
+                        &session,
+                        CaptureKind::Photo,
+                        CaptureTimestamp::now(),
+                    )
+                    .expect("record metadata");
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for handle in handles {
+            handle.join().expect("capture thread completes");
+        }
+        let entries = scan_library_directory(&dir);
+        assert_eq!(entries.len(), 8);
+        for number in 0..8 {
+            assert!(entries.iter().any(|entry| {
+                entry.file_path.ends_with(format!("capture-{number}.jpg"))
+                    && entry.first_name.as_deref() == Some(format!("Patient{number}").as_str())
+            }));
+        }
         std::fs::remove_dir_all(dir).expect("remove test directory");
     }
 }

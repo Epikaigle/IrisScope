@@ -262,6 +262,16 @@ Le projet donne la priorité à la qualité d'image et à la faible latence :
 
 ## Validation locale
 
+Pour lancer l'application et juger la latence du live dans les conditions de
+distribution :
+
+```text
+cargo run --release -p iriscope-app
+```
+
+Le profil de développement optimise également les crates de décodage d'image,
+mais le profil `release` reste la référence pour les mesures de performance.
+
 ```text
 ./scripts/ci-local.sh
 ```
@@ -272,4 +282,7 @@ Pour inclure le diagnostic de la caméra branchée :
 ./scripts/ci-local.sh --hardware
 ```
 
-La CI GitHub compile et teste le projet nativement sous Linux, Windows et macOS.
+Toutes les vérifications sont exécutées localement sur la machine de développement.
+Le script contrôle Linux nativement et compile aussi les cibles Windows x86_64,
+macOS Intel et macOS Apple Silicon. Les essais matériels Windows et macOS restent
+à exécuter sur les machines correspondantes.

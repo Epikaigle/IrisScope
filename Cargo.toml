@@ -22,3 +22,15 @@ unsafe_op_in_unsafe_fn = "warn"
 [workspace.lints.clippy]
 all = "warn"
 pedantic = "warn"
+
+# The live MJPEG preview runs through zune-jpeg even during `cargo run`.
+# Without this override, decoding a DE400 frame in a debug build can take
+# longer than the camera's frame interval and make the preview lag behind.
+[profile.dev.package.zune-jpeg]
+opt-level = 3
+
+[profile.dev.package.zune-core]
+opt-level = 3
+
+[profile.dev.package.iriscope-imaging]
+opt-level = 3

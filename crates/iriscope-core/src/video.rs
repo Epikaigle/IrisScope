@@ -277,6 +277,12 @@ impl AviMjpegWriter {
         self.frame_count
     }
 
+    /// Sets the constant playback rate written to the AVI headers on finalization.
+    /// Call this after measuring the timestamps of the frames actually recorded.
+    pub fn set_frame_rate(&mut self, frame_rate: FrameRate) {
+        self.frame_rate = frame_rate;
+    }
+
     /// Finalizes the AVI file with index and complete headers.
     ///
     /// # Errors
@@ -451,6 +457,29 @@ mod tests {
         let bytes = fs::read(&path).expect("read test AVI");
         assert!(bytes.starts_with(b"RIFF"));
         assert!(&bytes[8..12] == b"AVI ");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn updated_rate_is_written_to_final_avi_headers() {
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("clock is valid")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("test_video_rate_{unique}.avi"));
+        let requested = FrameRate::new(30, 1).expect("valid requested rate");
+        let measured = FrameRate::new(25, 4).expect("valid measured rate");
+        {
+            let mut writer =
+                AviMjpegWriter::create(&path, 640, 480, requested).expect("create AVI");
+            let fake_jpeg = [0xff, 0xd8, 0xff, 0xd9];
+            writer.write_frame(&fake_jpeg).expect("write frame 1");
+            writer.write_frame(&fake_jpeg).expect("write frame 2");
+            writer.set_frame_rate(measured);
+            writer.finish().expect("finish AVI");
+        }
+        let reader = AviMjpegReader::open(&path).expect("open finalized AVI");
+        assert_eq!(reader.frame_rate(), measured);
         let _ = fs::remove_file(path);
     }
     #[test]

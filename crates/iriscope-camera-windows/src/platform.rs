@@ -3,11 +3,11 @@ use std::{
     ffi::c_void,
     ptr, slice,
     sync::{
-        Arc,
-        mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TryRecvError, TrySendError},
+        Arc, Condvar, Mutex,
+        mpsc::{self, Receiver, SyncSender, TryRecvError},
     },
     thread::{self, JoinHandle},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use iriscope_core::{
@@ -28,12 +28,16 @@ use windows::{
             MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME, MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
             MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID,
             MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK, MF_E_NO_MORE_TYPES,
-            MF_E_VIDEO_RECORDING_DEVICE_INVALIDATED, MF_MT_FRAME_RATE, MF_MT_FRAME_RATE_RANGE_MAX,
-            MF_MT_FRAME_RATE_RANGE_MIN, MF_MT_FRAME_SIZE, MF_MT_SUBTYPE,
-            MF_READWRITE_DISABLE_CONVERTERS, MF_SOURCE_READER_FIRST_VIDEO_STREAM, MF_VERSION,
+            MF_E_VIDEO_DEVICE_LOCKED, MF_E_VIDEO_RECORDING_DEVICE_INVALIDATED,
+            MF_E_VIDEO_RECORDING_DEVICE_PREEMPTED, MF_MT_FRAME_RATE, MF_MT_FRAME_RATE_RANGE_MAX,
+            MF_MT_FRAME_RATE_RANGE_MIN, MF_MT_FRAME_SIZE, MF_MT_SUBTYPE, MF_MT_VIDEO_NOMINAL_RANGE,
+            MF_MT_YUV_MATRIX, MF_READWRITE_DISABLE_CONVERTERS, MF_SOURCE_READER_FIRST_VIDEO_STREAM,
+            MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED, MF_SOURCE_READERF_ENDOFSTREAM,
+            MF_SOURCE_READERF_ERROR, MF_SOURCE_READERF_NATIVEMEDIATYPECHANGED, MF_VERSION,
             MFCreateAttributes, MFCreateSourceReaderFromMediaSource, MFEnumDeviceSources,
-            MFSTARTUP_LITE, MFShutdown, MFStartup, MFVideoFormat_ARGB32, MFVideoFormat_MJPG,
-            MFVideoFormat_NV12, MFVideoFormat_RGB32, MFVideoFormat_YUY2,
+            MFNominalRange_0_255, MFSTARTUP_LITE, MFShutdown, MFStartup, MFVideoFormat_ARGB32,
+            MFVideoFormat_MJPG, MFVideoFormat_NV12, MFVideoFormat_RGB32, MFVideoFormat_YUY2,
+            MFVideoTransferMatrix_BT601,
         },
         System::Com::{COINIT_MULTITHREADED, CoInitializeEx, CoTaskMemFree, CoUninitialize},
     },
@@ -101,7 +105,7 @@ struct WindowsCameraDevice {
     descriptor: CameraDescriptor,
     capabilities: CameraCapabilities,
     command_sender: SyncSender<WorkerCommand>,
-    event_receiver: Receiver<CameraResult<CameraEvent>>,
+    events: Arc<EventMailbox>,
     worker: Option<JoinHandle<()>>,
 }
 
@@ -158,17 +162,7 @@ impl CameraDevice for WindowsCameraDevice {
     }
 
     fn next_event(&mut self, timeout: Duration) -> CameraResult<CameraEvent> {
-        match self.event_receiver.recv_timeout(timeout) {
-            Ok(event) => event,
-            Err(RecvTimeoutError::Timeout) => Err(CameraError::new(
-                CameraErrorKind::TimedOut,
-                "timed out waiting for a Media Foundation camera event",
-            )),
-            Err(RecvTimeoutError::Disconnected) => Err(CameraError::new(
-                CameraErrorKind::Disconnected,
-                "Media Foundation camera worker stopped",
-            )),
-        }
+        self.events.next_event(timeout)
     }
 
     fn control_value(&self, _control_id: &CameraControlId) -> CameraResult<CameraControlValue> {
@@ -220,11 +214,115 @@ struct WorkerDevice {
     capabilities: CameraCapabilities,
 }
 
+#[derive(Default)]
+struct EventMailbox {
+    state: Mutex<EventMailboxState>,
+    available: Condvar,
+}
+
+#[derive(Default)]
+struct EventMailboxState {
+    pending: Option<CameraResult<CameraEvent>>,
+    closed: bool,
+}
+
+impl EventMailbox {
+    fn publish_frame(&self, frame: CapturedFrame) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if state.closed {
+            return;
+        }
+
+        if state
+            .pending
+            .as_ref()
+            .is_none_or(|event| matches!(event, Ok(CameraEvent::Frame(_))))
+        {
+            state.pending = Some(Ok(CameraEvent::Frame(frame)));
+            self.available.notify_one();
+        }
+    }
+
+    fn publish_terminal(&self, event: CameraResult<CameraEvent>) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if state.closed {
+            return;
+        }
+
+        state.pending = Some(event);
+        self.available.notify_all();
+    }
+
+    fn clear(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.pending = None;
+    }
+
+    fn close(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.closed = true;
+        self.available.notify_all();
+    }
+
+    fn next_event(&self, timeout: Duration) -> CameraResult<CameraEvent> {
+        let started = Instant::now();
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+        loop {
+            if let Some(event) = state.pending.take() {
+                return event;
+            }
+            if state.closed {
+                return Err(CameraError::new(
+                    CameraErrorKind::Disconnected,
+                    "Media Foundation camera worker stopped",
+                ));
+            }
+
+            let remaining = timeout.saturating_sub(started.elapsed());
+            if remaining.is_zero() {
+                return Err(CameraError::new(
+                    CameraErrorKind::TimedOut,
+                    "timed out waiting for a Media Foundation camera event",
+                ));
+            }
+
+            let waited = self
+                .available
+                .wait_timeout(state, remaining)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state = waited.0;
+            if waited.1.timed_out() && state.pending.is_none() {
+                return Err(CameraError::new(
+                    CameraErrorKind::TimedOut,
+                    "timed out waiting for a Media Foundation camera event",
+                ));
+            }
+        }
+    }
+}
+
 fn open_video_device(device_id: &CameraDeviceId) -> CameraResult<WindowsCameraDevice> {
     let requested_id = device_id.as_str().to_owned();
     let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
     let (command_sender, command_receiver) = mpsc::sync_channel(4);
-    let (event_sender, event_receiver) = mpsc::sync_channel(2);
+    let events = Arc::new(EventMailbox::default());
+    let worker_events = Arc::clone(&events);
     let worker = thread::Builder::new()
         .name("iriscope-media-foundation".to_owned())
         .spawn(move || {
@@ -232,8 +330,9 @@ fn open_video_device(device_id: &CameraDeviceId) -> CameraResult<WindowsCameraDe
                 &requested_id,
                 &ready_sender,
                 &command_receiver,
-                &event_sender,
+                &worker_events,
             );
+            worker_events.close();
         })
         .map_err(|error| {
             CameraError::new(
@@ -247,7 +346,7 @@ fn open_video_device(device_id: &CameraDeviceId) -> CameraResult<WindowsCameraDe
             descriptor: opened.descriptor,
             capabilities: opened.capabilities,
             command_sender,
-            event_receiver,
+            events,
             worker: Some(worker),
         }),
         Ok(Err(error)) => {
@@ -268,7 +367,7 @@ fn device_worker(
     requested_id: &str,
     ready_sender: &SyncSender<CameraResult<OpenedDevice>>,
     command_receiver: &Receiver<WorkerCommand>,
-    event_sender: &SyncSender<CameraResult<CameraEvent>>,
+    events: &EventMailbox,
 ) {
     let com = match ComApartment::initialize() {
         Ok(com) => com,
@@ -301,7 +400,7 @@ fn device_worker(
         return;
     }
 
-    run_worker_loop(&worker_device, command_receiver, event_sender);
+    run_worker_loop(&worker_device, command_receiver, events);
     shutdown_worker_device(worker_device);
     drop(media_foundation);
     drop(com);
@@ -310,11 +409,12 @@ fn device_worker(
 fn run_worker_loop(
     worker_device: &WorkerDevice,
     command_receiver: &Receiver<WorkerCommand>,
-    event_sender: &SyncSender<CameraResult<CameraEvent>>,
+    events: &EventMailbox,
 ) {
     let mut streaming = false;
     let mut configuration: Option<StreamConfiguration> = None;
     let mut sequence_number = 0_u64;
+    let mut initial_timestamp_100ns = None;
 
     loop {
         let command = if streaming {
@@ -335,8 +435,10 @@ fn run_worker_loop(
                 WorkerCommand::Start(requested, response_sender) => {
                     let result = configure_stream(&worker_device.source_reader, &requested);
                     if result.is_ok() {
+                        events.clear();
                         configuration = Some(requested);
                         sequence_number = 0;
+                        initial_timestamp_100ns = None;
                         streaming = true;
                     }
                     let _ = response_sender.send(result);
@@ -345,6 +447,8 @@ fn run_worker_loop(
                     let result = flush_source_reader(&worker_device.source_reader);
                     streaming = false;
                     configuration = None;
+                    initial_timestamp_100ns = None;
+                    events.clear();
                     let _ = response_sender.send(result);
                 }
                 WorkerCommand::Shutdown => return,
@@ -361,23 +465,20 @@ fn run_worker_loop(
             &worker_device.source_reader,
             active_configuration,
             sequence_number,
+            &mut initial_timestamp_100ns,
         ) {
             Ok(Some(frame)) => {
                 sequence_number = sequence_number.saturating_add(1);
-                match event_sender.try_send(Ok(CameraEvent::Frame(frame))) {
-                    Ok(()) | Err(TrySendError::Full(_)) => {}
-                    Err(TrySendError::Disconnected(_)) => return,
-                }
+                events.publish_frame(frame);
             }
             Ok(None) => {}
             Err(error) if error.kind() == CameraErrorKind::Disconnected => {
-                let _ = event_sender.send(Ok(CameraEvent::Disconnected));
+                events.publish_terminal(Ok(CameraEvent::Disconnected));
                 return;
             }
             Err(error) => {
-                let _ = event_sender.send(Err(error));
-                streaming = false;
-                configuration = None;
+                events.publish_terminal(Err(error));
+                return;
             }
         }
     }
@@ -405,7 +506,43 @@ fn configure_stream(
             })?;
     }
 
+    if requires_full_range_bt601(&configuration.pixel_format) {
+        // The RGB converters interpret NV12 and YUY2 as full-range BT.601. Check the
+        // actual Source Reader output type after negotiation, not just the native type.
+        let output_type =
+            unsafe { source_reader.GetCurrentMediaType(stream_index) }.map_err(|error| {
+                windows_device_error("reading the active YUV camera media type", &error)
+            })?;
+        if !media_type_has_supported_color(&output_type, &configuration.pixel_format) {
+            return Err(CameraError::new(
+                CameraErrorKind::InvalidConfiguration,
+                "Media Foundation YUV output has an unknown or unsupported color range/matrix",
+            ));
+        }
+    }
+
     Ok(())
+}
+
+fn media_type_has_supported_color(media_type: &IMFMediaType, pixel_format: &PixelFormat) -> bool {
+    if !requires_full_range_bt601(pixel_format) {
+        return true;
+    }
+
+    // SAFETY: These are optional UINT32 color attributes on a video media type. Missing
+    // attributes do not establish that the samples use full-range BT.601 encoding.
+    let nominal_range = unsafe { media_type.GetUINT32(&MF_MT_VIDEO_NOMINAL_RANGE) }.ok();
+    let matrix = unsafe { media_type.GetUINT32(&MF_MT_YUV_MATRIX) }.ok();
+    is_full_range_bt601(nominal_range, matrix)
+}
+
+fn requires_full_range_bt601(pixel_format: &PixelFormat) -> bool {
+    matches!(pixel_format, PixelFormat::Nv12 | PixelFormat::Yuyv)
+}
+
+fn is_full_range_bt601(nominal_range: Option<u32>, matrix: Option<u32>) -> bool {
+    nominal_range == Some(MFNominalRange_0_255.0.cast_unsigned())
+        && matrix == Some(MFVideoTransferMatrix_BT601.0.cast_unsigned())
 }
 
 fn find_native_media_type(
@@ -440,6 +577,7 @@ fn find_native_media_type(
         if pixel_format_from_subtype(subtype) != configuration.pixel_format
             || unpack_resolution(packed_size) != Some(configuration.resolution)
             || !media_type_supports_frame_rate(&media_type, configuration.frame_rate)
+            || !media_type_has_supported_color(&media_type, &configuration.pixel_format)
         {
             continue;
         }
@@ -447,10 +585,15 @@ fn find_native_media_type(
         return Ok(media_type);
     }
 
+    let color_requirement = if requires_full_range_bt601(&configuration.pixel_format) {
+        " with explicit full-range BT.601 color metadata"
+    } else {
+        ""
+    };
     Err(CameraError::new(
         CameraErrorKind::InvalidConfiguration,
         format!(
-            "Media Foundation camera does not expose {} {} at {:.3} fps",
+            "Media Foundation camera does not expose {} {} at {:.3} fps{color_requirement}",
             configuration.pixel_format,
             configuration.resolution,
             configuration.frame_rate.frames_per_second()
@@ -492,6 +635,7 @@ fn read_next_frame(
     source_reader: &IMFSourceReader,
     configuration: &StreamConfiguration,
     sequence_number: u64,
+    initial_timestamp_100ns: &mut Option<i64>,
 ) -> CameraResult<Option<CapturedFrame>> {
     let stream_index = MF_SOURCE_READER_FIRST_VIDEO_STREAM.0.cast_unsigned();
     let mut stream_flags = 0_u32;
@@ -512,6 +656,8 @@ fn read_next_frame(
     }
     .map_err(|error| windows_device_error("reading a camera frame", &error))?;
 
+    validate_stream_flags(stream_flags)?;
+
     let Some(sample) = sample else {
         return Ok(None);
     };
@@ -527,7 +673,7 @@ fn read_next_frame(
     unsafe { buffer.Lock(&raw mut data_pointer, None, Some(&raw mut current_length)) }
         .map_err(|error| windows_device_error("locking a camera frame buffer", &error))?;
 
-    let bytes = if data_pointer.is_null() && current_length != 0 {
+    let bytes = if data_pointer.is_null() {
         Vec::new()
     } else {
         // SAFETY: Lock reports current_length valid bytes starting at data_pointer.
@@ -551,8 +697,7 @@ fn read_next_frame(
         ));
     }
 
-    let non_negative_timestamp = u64::try_from(timestamp_100ns.max(0)).unwrap_or_default();
-    let timestamp = Duration::from_nanos(non_negative_timestamp.saturating_mul(100));
+    let timestamp = elapsed_timestamp(timestamp_100ns, initial_timestamp_100ns);
 
     Ok(Some(CapturedFrame {
         sequence_number,
@@ -561,6 +706,44 @@ fn read_next_frame(
         resolution: configuration.resolution,
         data: Arc::from(bytes),
     }))
+}
+
+fn validate_stream_flags(stream_flags: u32) -> CameraResult<()> {
+    let has_flag = |flag: i32| stream_flags & flag.cast_unsigned() != 0;
+
+    if has_flag(MF_SOURCE_READERF_ENDOFSTREAM.0) {
+        return Err(CameraError::new(
+            CameraErrorKind::Disconnected,
+            "Media Foundation camera stream ended",
+        ));
+    }
+    if has_flag(MF_SOURCE_READERF_ERROR.0) {
+        return Err(CameraError::new(
+            CameraErrorKind::Backend,
+            "Media Foundation reported a camera stream error",
+        ));
+    }
+    if has_flag(MF_SOURCE_READERF_NATIVEMEDIATYPECHANGED.0)
+        || has_flag(MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED.0)
+    {
+        return Err(CameraError::new(
+            CameraErrorKind::InvalidConfiguration,
+            "Media Foundation changed the active camera media type while streaming",
+        ));
+    }
+
+    Ok(())
+}
+
+fn elapsed_timestamp(timestamp_100ns: i64, initial_timestamp_100ns: &mut Option<i64>) -> Duration {
+    let timestamp_100ns = timestamp_100ns.max(0);
+    let initial = *initial_timestamp_100ns.get_or_insert(timestamp_100ns);
+    let elapsed_100ns = timestamp_100ns.saturating_sub(initial);
+    Duration::from_nanos(
+        u64::try_from(elapsed_100ns)
+            .unwrap_or_default()
+            .saturating_mul(100),
+    )
 }
 
 fn open_on_worker(requested_id: &str) -> CameraResult<WorkerDevice> {
@@ -688,6 +871,13 @@ fn enumerate_capabilities(source_reader: &IMFSourceReader) -> CameraResult<Camer
             )
         })?;
 
+        let pixel_format = pixel_format_from_subtype(subtype);
+        // Only advertise YUV modes that the current full-range BT.601 RGB decoders can
+        // render correctly. MJPEG and BGRA do not depend on these YUV attributes.
+        if !media_type_has_supported_color(&media_type, &pixel_format) {
+            continue;
+        }
+
         let mut frame_rates = Vec::new();
         for key in [
             &MF_MT_FRAME_RATE,
@@ -708,12 +898,7 @@ fn enumerate_capabilities(source_reader: &IMFSourceReader) -> CameraResult<Camer
         }
         sort_frame_rates(&mut frame_rates);
 
-        merge_mode(
-            &mut modes,
-            pixel_format_from_subtype(subtype),
-            resolution,
-            frame_rates,
-        );
+        merge_mode(&mut modes, pixel_format, resolution, frame_rates);
     }
 
     if modes.is_empty() {
@@ -936,7 +1121,10 @@ fn windows_device_error(context: &str, error: &windows::core::Error) -> CameraEr
 
     let kind = match error.code() {
         ACCESS_DENIED => CameraErrorKind::PermissionDenied,
-        SHARING_VIOLATION | BUSY => CameraErrorKind::DeviceBusy,
+        SHARING_VIOLATION
+        | BUSY
+        | MF_E_VIDEO_DEVICE_LOCKED
+        | MF_E_VIDEO_RECORDING_DEVICE_PREEMPTED => CameraErrorKind::DeviceBusy,
         MF_E_VIDEO_RECORDING_DEVICE_INVALIDATED => CameraErrorKind::Disconnected,
         _ => CameraErrorKind::Backend,
     };
@@ -1023,9 +1211,26 @@ impl Drop for ActivationArray {
 
 #[cfg(test)]
 mod tests {
-    use iriscope_core::capabilities::{FrameRate, PixelFormat, Resolution};
+    use std::{sync::Arc, time::Duration};
 
-    use super::{merge_mode, parse_usb_identity, unpack_frame_rate, unpack_resolution};
+    use iriscope_core::{
+        camera::{CameraErrorKind, CameraEvent, CapturedFrame},
+        capabilities::{FrameRate, PixelFormat, Resolution},
+    };
+    use windows::{
+        Win32::Media::MediaFoundation::{
+            MF_E_VIDEO_DEVICE_LOCKED, MF_SOURCE_READERF_ENDOFSTREAM,
+            MF_SOURCE_READERF_NATIVEMEDIATYPECHANGED, MFNominalRange_0_255, MFNominalRange_16_235,
+            MFVideoFormat_MJPG, MFVideoTransferMatrix_BT601, MFVideoTransferMatrix_BT709,
+        },
+        core::Error,
+    };
+
+    use super::{
+        EventMailbox, elapsed_timestamp, is_full_range_bt601, merge_mode, parse_usb_identity,
+        pixel_format_from_subtype, requires_full_range_bt601, unpack_frame_rate, unpack_resolution,
+        validate_stream_flags, windows_device_error,
+    };
 
     #[test]
     fn extracts_usb_identity_from_media_foundation_link() {
@@ -1071,5 +1276,119 @@ mod tests {
 
         assert_eq!(modes.len(), 1);
         assert_eq!(modes[0].frame_rates, vec![rate_15, rate_30]);
+    }
+
+    #[test]
+    fn keeps_only_the_latest_pending_frame() {
+        let mailbox = EventMailbox::default();
+        mailbox.publish_frame(frame(1));
+        mailbox.publish_frame(frame(2));
+
+        let event = mailbox
+            .next_event(Duration::ZERO)
+            .expect("latest frame should be ready without waiting");
+        let CameraEvent::Frame(frame) = event else {
+            panic!("expected a frame event");
+        };
+        assert_eq!(frame.sequence_number, 2);
+    }
+
+    #[test]
+    fn terminal_event_replaces_a_stale_frame() {
+        let mailbox = EventMailbox::default();
+        mailbox.publish_frame(frame(1));
+        mailbox.publish_terminal(Ok(CameraEvent::Disconnected));
+
+        assert_eq!(
+            mailbox.next_event(Duration::ZERO),
+            Ok(CameraEvent::Disconnected)
+        );
+    }
+
+    #[test]
+    fn clearing_mailbox_discards_previous_stream_frame() {
+        let mailbox = EventMailbox::default();
+        mailbox.publish_frame(frame(1));
+        mailbox.clear();
+
+        assert_eq!(
+            mailbox
+                .next_event(Duration::ZERO)
+                .expect_err("a previous stream frame must not remain pending")
+                .kind(),
+            CameraErrorKind::TimedOut
+        );
+    }
+
+    #[test]
+    fn reports_source_reader_terminal_flags() {
+        let end_of_stream = MF_SOURCE_READERF_ENDOFSTREAM.0.cast_unsigned();
+        let media_type_changed = MF_SOURCE_READERF_NATIVEMEDIATYPECHANGED.0.cast_unsigned();
+
+        assert_eq!(
+            validate_stream_flags(end_of_stream)
+                .expect_err("end of stream must stop capture")
+                .kind(),
+            CameraErrorKind::Disconnected
+        );
+        assert_eq!(
+            validate_stream_flags(media_type_changed)
+                .expect_err("a changed media type invalidates frame metadata")
+                .kind(),
+            CameraErrorKind::InvalidConfiguration
+        );
+    }
+
+    #[test]
+    fn normalizes_source_timestamps_to_stream_elapsed_time() {
+        let mut initial = None;
+
+        assert_eq!(elapsed_timestamp(500_000, &mut initial), Duration::ZERO);
+        assert_eq!(
+            elapsed_timestamp(530_000, &mut initial),
+            Duration::from_millis(3)
+        );
+    }
+
+    #[test]
+    fn accepts_only_explicit_full_range_bt601_yuv() {
+        let full = Some(MFNominalRange_0_255.0.cast_unsigned());
+        let limited = Some(MFNominalRange_16_235.0.cast_unsigned());
+        let bt601 = Some(MFVideoTransferMatrix_BT601.0.cast_unsigned());
+        let bt709 = Some(MFVideoTransferMatrix_BT709.0.cast_unsigned());
+
+        assert!(is_full_range_bt601(full, bt601));
+        assert!(!is_full_range_bt601(limited, bt601));
+        assert!(!is_full_range_bt601(full, bt709));
+        assert!(!is_full_range_bt601(None, bt601));
+        assert!(!is_full_range_bt601(full, None));
+        assert!(requires_full_range_bt601(&PixelFormat::Nv12));
+        assert!(requires_full_range_bt601(&PixelFormat::Yuyv));
+        assert!(!requires_full_range_bt601(&PixelFormat::Mjpeg));
+        assert!(!requires_full_range_bt601(&PixelFormat::Bgra8));
+        assert_eq!(
+            pixel_format_from_subtype(MFVideoFormat_MJPG),
+            PixelFormat::Mjpeg
+        );
+    }
+
+    #[test]
+    fn classifies_media_foundation_device_lock_as_busy() {
+        let error = Error::from_hresult(MF_E_VIDEO_DEVICE_LOCKED);
+
+        assert_eq!(
+            windows_device_error("opening camera", &error).kind(),
+            CameraErrorKind::DeviceBusy
+        );
+    }
+
+    fn frame(sequence_number: u64) -> CapturedFrame {
+        CapturedFrame {
+            sequence_number,
+            timestamp: Duration::ZERO,
+            pixel_format: PixelFormat::Mjpeg,
+            resolution: Resolution::new(640, 480),
+            data: Arc::from([]),
+        }
     }
 }

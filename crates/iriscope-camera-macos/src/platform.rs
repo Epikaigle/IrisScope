@@ -2,11 +2,11 @@ use std::{
     collections::HashMap,
     slice,
     sync::{
-        Arc, Mutex, OnceLock,
-        mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TrySendError},
+        Arc, Condvar, Mutex,
+        mpsc::{self, Receiver, SyncSender},
     },
     thread::{self, JoinHandle},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use av_foundation::{
@@ -32,8 +32,10 @@ use core_media::{
 };
 use core_video::{
     pixel_buffer::{
-        CVPixelBuffer, kCVPixelBufferLock_ReadOnly, kCVPixelFormatType_32BGRA,
-        kCVPixelFormatType_422YpCbCr8, kCVPixelFormatType_422YpCbCr8_yuvs,
+        CVPixelBuffer, kCVPixelBufferLock_ReadOnly, kCVPixelBufferPixelFormatTypeKey,
+        kCVPixelFormatType_32BGRA, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+        kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_422YpCbCr8,
+        kCVPixelFormatType_422YpCbCr8_yuvs,
     },
     r#return::kCVReturnSuccess,
 };
@@ -49,11 +51,9 @@ use iriscope_core::capabilities::{
     StandardCameraControl,
 };
 use objc2::{
-    AnyThread, define_class, msg_send,
-    rc::{Allocated, Retained},
-    runtime::ProtocolObject,
+    AnyThread, DefinedClass, define_class, msg_send, rc::Retained, runtime::ProtocolObject,
 };
-use objc2_foundation::{NSObject, NSObjectProtocol, NSString};
+use objc2_foundation::{NSDictionary, NSNumber, NSObject, NSObjectProtocol, NSString};
 
 use crate::capabilities::{frame_rate_from_duration_parts, merge_mode, pixel_format_from_ostype};
 
@@ -129,7 +129,7 @@ struct MacAvFoundationDevice {
     descriptor: CameraDescriptor,
     capabilities: CameraCapabilities,
     command_sender: SyncSender<WorkerCommand>,
-    event_receiver: Receiver<CameraResult<CameraEvent>>,
+    events: Arc<EventMailbox>,
     worker: Option<JoinHandle<()>>,
 }
 
@@ -196,17 +196,7 @@ impl CameraDevice for MacAvFoundationDevice {
     }
 
     fn next_event(&mut self, timeout: Duration) -> CameraResult<CameraEvent> {
-        match self.event_receiver.recv_timeout(timeout) {
-            Ok(event) => event,
-            Err(RecvTimeoutError::Timeout) => Err(CameraError::new(
-                CameraErrorKind::TimedOut,
-                "timed out waiting for an AVFoundation camera event",
-            )),
-            Err(RecvTimeoutError::Disconnected) => Err(CameraError::new(
-                CameraErrorKind::Disconnected,
-                "AVFoundation camera worker stopped",
-            )),
-        }
+        self.events.next_event(timeout)
     }
 
     fn control_value(&self, control_id: &CameraControlId) -> CameraResult<CameraControlValue> {
@@ -280,11 +270,103 @@ struct OpenedDevice {
     capabilities: CameraCapabilities,
 }
 
+#[derive(Default)]
+struct EventMailbox {
+    state: Mutex<EventMailboxState>,
+    available: Condvar,
+}
+
+#[derive(Default)]
+struct EventMailboxState {
+    pending: Option<CameraResult<CameraEvent>>,
+    closed: bool,
+}
+
+impl EventMailbox {
+    fn publish(&self, event: CameraResult<CameraEvent>) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if state.closed {
+            return;
+        }
+        if matches!(&event, Ok(CameraEvent::Frame(_)))
+            && state
+                .pending
+                .as_ref()
+                .is_some_and(|pending| !matches!(pending, Ok(CameraEvent::Frame(_))))
+        {
+            return;
+        }
+        state.pending = Some(event);
+        self.available.notify_one();
+    }
+
+    fn clear(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.pending = None;
+    }
+
+    fn close(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.closed = true;
+        self.available.notify_all();
+    }
+
+    fn next_event(&self, timeout: Duration) -> CameraResult<CameraEvent> {
+        let started = Instant::now();
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+        loop {
+            if let Some(event) = state.pending.take() {
+                return event;
+            }
+            if state.closed {
+                return Err(CameraError::new(
+                    CameraErrorKind::Disconnected,
+                    "AVFoundation camera worker stopped",
+                ));
+            }
+
+            let remaining = timeout.saturating_sub(started.elapsed());
+            if remaining.is_zero() {
+                return Err(CameraError::new(
+                    CameraErrorKind::TimedOut,
+                    "timed out waiting for an AVFoundation camera event",
+                ));
+            }
+
+            let waited = self
+                .available
+                .wait_timeout(state, remaining)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state = waited.0;
+            if waited.1.timed_out() && state.pending.is_none() {
+                return Err(CameraError::new(
+                    CameraErrorKind::TimedOut,
+                    "timed out waiting for an AVFoundation camera event",
+                ));
+            }
+        }
+    }
+}
+
 fn open_video_device(device_id: &CameraDeviceId) -> CameraResult<MacAvFoundationDevice> {
     let requested_id = device_id.as_str().to_owned();
     let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
     let (command_sender, command_receiver) = mpsc::sync_channel(4);
-    let (event_sender, event_receiver) = mpsc::sync_channel(2);
+    let events = Arc::new(EventMailbox::default());
+    let worker_events = Arc::clone(&events);
     let worker = thread::Builder::new()
         .name("iriscope-avfoundation".to_owned())
         .spawn(move || {
@@ -292,8 +374,9 @@ fn open_video_device(device_id: &CameraDeviceId) -> CameraResult<MacAvFoundation
                 &requested_id,
                 &ready_sender,
                 &command_receiver,
-                &event_sender,
+                &worker_events,
             );
+            worker_events.close();
         })
         .map_err(|error| {
             CameraError::new(
@@ -307,7 +390,7 @@ fn open_video_device(device_id: &CameraDeviceId) -> CameraResult<MacAvFoundation
             descriptor: opened.descriptor,
             capabilities: opened.capabilities,
             command_sender,
-            event_receiver,
+            events,
             worker: Some(worker),
         }),
         Ok(Err(error)) => {
@@ -328,7 +411,7 @@ fn mac_device_worker(
     requested_id: &str,
     ready_sender: &SyncSender<CameraResult<OpenedDevice>>,
     command_receiver: &Receiver<WorkerCommand>,
-    event_sender: &SyncSender<CameraResult<CameraEvent>>,
+    events: &Arc<EventMailbox>,
 ) {
     let unique_id = NSString::from_str(requested_id);
     let Some(device) = AVCaptureDevice::device_with_unique_id(&unique_id) else {
@@ -362,7 +445,8 @@ fn mac_device_worker(
                 if let Some(stream) = active_stream.take() {
                     stop_mac_stream(&stream);
                 }
-                let result = start_mac_stream(&device, &configuration, event_sender.clone());
+                events.clear();
+                let result = start_mac_stream(&device, &configuration, Arc::clone(events));
                 match result {
                     Ok(stream) => {
                         active_stream = Some(stream);
@@ -377,6 +461,7 @@ fn mac_device_worker(
                 if let Some(stream) = active_stream.take() {
                     stop_mac_stream(&stream);
                 }
+                events.clear();
                 let _ = response_sender.send(Ok(()));
             }
             WorkerCommand::GetControl(control_id, response_sender) => {
@@ -408,7 +493,7 @@ struct MacStream {
 fn start_mac_stream(
     device: &AVCaptureDevice,
     configuration: &StreamConfiguration,
-    event_sender: SyncSender<CameraResult<CameraEvent>>,
+    events: Arc<EventMailbox>,
 ) -> CameraResult<MacStream> {
     configure_device_format(device, configuration)?;
 
@@ -421,7 +506,7 @@ fn start_mac_stream(
     let output = AVCaptureVideoDataOutput::new();
     output.set_always_discards_late_video_frames(true);
 
-    let delegate = FrameDelegate::new();
+    let delegate = FrameDelegate::new(events, configuration.clone());
     let delegate_protocol = ProtocolObject::from_ref(&*delegate);
     let queue = DispatchQueue::new("com.iriscope.camera.frames", DispatchQueueAttr::SERIAL);
     output.set_sample_buffer_delegate(delegate_protocol, &queue);
@@ -444,12 +529,14 @@ fn start_mac_stream(
         ));
     }
     session.add_output(&output);
+    if let Err(error) = configure_safe_output_format(&output) {
+        session.commit_configuration();
+        return Err(error);
+    }
     session.commit_configuration();
 
-    set_callback_state(Some(event_sender), Some(configuration.clone()));
     session.start_running();
     if !session.is_running() {
-        set_callback_state(None, None);
         return Err(CameraError::new(
             CameraErrorKind::Backend,
             "AVFoundation capture session did not start",
@@ -467,7 +554,36 @@ fn start_mac_stream(
 
 fn stop_mac_stream(stream: &MacStream) {
     stream.session.stop_running();
-    set_callback_state(None, None);
+}
+
+fn configure_safe_output_format(output: &AVCaptureVideoDataOutput) -> CameraResult<()> {
+    let available = output
+        .get_available_video_cv_pixel_format_types()
+        .iter()
+        .map(|number| number.as_u32())
+        .collect::<Vec<_>>();
+    let selected = select_safe_output_pixel_format(&available).ok_or_else(|| {
+        CameraError::new(
+            CameraErrorKind::Unsupported,
+            "AVFoundation offers no full-range NV12 or BGRA camera output",
+        )
+    })?;
+
+    // SAFETY: CoreFoundation strings and NSString are toll-free bridged, and this key is static.
+    let key = unsafe { &*kCVPixelBufferPixelFormatTypeKey.cast::<NSString>() };
+    let value = NSNumber::new_u32(selected);
+    let settings = NSDictionary::<NSString, NSObject>::from_slices(&[key], &[&*value]);
+    output.set_video_settings(&settings);
+    Ok(())
+}
+
+fn select_safe_output_pixel_format(available: &[u32]) -> Option<u32> {
+    [
+        kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+        kCVPixelFormatType_32BGRA,
+    ]
+    .into_iter()
+    .find(|format| available.contains(format))
 }
 
 fn configure_device_format(
@@ -486,6 +602,14 @@ fn configure_device_format(
         )
     })?;
 
+    let timescale = i32::try_from(configuration.frame_rate.numerator()).map_err(|_| {
+        CameraError::new(
+            CameraErrorKind::InvalidConfiguration,
+            "requested frame-rate numerator exceeds AVFoundation CMTime range",
+        )
+    })?;
+    let duration = CMTime::make(i64::from(configuration.frame_rate.denominator()), timescale);
+
     device.lock_for_configuration().map_err(|error| {
         CameraError::new(
             CameraErrorKind::Backend,
@@ -494,13 +618,6 @@ fn configure_device_format(
     })?;
 
     device.set_active_format(&format);
-    let timescale = i32::try_from(configuration.frame_rate.numerator()).map_err(|_| {
-        CameraError::new(
-            CameraErrorKind::InvalidConfiguration,
-            "requested frame-rate numerator exceeds AVFoundation CMTime range",
-        )
-    })?;
-    let duration = CMTime::make(i64::from(configuration.frame_rate.denominator()), timescale);
     device.set_active_video_min_frame_duration(duration);
     device.set_active_video_max_frame_duration(duration);
     device.unlock_for_configuration();
@@ -547,31 +664,16 @@ fn find_matching_format(
     None
 }
 
-#[derive(Default)]
 struct CallbackState {
-    sender: Option<SyncSender<CameraResult<CameraEvent>>>,
-    configuration: Option<StreamConfiguration>,
+    events: Arc<EventMailbox>,
+    configuration: StreamConfiguration,
     sequence_number: u64,
+    initial_timestamp: Option<Duration>,
 }
 
-static CALLBACK_STATE: OnceLock<Mutex<CallbackState>> = OnceLock::new();
-
-fn callback_state() -> &'static Mutex<CallbackState> {
-    CALLBACK_STATE.get_or_init(|| Mutex::new(CallbackState::default()))
+struct DelegateIvars {
+    callback: Mutex<CallbackState>,
 }
-
-fn set_callback_state(
-    sender: Option<SyncSender<CameraResult<CameraEvent>>>,
-    configuration: Option<StreamConfiguration>,
-) {
-    if let Ok(mut state) = callback_state().lock() {
-        state.sender = sender;
-        state.configuration = configuration;
-        state.sequence_number = 0;
-    }
-}
-
-struct DelegateIvars {}
 
 define_class!(
     #[unsafe(super(NSObject))]
@@ -589,51 +691,52 @@ define_class!(
             sample_buffer: CMSampleBufferRef,
             _connection: &AVCaptureConnection,
         ) {
-            handle_sample_buffer(sample_buffer);
-        }
-    }
-
-    impl FrameDelegate {
-        #[unsafe(method_id(init))]
-        fn init(this: Allocated<Self>) -> Option<Retained<Self>> {
-            let this = this.set_ivars(DelegateIvars {});
-            unsafe { msg_send![super(this), init] }
+            handle_sample_buffer(sample_buffer, &self.ivars().callback);
         }
     }
 );
 
 impl FrameDelegate {
-    fn new() -> Retained<Self> {
-        unsafe { msg_send![Self::alloc(), init] }
+    fn new(events: Arc<EventMailbox>, configuration: StreamConfiguration) -> Retained<Self> {
+        let allocated = Self::alloc().set_ivars(DelegateIvars {
+            callback: Mutex::new(CallbackState {
+                events,
+                configuration,
+                sequence_number: 0,
+                initial_timestamp: None,
+            }),
+        });
+        unsafe { msg_send![super(allocated), init] }
     }
 }
 
-fn handle_sample_buffer(sample_buffer_ref: CMSampleBufferRef) {
+fn handle_sample_buffer(sample_buffer_ref: CMSampleBufferRef, callback: &Mutex<CallbackState>) {
     if sample_buffer_ref.is_null() {
         return;
     }
 
-    let (sender, configuration, sequence_number) = {
-        let Ok(mut state) = callback_state().lock() else {
-            return;
-        };
-        let (Some(sender), Some(configuration)) =
-            (state.sender.clone(), state.configuration.clone())
-        else {
-            return;
-        };
-        let sequence_number = state.sequence_number;
-        state.sequence_number = state.sequence_number.saturating_add(1);
-        (sender, configuration, sequence_number)
-    };
-
     // SAFETY: The callback owns a valid CMSampleBuffer reference for the duration of this call.
     let sample_buffer = unsafe { CMSampleBuffer::wrap_under_get_rule(sample_buffer_ref) };
-    let result = frame_from_sample_buffer(&sample_buffer, &configuration, sequence_number);
+    let source_timestamp = sample_timestamp(&sample_buffer);
+
+    let (events, configuration, sequence_number, timestamp) = {
+        let Ok(mut state) = callback.lock() else {
+            return;
+        };
+        let events = Arc::clone(&state.events);
+        let configuration = state.configuration.clone();
+        let sequence_number = state.sequence_number;
+        state.sequence_number = state.sequence_number.saturating_add(1);
+        let timestamp = source_timestamp.map_or(Duration::ZERO, |timestamp| {
+            elapsed_timestamp(timestamp, &mut state.initial_timestamp)
+        });
+        (events, configuration, sequence_number, timestamp)
+    };
+
+    let result =
+        frame_from_sample_buffer(&sample_buffer, &configuration, sequence_number, timestamp);
     if let Some(event) = result.transpose() {
-        match sender.try_send(event.map(CameraEvent::Frame)) {
-            Ok(()) | Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {}
-        }
+        events.publish(event.map(CameraEvent::Frame));
     }
 }
 
@@ -641,9 +744,8 @@ fn frame_from_sample_buffer(
     sample_buffer: &CMSampleBuffer,
     configuration: &StreamConfiguration,
     sequence_number: u64,
+    timestamp: Duration,
 ) -> CameraResult<Option<CapturedFrame>> {
-    let timestamp = sample_timestamp(sample_buffer);
-
     if let Some(data_buffer) = sample_buffer.get_data_buffer() {
         let length = data_buffer.get_data_length();
         if length != 0 {
@@ -717,6 +819,23 @@ fn copy_locked_pixel_buffer(
         )
     })?;
     let format = pixel_buffer.get_pixel_format();
+
+    if format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange {
+        return Err(CameraError::new(
+            CameraErrorKind::Unsupported,
+            "AVFoundation delivered video-range NV12 despite requesting full-range output",
+        ));
+    }
+
+    if format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange {
+        return copy_locked_nv12_pixel_buffer(
+            pixel_buffer,
+            Resolution::new(width, height),
+            timestamp,
+            sequence_number,
+        )
+        .map(Some);
+    }
 
     let (pixel_format, bytes_per_pixel, convert_uyvy) = if format == kCVPixelFormatType_32BGRA {
         (PixelFormat::Bgra8, 4_usize, false)
@@ -799,13 +918,116 @@ fn copy_locked_pixel_buffer(
     }))
 }
 
-fn sample_timestamp(sample_buffer: &CMSampleBuffer) -> Duration {
-    let seconds = sample_buffer.get_presentation_time_stamp().get_seconds();
-    if seconds.is_finite() && seconds > 0.0 {
-        Duration::from_secs_f64(seconds)
-    } else {
-        Duration::ZERO
+fn copy_locked_nv12_pixel_buffer(
+    pixel_buffer: &CVPixelBuffer,
+    resolution: Resolution,
+    timestamp: Duration,
+    sequence_number: u64,
+) -> CameraResult<CapturedFrame> {
+    if pixel_buffer.get_plane_count() < 2 {
+        return Err(CameraError::new(
+            CameraErrorKind::Backend,
+            "AVFoundation NV12 buffer does not contain two planes",
+        ));
     }
+
+    let width = usize::try_from(resolution.width).map_err(|_| {
+        CameraError::new(
+            CameraErrorKind::Backend,
+            "AVFoundation NV12 frame width is too large",
+        )
+    })?;
+    let height = usize::try_from(resolution.height).map_err(|_| {
+        CameraError::new(
+            CameraErrorKind::Backend,
+            "AVFoundation NV12 frame height is too large",
+        )
+    })?;
+    let chroma_height = height.div_ceil(2);
+    let chroma_row_bytes = width.div_ceil(2).checked_mul(2).ok_or_else(|| {
+        CameraError::new(
+            CameraErrorKind::Backend,
+            "AVFoundation NV12 chroma row is too large",
+        )
+    })?;
+    let capacity = width
+        .checked_mul(height)
+        .and_then(|luma| {
+            chroma_row_bytes
+                .checked_mul(chroma_height)
+                .and_then(|chroma| luma.checked_add(chroma))
+        })
+        .ok_or_else(|| {
+            CameraError::new(
+                CameraErrorKind::Backend,
+                "AVFoundation NV12 frame buffer is too large",
+            )
+        })?;
+    let mut data = Vec::with_capacity(capacity);
+
+    copy_pixel_buffer_plane(pixel_buffer, 0, width, height, &mut data)?;
+    copy_pixel_buffer_plane(pixel_buffer, 1, chroma_row_bytes, chroma_height, &mut data)?;
+
+    Ok(CapturedFrame {
+        sequence_number,
+        timestamp,
+        pixel_format: PixelFormat::Nv12,
+        resolution,
+        data: Arc::from(data),
+    })
+}
+
+fn copy_pixel_buffer_plane(
+    pixel_buffer: &CVPixelBuffer,
+    plane_index: usize,
+    visible_row_bytes: usize,
+    visible_rows: usize,
+    destination: &mut Vec<u8>,
+) -> CameraResult<()> {
+    let source_row_bytes = pixel_buffer.get_bytes_per_row_of_plane(plane_index);
+    let source_rows = pixel_buffer.get_height_of_plane(plane_index);
+    if source_row_bytes < visible_row_bytes || source_rows < visible_rows {
+        return Err(CameraError::new(
+            CameraErrorKind::Backend,
+            "AVFoundation NV12 plane is smaller than the visible image",
+        ));
+    }
+
+    // SAFETY: The pixel buffer is locked, and the plane remains valid for this function.
+    let base = unsafe { pixel_buffer.get_base_address_of_plane(plane_index) };
+    if base.is_null() {
+        return Err(CameraError::new(
+            CameraErrorKind::Backend,
+            "AVFoundation returned a null NV12 plane address",
+        ));
+    }
+    let source_length = source_row_bytes.checked_mul(source_rows).ok_or_else(|| {
+        CameraError::new(
+            CameraErrorKind::Backend,
+            "AVFoundation NV12 plane is too large",
+        )
+    })?;
+    // SAFETY: The locked plane exposes at least stride * plane height readable bytes.
+    let source = unsafe { slice::from_raw_parts(base.cast::<u8>(), source_length) };
+    for row in 0..visible_rows {
+        let start = row * source_row_bytes;
+        destination.extend_from_slice(&source[start..start + visible_row_bytes]);
+    }
+    Ok(())
+}
+
+fn sample_timestamp(sample_buffer: &CMSampleBuffer) -> Option<Duration> {
+    let seconds = sample_buffer.get_presentation_time_stamp().get_seconds();
+    if (0.0..18_446_744_073_709_551_616.0).contains(&seconds) {
+        Some(Duration::from_secs_f64(seconds))
+    } else {
+        None
+    }
+}
+
+fn elapsed_timestamp(timestamp: Duration, initial_timestamp: &mut Option<Duration>) -> Duration {
+    let initial = *initial_timestamp.get_or_insert(timestamp);
+    timestamp.saturating_sub(initial)
 }
 
 fn descriptor_from_device(device: &AVCaptureDevice) -> CameraDescriptor {
@@ -1133,7 +1355,21 @@ fn reset_mac_controls(device: &AVCaptureDevice) -> CameraResult<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_usb_identity;
+    use std::{sync::Arc, time::Duration};
+
+    use iriscope_core::{
+        camera::{CameraErrorKind, CameraEvent, CapturedFrame},
+        capabilities::{PixelFormat, Resolution},
+    };
+
+    use core_video::pixel_buffer::{
+        kCVPixelFormatType_32BGRA, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+        kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+    };
+
+    use super::{
+        EventMailbox, elapsed_timestamp, parse_usb_identity, select_safe_output_pixel_format,
+    };
 
     #[test]
     fn extracts_usb_identity_from_avfoundation_uvc_unique_id() {
@@ -1148,5 +1384,89 @@ mod tests {
     fn ignores_non_uvc_avfoundation_unique_id() {
         assert!(parse_usb_identity("FaceTime HD Camera").is_none());
         assert!(parse_usb_identity("0x0000000000000000").is_none());
+    }
+
+    #[test]
+    fn normalizes_presentation_timestamps_to_stream_elapsed_time() {
+        let mut initial = None;
+
+        assert_eq!(
+            elapsed_timestamp(Duration::from_secs(42), &mut initial),
+            Duration::ZERO
+        );
+        assert_eq!(
+            elapsed_timestamp(Duration::from_millis(42_033), &mut initial),
+            Duration::from_millis(33)
+        );
+    }
+
+    #[test]
+    fn keeps_latest_frame_and_preserves_conversion_error() {
+        let mailbox = EventMailbox::default();
+        mailbox.publish(Ok(CameraEvent::Frame(frame(1))));
+        mailbox.publish(Ok(CameraEvent::Frame(frame(2))));
+
+        let CameraEvent::Frame(latest) = mailbox
+            .next_event(Duration::ZERO)
+            .expect("latest frame should be ready")
+        else {
+            panic!("expected a frame event");
+        };
+        assert_eq!(latest.sequence_number, 2);
+
+        mailbox.publish(Err(iriscope_core::camera::CameraError::new(
+            CameraErrorKind::Backend,
+            "conversion failed",
+        )));
+        mailbox.publish(Ok(CameraEvent::Frame(frame(3))));
+        assert_eq!(
+            mailbox
+                .next_event(Duration::ZERO)
+                .expect_err("a pending error must not be hidden by a newer frame")
+                .kind(),
+            CameraErrorKind::Backend
+        );
+    }
+
+    #[test]
+    fn clearing_mailbox_discards_previous_stream_frame() {
+        let mailbox = EventMailbox::default();
+        mailbox.publish(Ok(CameraEvent::Frame(frame(1))));
+        mailbox.clear();
+
+        assert_eq!(
+            mailbox
+                .next_event(Duration::ZERO)
+                .expect_err("a previous stream frame must not remain pending")
+                .kind(),
+            CameraErrorKind::TimedOut
+        );
+    }
+
+    #[test]
+    fn avoids_video_range_nv12_output() {
+        let video_range = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
+        let full_range = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange;
+        let bgra = kCVPixelFormatType_32BGRA;
+
+        assert_eq!(select_safe_output_pixel_format(&[video_range]), None);
+        assert_eq!(
+            select_safe_output_pixel_format(&[video_range, bgra]),
+            Some(bgra)
+        );
+        assert_eq!(
+            select_safe_output_pixel_format(&[video_range, bgra, full_range]),
+            Some(full_range)
+        );
+    }
+
+    fn frame(sequence_number: u64) -> CapturedFrame {
+        CapturedFrame {
+            sequence_number,
+            timestamp: Duration::ZERO,
+            pixel_format: PixelFormat::Mjpeg,
+            resolution: Resolution::new(640, 480),
+            data: Arc::from([]),
+        }
     }
 }

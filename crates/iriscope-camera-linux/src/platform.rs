@@ -3,7 +3,7 @@ use std::{
     fs, io, mem,
     path::{Path, PathBuf},
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use iriscope_core::camera::{
@@ -18,7 +18,7 @@ use iriscope_core::capabilities::{
 };
 use v4l::{
     Device,
-    buffer::Type as BufferType,
+    buffer::{Metadata as BufferMetadata, Type as BufferType},
     capability::Flags,
     context::{self, Node},
     control::{
@@ -39,6 +39,11 @@ use v4l::{
 
 const MAX_EXPANDED_STEPWISE_MODES: usize = 4_096;
 const MAX_EXPANDED_FRAME_RATES: usize = 512;
+// Keep enough buffers queued for uninterrupted USB capture. The driver may
+// allocate more buffers than requested, so draining needs a separate limit.
+const MMAP_BUFFER_COUNT: u32 = 4;
+const MAX_DRAINED_FRAMES: u32 = 64;
+const POLL_IN: i16 = 0x0001;
 
 /// Native Linux camera backend using `V4L2` device nodes.
 #[derive(Debug, Default)]
@@ -140,6 +145,8 @@ impl CameraBackend for LinuxV4l2Backend {
             stream: None,
             configuration: None,
             sequence_number: 0,
+            last_native_sequence: None,
+            first_native_timestamp: None,
         }))
     }
 }
@@ -152,6 +159,8 @@ struct LinuxV4l2Device {
     stream: Option<MmapStream<'static>>,
     configuration: Option<StreamConfiguration>,
     sequence_number: u64,
+    last_native_sequence: Option<u32>,
+    first_native_timestamp: Option<Duration>,
 }
 
 impl CameraDevice for LinuxV4l2Device {
@@ -207,12 +216,15 @@ impl CameraDevice for LinuxV4l2Device {
         );
         let _ = Capture::set_params(&self.device, &params);
 
-        let stream = MmapStream::with_buffers(&self.device, BufferType::VideoCapture, 4)
-            .map_err(|error| camera_io_error("allocating V4L2 MMAP stream buffers", &error))?;
+        let stream =
+            MmapStream::with_buffers(&self.device, BufferType::VideoCapture, MMAP_BUFFER_COUNT)
+                .map_err(|error| camera_io_error("allocating V4L2 MMAP stream buffers", &error))?;
 
         self.stream = Some(stream);
         self.configuration = Some(configuration.clone());
         self.sequence_number = 0;
+        self.last_native_sequence = None;
+        self.first_native_timestamp = None;
         Ok(())
     }
 
@@ -227,28 +239,18 @@ impl CameraDevice for LinuxV4l2Device {
             CameraError::new(CameraErrorKind::Backend, "V4L2 stream is not running")
         })?;
 
-        stream.set_timeout(timeout);
+        let started_at = Instant::now();
+        stream.set_timeout(timeout.min(Duration::from_millis(i32::MAX as u64)));
 
-        let (buffer, metadata) = CaptureStream::next(stream).map_err(|error| {
-            if error.kind() == io::ErrorKind::TimedOut {
-                CameraError::new(
-                    CameraErrorKind::TimedOut,
-                    "timed out waiting for V4L2 frame",
-                )
-            } else if matches!(error.raw_os_error(), Some(5 | 19)) {
-                CameraError::new(
-                    CameraErrorKind::Disconnected,
-                    format!("V4L2 camera disconnected while reading a frame: {error}"),
-                )
-                .with_platform_code(i64::from(error.raw_os_error().unwrap_or_default()))
-            } else {
-                camera_io_error("reading next V4L2 frame", &error)
-            }
-        })?;
+        // V4L2 dequeues completed buffers in capture order. If rendering or
+        // decoding was slower than the camera, returning only one buffer here
+        // would replay the backlog and make the preview progressively older.
+        let (payload, metadata) = copy_fresh_mmap_frame(stream, timeout, started_at)?;
 
-        let bytes_used = (metadata.bytesused as usize).min(buffer.len());
-        let payload = Arc::from(&buffer[..bytes_used]);
-        self.sequence_number = self.sequence_number.saturating_add(1);
+        let captured_since_last =
+            native_sequence_increment(self.last_native_sequence, metadata.sequence);
+        self.sequence_number = self.sequence_number.saturating_add(captured_since_last);
+        self.last_native_sequence = Some(metadata.sequence);
 
         let configuration = self.configuration.as_ref().ok_or_else(|| {
             CameraError::new(CameraErrorKind::Backend, "stream configuration is missing")
@@ -256,7 +258,9 @@ impl CameraDevice for LinuxV4l2Device {
 
         let sec = u64::try_from(metadata.timestamp.sec).unwrap_or_default();
         let usec = u64::try_from(metadata.timestamp.usec).unwrap_or_default();
-        let timestamp = Duration::from_micros(sec.saturating_mul(1_000_000).saturating_add(usec));
+        let native_timestamp = Duration::from_secs(sec).saturating_add(Duration::from_micros(usec));
+        let timestamp = native_timestamp
+            .saturating_sub(*self.first_native_timestamp.get_or_insert(native_timestamp));
 
         Ok(CameraEvent::Frame(CapturedFrame {
             sequence_number: self.sequence_number,
@@ -317,6 +321,90 @@ impl CameraDevice for LinuxV4l2Device {
         }
 
         Ok(())
+    }
+}
+
+fn copy_fresh_mmap_frame(
+    stream: &mut MmapStream<'_>,
+    timeout: Duration,
+    started_at: Instant,
+) -> CameraResult<(Arc<[u8]>, BufferMetadata)> {
+    let handle = stream.handle();
+    for skipped in 0..MAX_DRAINED_FRAMES {
+        let (buffer, metadata) =
+            CaptureStream::next(stream).map_err(|error| map_capture_error(&error))?;
+        // Keep the current buffer mapped until we know it is the newest
+        // available one. `next` requeues it, so copying skipped frames wastes
+        // time and can itself increase preview latency.
+        let ready = skipped + 1 < MAX_DRAINED_FRAMES
+            && handle
+                .poll(POLL_IN, 0)
+                .map_err(|error| camera_io_error("polling the V4L2 frame queue", &error))?
+                != 0;
+        if !ready {
+            let bytes_used = (metadata.bytesused as usize).min(buffer.len());
+            let fallback = (Arc::from(&buffer[..bytes_used]), *metadata);
+
+            if skipped > 0 && skipped + 1 < MAX_DRAINED_FRAMES {
+                // A full queue can stop capture while the caller is busy. Its
+                // newest completed buffer is still old. Wait for one more
+                // capture now that draining has requeued buffers. Poll before
+                // calling `next` so a timeout leaves its current buffer state
+                // intact and we can safely return the valid fallback frame.
+                let remaining = timeout.saturating_sub(started_at.elapsed());
+                let poll_millis = i32::try_from(remaining.as_millis()).unwrap_or(i32::MAX);
+                if poll_millis > 0
+                    && handle.poll(POLL_IN, poll_millis).map_err(|error| {
+                        camera_io_error("waiting for a fresh V4L2 frame", &error)
+                    })? != 0
+                {
+                    stream.set_timeout(
+                        timeout
+                            .saturating_sub(started_at.elapsed())
+                            .min(Duration::from_millis(i32::MAX as u64)),
+                    );
+                    let (fresh_buffer, fresh_metadata) =
+                        CaptureStream::next(stream).map_err(|error| map_capture_error(&error))?;
+                    let bytes_used = (fresh_metadata.bytesused as usize).min(fresh_buffer.len());
+                    return Ok((Arc::from(&fresh_buffer[..bytes_used]), *fresh_metadata));
+                }
+            }
+
+            return Ok(fallback);
+        }
+    }
+    unreachable!("the final dequeued frame is always returned")
+}
+
+fn native_sequence_increment(previous: Option<u32>, current: u32) -> u64 {
+    let Some(previous) = previous else {
+        return 1;
+    };
+    let delta = current.wrapping_sub(previous);
+    // A small wrapped delta is valid when the V4L2 counter rolls over. A
+    // backwards jump or repeated value is a driver reset, not billions of
+    // missing frames.
+    if delta == 0 || delta > i32::MAX as u32 {
+        1
+    } else {
+        u64::from(delta)
+    }
+}
+
+fn map_capture_error(error: &io::Error) -> CameraError {
+    if error.kind() == io::ErrorKind::TimedOut {
+        CameraError::new(
+            CameraErrorKind::TimedOut,
+            "timed out waiting for V4L2 frame",
+        )
+    } else if matches!(error.raw_os_error(), Some(5 | 19)) {
+        CameraError::new(
+            CameraErrorKind::Disconnected,
+            format!("V4L2 camera disconnected while reading a frame: {error}"),
+        )
+        .with_platform_code(i64::from(error.raw_os_error().unwrap_or_default()))
+    } else {
+        camera_io_error("reading next V4L2 frame", error)
     }
 }
 
@@ -995,8 +1083,10 @@ fn camera_io_error(context: &str, error: &io::Error) -> CameraError {
 
 #[cfg(test)]
 mod tests {
+    use std::{thread, time::Duration};
+
     use iriscope_core::{
-        camera::{CameraBackend, UsbDeviceIdentity},
+        camera::{CameraBackend, CameraEvent, StreamConfiguration, UsbDeviceIdentity},
         capabilities::{
             CameraControlId, CameraControlKind, CameraControlValue, FrameRate, PixelFormat,
             Resolution, StandardCameraControl,
@@ -1011,8 +1101,18 @@ mod tests {
 
     use super::{
         LinuxV4l2Backend, expand_stepwise_frame_intervals, expand_stepwise_frame_sizes,
-        format_bcd_revision, map_control_description, map_pixel_format, stable_device_id,
+        format_bcd_revision, map_control_description, map_pixel_format, native_sequence_increment,
+        stable_device_id,
     };
+
+    #[test]
+    fn native_sequence_tracks_skips_and_wrap_without_reset_jump() {
+        assert_eq!(native_sequence_increment(None, 100), 1);
+        assert_eq!(native_sequence_increment(Some(100), 104), 4);
+        assert_eq!(native_sequence_increment(Some(u32::MAX - 1), 1), 3);
+        assert_eq!(native_sequence_increment(Some(104), 104), 1);
+        assert_eq!(native_sequence_increment(Some(104), 3), 1);
+    }
 
     #[test]
     fn usb_serial_produces_a_stable_device_id() {
@@ -1201,5 +1301,56 @@ mod tests {
                 .control_value(&control.id)
                 .expect("every readable DE400 control should return its current value");
         }
+    }
+
+    #[test]
+    #[ignore = "requires a connected DE400 iridoscope"]
+    fn connected_de400_discards_completed_stale_frames() {
+        let mut backend = LinuxV4l2Backend::new();
+        let descriptor = backend
+            .enumerate_devices()
+            .expect("V4L2 enumeration should succeed")
+            .into_iter()
+            .find(|descriptor| {
+                descriptor
+                    .usb
+                    .as_ref()
+                    .is_some_and(|usb| usb.vendor_id == 0x21cd && usb.product_id == 0x603b)
+            })
+            .expect("the DE400 should be connected");
+        let mut device = backend.open(&descriptor.id).expect("the DE400 should open");
+        let configuration = StreamConfiguration {
+            pixel_format: PixelFormat::Mjpeg,
+            resolution: Resolution::new(640, 480),
+            frame_rate: FrameRate::new(30, 1).expect("valid frame rate"),
+        };
+
+        device
+            .start_stream(&configuration)
+            .expect("the DE400 low-latency test stream should start");
+        let CameraEvent::Frame(first) = device
+            .next_event(Duration::from_secs(2))
+            .expect("the first DE400 frame should arrive")
+        else {
+            panic!("the DE400 should return a frame");
+        };
+
+        // The device may negotiate a lower rate than the requested 30 fps.
+        // A one-second pause fills the queue even at the observed ~6 fps.
+        thread::sleep(Duration::from_secs(1));
+        let CameraEvent::Frame(latest) = device
+            .next_event(Duration::from_secs(2))
+            .expect("a fresh DE400 frame should arrive")
+        else {
+            panic!("the DE400 should return a frame");
+        };
+
+        eprintln!(
+            "DE400 low-latency probe: first seq={} at {:?}, latest seq={} at {:?}",
+            first.sequence_number, first.timestamp, latest.sequence_number, latest.timestamp
+        );
+        assert!(latest.sequence_number >= first.sequence_number.saturating_add(2));
+        assert!(latest.timestamp.saturating_sub(first.timestamp) >= Duration::from_millis(750));
+        device.stop_stream().expect("the DE400 stream should stop");
     }
 }

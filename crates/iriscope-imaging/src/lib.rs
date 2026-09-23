@@ -72,17 +72,54 @@ const DEFAULT_DHT: &[u8] = &[
 /// Standalone JPEG decoders and photo viewers require DHT to be present.
 #[must_use]
 pub fn ensure_jpeg_has_dht(jpeg_data: &[u8]) -> std::borrow::Cow<'_, [u8]> {
-    if jpeg_data.windows(2).any(|w| w == [0xFF, 0xC4]) {
-        std::borrow::Cow::Borrowed(jpeg_data)
-    } else if let Some(pos) = jpeg_data.windows(2).position(|w| w == [0xFF, 0xDA]) {
-        let mut buf = Vec::with_capacity(jpeg_data.len() + DEFAULT_DHT.len());
-        buf.extend_from_slice(&jpeg_data[..pos]);
-        buf.extend_from_slice(DEFAULT_DHT);
-        buf.extend_from_slice(&jpeg_data[pos..]);
-        std::borrow::Cow::Owned(buf)
-    } else {
-        std::borrow::Cow::Borrowed(jpeg_data)
+    if !jpeg_data.starts_with(&[0xFF, 0xD8]) {
+        return std::borrow::Cow::Borrowed(jpeg_data);
     }
+
+    // Marker-looking bytes inside APP/COM payloads are ordinary data. Walk the
+    // length-delimited header segments and stop before entropy-coded scan data.
+    let mut offset = 2;
+    while offset < jpeg_data.len() {
+        let marker_start = offset;
+        if jpeg_data[offset] != 0xFF {
+            break;
+        }
+        while jpeg_data.get(offset) == Some(&0xFF) {
+            offset += 1;
+        }
+        let Some(&marker) = jpeg_data.get(offset) else {
+            break;
+        };
+        offset += 1;
+
+        match marker {
+            0xC4 => return std::borrow::Cow::Borrowed(jpeg_data),
+            0x00 | 0xD8 | 0xD9 => break,
+            0x01 | 0xD0..=0xD7 => continue,
+            _ => {}
+        }
+
+        let Some(length_bytes) = jpeg_data.get(offset..).and_then(|tail| tail.get(..2)) else {
+            break;
+        };
+        let length = usize::from(u16::from_be_bytes([length_bytes[0], length_bytes[1]]));
+        let Some(end) = offset.checked_add(length) else {
+            break;
+        };
+        if length < 2 || end > jpeg_data.len() {
+            break;
+        }
+        if marker == 0xDA {
+            let mut buf = Vec::with_capacity(jpeg_data.len() + DEFAULT_DHT.len());
+            buf.extend_from_slice(&jpeg_data[..marker_start]);
+            buf.extend_from_slice(DEFAULT_DHT);
+            buf.extend_from_slice(&jpeg_data[marker_start..]);
+            return std::borrow::Cow::Owned(buf);
+        }
+        offset = end;
+    }
+
+    std::borrow::Cow::Borrowed(jpeg_data)
 }
 
 /// Decodes raw MJPEG bytes into an RGB8 byte buffer using SIMD acceleration.
@@ -194,6 +231,60 @@ pub fn convert_bgra8_to_rgb8(
     Ok(rgb)
 }
 
+/// Converts compact NV12 bytes into packed RGB8 bytes.
+///
+/// The source must contain a tightly packed full-resolution Y plane followed by
+/// a tightly packed half-resolution plane of interleaved U and V samples. NV12
+/// uses 2x2 chroma subsampling, so both dimensions must be non-zero and even.
+///
+/// # Errors
+///
+/// Returns [`ImagingError::InvalidBufferSize`] when a dimension is zero or odd,
+/// when the expected frame size overflows, or when the source buffer does not
+/// exactly match the supplied dimensions.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+pub fn convert_nv12_to_rgb8(nv12: &[u8], width: u32, height: u32) -> Result<Vec<u8>, ImagingError> {
+    if width == 0 || height == 0 || !width.is_multiple_of(2) || !height.is_multiple_of(2) {
+        return Err(ImagingError::InvalidBufferSize);
+    }
+
+    let pixel_count = usize::try_from(u64::from(width) * u64::from(height))
+        .map_err(|_| ImagingError::InvalidBufferSize)?;
+    let expected = pixel_count
+        .checked_add(pixel_count / 2)
+        .ok_or(ImagingError::InvalidBufferSize)?;
+    if nv12.len() != expected {
+        return Err(ImagingError::InvalidBufferSize);
+    }
+
+    let width = usize::try_from(width).map_err(|_| ImagingError::InvalidBufferSize)?;
+    let height = usize::try_from(height).map_err(|_| ImagingError::InvalidBufferSize)?;
+    let mut rgb = Vec::with_capacity(
+        pixel_count
+            .checked_mul(3)
+            .ok_or(ImagingError::InvalidBufferSize)?,
+    );
+
+    for row in 0..height {
+        let y_row = row * width;
+        let uv_row = pixel_count + (row / 2) * width;
+        for column in 0..width {
+            let y = f32::from(nv12[y_row + column]);
+            let uv_index = uv_row + (column / 2) * 2;
+            let u = f32::from(nv12[uv_index]) - 128.0;
+            let v = f32::from(nv12[uv_index + 1]) - 128.0;
+
+            rgb.extend_from_slice(&[
+                (y + 1.402 * v).clamp(0.0, 255.0) as u8,
+                (y - 0.344_136 * u - 0.714_136 * v).clamp(0.0, 255.0) as u8,
+                (y + 1.772 * u).clamp(0.0, 255.0) as u8,
+            ]);
+        }
+    }
+
+    Ok(rgb)
+}
+
 /// Encodes an RGB8 frame as JPEG.
 ///
 /// This is used only when a camera backend does not provide native MJPEG frames,
@@ -240,24 +331,33 @@ pub fn encode_rgb8_png(rgb: &[u8], width: u32, height: u32) -> Result<Vec<u8>, I
     Ok(encoded)
 }
 
-/// Converts packed YUYV (YUY2) 4:2:2 bytes into packed RGB8 bytes.
+/// Converts tightly packed YUYV (YUY2) 4:2:2 bytes into packed RGB8 bytes.
+///
+/// Returns an empty buffer for zero or odd dimensions, an incomplete frame, or
+/// dimensions too large to fit in memory. Trailing source bytes are ignored.
 #[must_use]
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 pub fn convert_yuyv_to_rgb8(yuyv: &[u8], width: u32, height: u32) -> Vec<u8> {
-    let pixel_count = (width * height) as usize;
-    let mut rgb = vec![0_u8; pixel_count * 3];
+    if width == 0 || height == 0 || !width.is_multiple_of(2) {
+        return Vec::new();
+    }
+    let Some((source_length, output_length)) =
+        usize::try_from(u64::from(width) * u64::from(height))
+            .ok()
+            .and_then(|pixels| Some((pixels.checked_mul(2)?, pixels.checked_mul(3)?)))
+    else {
+        return Vec::new();
+    };
+    let Some(source) = yuyv.get(..source_length) else {
+        return Vec::new();
+    };
 
-    let macropixel_count = pixel_count / 2;
-    for i in 0..macropixel_count {
-        let src_idx = i * 4;
-        if src_idx + 3 >= yuyv.len() {
-            break;
-        }
-
-        let y0 = f32::from(yuyv[src_idx]);
-        let u = f32::from(yuyv[src_idx + 1]) - 128.0;
-        let y1 = f32::from(yuyv[src_idx + 2]);
-        let v = f32::from(yuyv[src_idx + 3]) - 128.0;
+    let mut rgb = vec![0_u8; output_length];
+    for (macropixel, destination) in source.chunks_exact(4).zip(rgb.chunks_exact_mut(6)) {
+        let y0 = f32::from(macropixel[0]);
+        let u = f32::from(macropixel[1]) - 128.0;
+        let y1 = f32::from(macropixel[2]);
+        let v = f32::from(macropixel[3]) - 128.0;
 
         // Pixel 0
         let r0 = (y0 + 1.402 * v).clamp(0.0, 255.0) as u8;
@@ -269,15 +369,7 @@ pub fn convert_yuyv_to_rgb8(yuyv: &[u8], width: u32, height: u32) -> Vec<u8> {
         let g1 = (y1 - 0.344_136 * u - 0.714_136 * v).clamp(0.0, 255.0) as u8;
         let b1 = (y1 + 1.772 * u).clamp(0.0, 255.0) as u8;
 
-        let dst0 = i * 6;
-        if dst0 + 5 < rgb.len() {
-            rgb[dst0] = r0;
-            rgb[dst0 + 1] = g0;
-            rgb[dst0 + 2] = b0;
-            rgb[dst0 + 3] = r1;
-            rgb[dst0 + 4] = g1;
-            rgb[dst0 + 5] = b1;
-        }
+        destination.copy_from_slice(&[r0, g0, b0, r1, g1, b1]);
     }
 
     rgb
@@ -353,7 +445,121 @@ pub fn create_thumbnail_jpeg(
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_transforms, convert_yuyv_to_rgb8};
+    use std::borrow::Cow;
+
+    use super::{
+        ImagingError, apply_transforms, convert_bgra8_to_rgb8, convert_nv12_to_rgb8,
+        convert_yuyv_to_rgb8, decode_mjpeg_to_rgb8, encode_rgb8_jpeg, ensure_jpeg_has_dht,
+    };
+
+    fn jpeg_without_dht(jpeg: &[u8]) -> Vec<u8> {
+        let mut stripped = jpeg[..2].to_vec();
+        let mut offset = 2;
+        while offset < jpeg.len() {
+            let start = offset;
+            assert_eq!(jpeg[offset], 0xFF);
+            let marker = jpeg[offset + 1];
+            offset += 2;
+            let length = usize::from(u16::from_be_bytes([jpeg[offset], jpeg[offset + 1]]));
+            let end = offset + length;
+            if marker != 0xC4 {
+                stripped.extend_from_slice(&jpeg[start..end]);
+            }
+            offset = end;
+            if marker == 0xDA {
+                stripped.extend_from_slice(&jpeg[offset..]);
+                break;
+            }
+        }
+        stripped
+    }
+
+    #[test]
+    fn adds_default_dht_to_synthetic_mjpeg_and_decodes_it() {
+        let pixels = [255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255];
+        let jpeg = encode_rgb8_jpeg(&pixels, 2, 2, 95).expect("encode synthetic JPEG");
+        let stripped = jpeg_without_dht(&jpeg);
+        assert!(stripped.len() < jpeg.len());
+
+        let patched = ensure_jpeg_has_dht(&stripped);
+        assert!(matches!(patched, Cow::Owned(_)));
+        assert_eq!(
+            decode_mjpeg_to_rgb8(&stripped).unwrap(),
+            decode_mjpeg_to_rgb8(&jpeg).unwrap()
+        );
+    }
+
+    #[test]
+    fn ignores_jpeg_markers_embedded_in_app_payload() {
+        let pixels = [64; 2 * 2 * 3];
+        let jpeg = encode_rgb8_jpeg(&pixels, 2, 2, 95).expect("encode synthetic JPEG");
+        for payload in [[0xFF, 0xC4, 0x00, 0x00], [0x00, 0x00, 0xFF, 0xDA]] {
+            let mut stripped = jpeg_without_dht(&jpeg);
+            // APP1's payload resembles a marker, but its length keeps it inside APP1.
+            stripped.splice(2..2, [0xFF, 0xE1, 0x00, 0x06].into_iter().chain(payload));
+
+            let patched = ensure_jpeg_has_dht(&stripped);
+            assert!(matches!(patched, Cow::Owned(_)));
+            assert_eq!(
+                decode_mjpeg_to_rgb8(&stripped).unwrap().2.len(),
+                pixels.len()
+            );
+        }
+    }
+
+    #[test]
+    fn keeps_jpeg_with_existing_dht_borrowed() {
+        let jpeg = encode_rgb8_jpeg(&[42; 12], 2, 2, 80).expect("encode synthetic JPEG");
+        assert!(matches!(ensure_jpeg_has_dht(&jpeg), Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn converts_nv12_black_and_white() {
+        let black = convert_nv12_to_rgb8(&[0, 0, 0, 0, 128, 128], 2, 2)
+            .expect("valid compact NV12 black frame");
+        assert_eq!(black, [0; 12]);
+
+        let white = convert_nv12_to_rgb8(&[255, 255, 255, 255, 128, 128], 2, 2)
+            .expect("valid compact NV12 white frame");
+        assert_eq!(white, [255; 12]);
+    }
+
+    #[test]
+    fn converts_nv12_chroma_for_each_two_by_two_block() {
+        // Four columns share two chroma pairs, each repeated on the next row.
+        let frame = [128; 8]
+            .into_iter()
+            .chain([255, 128, 128, 255])
+            .collect::<Vec<_>>();
+        let rgb = convert_nv12_to_rgb8(&frame, 4, 2).unwrap();
+        assert_eq!(&rgb[..3], &[128, 84, 255]);
+        assert_eq!(&rgb[3..6], &[128, 84, 255]);
+        assert_eq!(&rgb[6..9], &[255, 37, 128]);
+        assert_eq!(&rgb[12..], &rgb[..12]);
+    }
+
+    #[test]
+    fn converts_bgra_channel_order_and_ignores_padding() {
+        assert_eq!(
+            convert_bgra8_to_rgb8(&[1, 2, 3, 99, 4, 5, 6, 88, 0], 2, 1).unwrap(),
+            [3, 2, 1, 6, 5, 4]
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_nv12_buffers_and_dimensions() {
+        for (buffer, width, height) in [
+            (&[0, 0, 0, 0, 128][..], 2, 2),
+            (&[0, 0, 0, 0, 128, 128, 0][..], 2, 2),
+            (&[0, 0, 0, 128][..], 1, 2),
+            (&[][..], 0, 2),
+        ] {
+            assert!(matches!(
+                convert_nv12_to_rgb8(buffer, width, height),
+                Err(ImagingError::InvalidBufferSize)
+            ));
+        }
+    }
 
     #[test]
     fn converts_yuyv_black_and_white() {
@@ -362,6 +568,17 @@ mod tests {
         let rgb = convert_yuyv_to_rgb8(&yuyv, 2, 1);
         assert_eq!(rgb.len(), 6);
         assert_eq!(rgb, [0, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn converts_yuyv_chroma_and_rejects_incomplete_rows() {
+        assert_eq!(
+            convert_yuyv_to_rgb8(&[128, 255, 128, 128], 2, 1),
+            [128, 84, 255, 128, 84, 255]
+        );
+        assert!(convert_yuyv_to_rgb8(&[128, 255, 128], 2, 1).is_empty());
+        assert!(convert_yuyv_to_rgb8(&[128; 12], 3, 2).is_empty());
+        assert!(convert_yuyv_to_rgb8(&[], u32::MAX, u32::MAX).is_empty());
     }
 
     #[test]

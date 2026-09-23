@@ -144,12 +144,15 @@ export component MainWindow inherits Window {
     callback toggle-viewer-video();
     callback seek-viewer-video(float);
 
-    VerticalBox {
-        padding: 0px;
-        spacing: 0px;
+    Rectangle {
+        width: 100%;
+        height: 100%;
 
         // Top Navigation Bar
         Rectangle {
+            x: 0px;
+            y: 0px;
+            width: 100%;
             height: 52px;
             background: #1c2127;
 
@@ -183,7 +186,7 @@ export component MainWindow inherits Window {
                     }
 
                     Button {
-                        text: "Réglages Image";
+                        text: root.width < 1120px ? "Image" : "Réglages Image";
                         primary: root.current-tab == 1;
                         clicked => { root.current-tab = 1; }
                     }
@@ -202,13 +205,13 @@ export component MainWindow inherits Window {
                     }
 
                     Button {
-                        text: "Carte d'iridologie";
+                        text: root.width < 1120px ? "Iridologie" : "Carte d'iridologie";
                         primary: root.current-tab == 3;
                         clicked => { root.current-tab = 3; }
                     }
 
                     Button {
-                        text: "Paramètres & Diagnostic";
+                        text: root.width < 1120px ? "Diagnostic" : "Paramètres & Diagnostic";
                         primary: root.current-tab == 4;
                         clicked => { root.current-tab = 4; }
                     }
@@ -219,28 +222,30 @@ export component MainWindow inherits Window {
                     alignment: end;
 
                     Rectangle {
+                        width: root.width < 1120px ? 160px : 220px;
                         border-radius: 12px;
                         background: root.camera-connected ? #173822 : #381a1a;
                         height: 28px;
 
-                        HorizontalBox {
-                            padding-left: 8px;
-                            padding-right: 8px;
-                            spacing: 6px;
+                        Rectangle {
+                            x: 8px;
+                            y: 10px;
+                            width: 8px;
+                            height: 8px;
+                            border-radius: 4px;
+                            background: root.camera-connected ? #34d399 : #f87171;
+                        }
 
-                            Rectangle {
-                                width: 8px;
-                                height: 8px;
-                                border-radius: 4px;
-                                background: root.camera-connected ? #34d399 : #f87171;
-                            }
-
-                            Text {
-                                text: root.status-text;
-                                color: root.camera-connected ? #6ee7b7 : #fca5a5;
-                                font-size: 12px;
-                                vertical-alignment: center;
-                            }
+                        Text {
+                            x: 22px;
+                            y: 0px;
+                            width: parent.width - 30px;
+                            height: 100%;
+                            text: root.status-text;
+                            overflow: elide;
+                            color: root.camera-connected ? #6ee7b7 : #fca5a5;
+                            font-size: 12px;
+                            vertical-alignment: center;
                         }
                     }
                 }
@@ -249,15 +254,23 @@ export component MainWindow inherits Window {
 
         // Main Viewport Container
         Rectangle {
+            x: 0px;
+            y: 52px;
+            width: 100%;
+            height: parent.height - 52px;
             background: #0f1215;
 
             // Tab 0: Camera Live View
             if root.current-tab == 0: VerticalBox {
+                min-height: 0px;
+                vertical-stretch: 1;
                 padding: 12px;
                 spacing: 12px;
 
                 // Live Camera viewport
                 live-viewport := Rectangle {
+                    min-height: 0px;
+                    vertical-stretch: 1;
                     clip: true;
                     border-radius: 8px;
                     background: #000000;
@@ -306,76 +319,81 @@ export component MainWindow inherits Window {
                     if root.is-streaming && root.show-iridology-grid: Rectangle {
                         width: 100%;
                         height: 100%;
+                        // Leave room for both clock labels at the minimum window height.
+                        private property <length> outer-diameter:
+                            parent.height < 544px ? parent.height - 64px : 480px;
 
                         // 1. Pupil circle
                         Rectangle {
-                            x: (parent.width - 60px) / 2;
-                            y: (parent.height - 60px) / 2;
-                            width: 60px;
-                            height: 60px;
-                            border-radius: 30px;
+                            width: parent.outer-diameter / 8;
+                            height: self.width;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            border-radius: self.width / 2;
                             border-width: 1.5px;
                             border-color: #38bdf8aa;
                         }
                         // 2. Stomach zone
                         Rectangle {
-                            x: (parent.width - 140px) / 2;
-                            y: (parent.height - 140px) / 2;
-                            width: 140px;
-                            height: 140px;
-                            border-radius: 70px;
+                            width: parent.outer-diameter * 7 / 24;
+                            height: self.width;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            border-radius: self.width / 2;
                             border-width: 1px;
                             border-color: #38bdf866;
                         }
                         // 3. Collarette (ANW) in amber
                         Rectangle {
-                            x: (parent.width - 240px) / 2;
-                            y: (parent.height - 240px) / 2;
-                            width: 240px;
-                            height: 240px;
-                            border-radius: 120px;
+                            width: parent.outer-diameter / 2;
+                            height: self.width;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            border-radius: self.width / 2;
                             border-width: 1.5px;
                             border-color: #facc15cc;
                         }
                         // 4. Ciliary zone
                         Rectangle {
-                            x: (parent.width - 360px) / 2;
-                            y: (parent.height - 360px) / 2;
-                            width: 360px;
-                            height: 360px;
-                            border-radius: 180px;
+                            width: parent.outer-diameter * 3 / 4;
+                            height: self.width;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            border-radius: self.width / 2;
                             border-width: 1px;
                             border-color: #38bdf855;
                         }
                         // 5. Limbic outer ring
                         Rectangle {
-                            x: (parent.width - 480px) / 2;
-                            y: (parent.height - 480px) / 2;
-                            width: 480px;
-                            height: 480px;
-                            border-radius: 240px;
+                            width: parent.outer-diameter;
+                            height: self.width;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            border-radius: self.width / 2;
                             border-width: 1.5px;
                             border-color: #38bdf899;
                         }
                         // Crosshairs
                         Rectangle {
                             x: (parent.width - 1px) / 2;
-                            y: (parent.height - 480px) / 2;
+                            y: (parent.height - parent.outer-diameter) / 2;
                             width: 1px;
-                            height: 480px;
+                            height: parent.outer-diameter;
                             background: #38bdf855;
                         }
                         Rectangle {
-                            x: (parent.width - 480px) / 2;
+                            x: (parent.width - parent.outer-diameter) / 2;
                             y: (parent.height - 1px) / 2;
-                            width: 480px;
+                            width: parent.outer-diameter;
                             height: 1px;
                             background: #38bdf855;
                         }
                         // Clock sector guides
                         Text {
-                            x: (parent.width - 50px) / 2;
-                            y: (parent.height - 480px) / 2 - 18px;
+                            width: 100px;
+                            height: 16px;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - parent.outer-diameter) / 2 - 20px;
                             text: "12h Cerveau";
                             color: #38bdf8;
                             font-size: 11px;
@@ -383,8 +401,10 @@ export component MainWindow inherits Window {
                             horizontal-alignment: center;
                         }
                         Text {
-                            x: (parent.width - 50px) / 2;
-                            y: (parent.height + 480px) / 2 + 4px;
+                            width: 100px;
+                            height: 16px;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height + parent.outer-diameter) / 2 + 4px;
                             text: "6h Reins";
                             color: #38bdf8;
                             font-size: 11px;
@@ -599,85 +619,98 @@ export component MainWindow inherits Window {
 
                 // Bottom Session & Capture Bar
                 Rectangle {
-                    height: 84px;
+                    height: 168px;
+                    vertical-stretch: 0;
                     border-radius: 8px;
                     background: #1c2127;
 
-                    HorizontalBox {
+                    VerticalBox {
                         padding-left: 12px;
                         padding-right: 12px;
-                        spacing: 16px;
-                        alignment: space-between;
+                        padding-top: 8px;
+                        padding-bottom: 8px;
+                        spacing: 8px;
 
-                        // Patient identity
                         HorizontalBox {
-                            spacing: 8px;
+                            height: 56px;
+                            vertical-stretch: 0;
                             alignment: start;
 
-                            VerticalBox {
-                                alignment: center;
-                                spacing: 2px;
-                                Text { text: "Prénom"; color: #8b98a5; font-size: 11px; }
-                                LineEdit {
-                                    text <=> root.patient-first-name;
-                                    placeholder-text: "Prénom";
-                                    width: 120px;
-                                }
-                            }
+                            // Patient identity
+                            HorizontalBox {
+                                spacing: 8px;
+                                alignment: start;
 
-                            VerticalBox {
-                                alignment: center;
-                                spacing: 2px;
-                                Text { text: "Nom"; color: #8b98a5; font-size: 11px; }
-                                LineEdit {
-                                    text <=> root.patient-last-name;
-                                    placeholder-text: "Nom";
-                                    width: 120px;
-                                }
-                            }
-
-                            VerticalBox {
-                                alignment: center;
-                                spacing: 2px;
-                                Text { text: "Œil"; color: #8b98a5; font-size: 11px; }
-                                HorizontalBox {
-                                    spacing: 4px;
-                                    Button {
-                                        text: "Gauche";
-                                        primary: root.selected-eye == 1;
-                                        clicked => { root.selected-eye = 1; }
-                                    }
-                                    Button {
-                                        text: "Droit";
-                                        primary: root.selected-eye == 2;
-                                        clicked => { root.selected-eye = 2; }
+                                VerticalBox {
+                                    alignment: center;
+                                    spacing: 2px;
+                                    Text { text: "Prénom"; color: #8b98a5; font-size: 11px; }
+                                    LineEdit {
+                                        text <=> root.patient-first-name;
+                                        placeholder-text: "Prénom";
+                                        width: 120px;
                                     }
                                 }
-                            }
 
-                            VerticalBox {
-                                alignment: center;
-                                Button {
-                                    text: "Terminer session";
-                                    clicked => { root.clear-session(); }
+                                VerticalBox {
+                                    alignment: center;
+                                    spacing: 2px;
+                                    Text { text: "Nom"; color: #8b98a5; font-size: 11px; }
+                                    LineEdit {
+                                        text <=> root.patient-last-name;
+                                        placeholder-text: "Nom";
+                                        width: 120px;
+                                    }
+                                }
+
+                                VerticalBox {
+                                    alignment: center;
+                                    spacing: 2px;
+                                    Text { text: "Œil"; color: #8b98a5; font-size: 11px; }
+                                    HorizontalBox {
+                                        spacing: 4px;
+                                        Button {
+                                            text: "Gauche";
+                                            primary: root.selected-eye == 1;
+                                            clicked => { root.selected-eye = 1; }
+                                        }
+                                        Button {
+                                            text: "Droit";
+                                            primary: root.selected-eye == 2;
+                                            clicked => { root.selected-eye = 2; }
+                                        }
+                                    }
+                                }
+
+                                VerticalBox {
+                                    alignment: center;
+                                    Button {
+                                        text: "Terminer session";
+                                        clicked => { root.clear-session(); }
+                                    }
                                 }
                             }
                         }
 
                         // Main Action Button (Photo / Video)
                         HorizontalBox {
+                            height: 44px;
+                            vertical-stretch: 0;
                             spacing: 12px;
                             alignment: center;
 
                             HorizontalBox {
                                 spacing: 4px;
                                 alignment: center;
+                                height: 40px;
                                 Button {
+                                    height: 40px;
                                     text: "PHOTO";
                                     primary: !root.is-video-mode;
                                     clicked => { root.is-video-mode = false; }
                                 }
                                 Button {
+                                    height: 40px;
                                     text: "VIDÉO";
                                     primary: root.is-video-mode;
                                     clicked => { root.is-video-mode = true; }
@@ -685,6 +718,7 @@ export component MainWindow inherits Window {
                             }
 
                             Button {
+                                height: 44px;
                                 text: root.is-video-mode ? (root.is-recording ? "■ Arrêter Enreg." : "● Démarrer Vidéo") : "📷 Capturer Photo";
                                 primary: true;
                                 enabled: root.is-recording
@@ -714,8 +748,10 @@ export component MainWindow inherits Window {
 
                         // Display Tools (Freeze, Zoom, Rotation)
                         HorizontalBox {
+                            height: 36px;
+                            vertical-stretch: 0;
                             spacing: 6px;
-                            alignment: end;
+                            alignment: center;
 
                             Button {
                                 text: root.show-iridology-grid ? "Grille Iris (Active)" : "Grille Iris";
@@ -1346,7 +1382,7 @@ export component MainWindow inherits Window {
                             HorizontalBox { Text { text: "Identité USB :"; color: #9ca3af; } Text { text: root.diagnostics.usb-info; color: #ffffff; } }
                             HorizontalBox { Text { text: "Format actif :"; color: #9ca3af; } Text { text: root.diagnostics.active-format; color: #ffffff; } }
                             HorizontalBox { Text { text: "Résolution :"; color: #9ca3af; } Text { text: root.diagnostics.active-resolution; color: #ffffff; } }
-                            HorizontalBox { Text { text: "FPS Caméra :"; color: #9ca3af; } Text { text: root.diagnostics.active-fps; color: #ffffff; } }
+                            HorizontalBox { Text { text: "FPS mode annoncé :"; color: #9ca3af; } Text { text: root.diagnostics.active-fps; color: #ffffff; } }
                             HorizontalBox { Text { text: "FPS Mesuré :"; color: #9ca3af; } Text { text: root.diagnostics.measured-fps; color: #34d399; font-weight: 700; } }
                             HorizontalBox { Text { text: "Temps décodage :"; color: #9ca3af; } Text { text: root.diagnostics.decode-time-ms; color: #ffffff; } }
                             HorizontalBox { Text { text: "Frames reçues :"; color: #9ca3af; } Text { text: "" + root.diagnostics.frame-count; color: #ffffff; } }
