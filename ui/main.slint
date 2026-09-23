@@ -1,4 +1,4 @@
-import { Button, VerticalBox, HorizontalBox, LineEdit, Slider, ComboBox, ScrollView } from "std-widgets.slint";
+import { Button, VerticalBox, HorizontalBox, LineEdit, Slider, ComboBox, ScrollView, ListView } from "std-widgets.slint";
 
 export struct DiagnosticData {
     device-name: string,
@@ -107,7 +107,14 @@ export component MainWindow inherits Window {
     // Bibliothèque
     in-out property <[LibraryItemData]> library-items: [];
     in-out property <int> library-filter: 0; // 0 tous, 1 photos, 2 vidéos, 3 session
+    in-out property <int> library-page: 0;
+    in-out property <int> library-total-count: 0;
+    in-out property <string> library-page-summary: "";
+    in-out property <bool> library-loading: false;
     callback open-capture-file(string);
+    callback library-filter-changed(int);
+    callback library-page-changed(int);
+    callback session-changed();
 
     // Grille iridologique
     in-out property <bool> show-iridology-grid: false;
@@ -129,6 +136,7 @@ export component MainWindow inherits Window {
     callback toggle-recording();
     callback clear-session();
     callback toggle-freeze();
+    callback preview-tab-changed(bool);
     callback reset-camera-controls();
     callback set-camera-control-value(string, float);
     callback set-camera-control-bool(string, bool);
@@ -182,13 +190,19 @@ export component MainWindow inherits Window {
                     Button {
                         text: "Caméra";
                         primary: root.current-tab == 0;
-                        clicked => { root.current-tab = 0; }
+                        clicked => {
+                            root.current-tab = 0;
+                            root.preview-tab-changed(true);
+                        }
                     }
 
                     Button {
                         text: root.width < 1120px ? "Image" : "Réglages Image";
                         primary: root.current-tab == 1;
-                        clicked => { root.current-tab = 1; }
+                        clicked => {
+                            root.current-tab = 1;
+                            root.preview-tab-changed(false);
+                        }
                     }
 
                     Button {
@@ -196,10 +210,12 @@ export component MainWindow inherits Window {
                         primary: root.current-tab == 2;
                         clicked => {
                             root.current-tab = 2;
+                            root.preview-tab-changed(false);
                             root.library-filter =
                                 root.patient-first-name != "" && root.patient-last-name != ""
                                     ? 3
                                     : 0;
+                            root.library-filter-changed(root.library-filter);
                             root.refresh-library();
                         }
                     }
@@ -207,13 +223,19 @@ export component MainWindow inherits Window {
                     Button {
                         text: root.width < 1120px ? "Iridologie" : "Carte d'iridologie";
                         primary: root.current-tab == 3;
-                        clicked => { root.current-tab = 3; }
+                        clicked => {
+                            root.current-tab = 3;
+                            root.preview-tab-changed(false);
+                        }
                     }
 
                     Button {
                         text: root.width < 1120px ? "Diagnostic" : "Paramètres & Diagnostic";
                         primary: root.current-tab == 4;
-                        clicked => { root.current-tab = 4; }
+                        clicked => {
+                            root.current-tab = 4;
+                            root.preview-tab-changed(false);
+                        }
                     }
                 }
 
@@ -649,6 +671,7 @@ export component MainWindow inherits Window {
                                         text <=> root.patient-first-name;
                                         placeholder-text: "Prénom";
                                         width: 120px;
+                                        edited => { root.session-changed(); }
                                     }
                                 }
 
@@ -660,6 +683,7 @@ export component MainWindow inherits Window {
                                         text <=> root.patient-last-name;
                                         placeholder-text: "Nom";
                                         width: 120px;
+                                        edited => { root.session-changed(); }
                                     }
                                 }
 
@@ -672,12 +696,22 @@ export component MainWindow inherits Window {
                                         Button {
                                             text: "Gauche";
                                             primary: root.selected-eye == 1;
-                                            clicked => { root.selected-eye = 1; }
+                                            clicked => {
+                                                if root.selected-eye != 1 {
+                                                    root.selected-eye = 1;
+                                                    root.session-changed();
+                                                }
+                                            }
                                         }
                                         Button {
                                             text: "Droit";
                                             primary: root.selected-eye == 2;
-                                            clicked => { root.selected-eye = 2; }
+                                            clicked => {
+                                                if root.selected-eye != 2 {
+                                                    root.selected-eye = 2;
+                                                    root.session-changed();
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -975,22 +1009,55 @@ export component MainWindow inherits Window {
                         text: "Session actuelle";
                         primary: root.library-filter == 3;
                         enabled: root.patient-first-name != "" && root.patient-last-name != "";
-                        clicked => { root.library-filter = 3; }
+                        clicked => {
+                            root.library-filter = 3;
+                            root.library-filter-changed(3);
+                        }
                     }
                     Button {
                         text: "Tous";
                         primary: root.library-filter == 0;
-                        clicked => { root.library-filter = 0; }
+                        clicked => {
+                            root.library-filter = 0;
+                            root.library-filter-changed(0);
+                        }
                     }
                     Button {
                         text: "Photos";
                         primary: root.library-filter == 1;
-                        clicked => { root.library-filter = 1; }
+                        clicked => {
+                            root.library-filter = 1;
+                            root.library-filter-changed(1);
+                        }
                     }
                     Button {
                         text: "Vidéos";
                         primary: root.library-filter == 2;
-                        clicked => { root.library-filter = 2; }
+                        clicked => {
+                            root.library-filter = 2;
+                            root.library-filter-changed(2);
+                        }
+                    }
+                }
+
+                if root.library-total-count > 100: HorizontalBox {
+                    spacing: 8px;
+                    alignment: start;
+                    Button {
+                        text: "Précédent";
+                        enabled: root.library-page > 0 && !root.library-loading;
+                        clicked => { root.library-page-changed(root.library-page - 1); }
+                    }
+                    Text {
+                        text: root.library-page-summary;
+                        color: #d1d5db;
+                        font-size: 13px;
+                        vertical-alignment: center;
+                    }
+                    Button {
+                        text: "Suivant";
+                        enabled: (root.library-page + 1) * 100 < root.library-total-count && !root.library-loading;
+                        clicked => { root.library-page-changed(root.library-page + 1); }
                     }
                 }
 
@@ -1021,7 +1088,19 @@ export component MainWindow inherits Window {
                     }
                 }
 
-                if root.library-items.length == 0: Rectangle {
+                if root.library-loading: Rectangle {
+                    background: #181d23;
+                    border-radius: 8px;
+                    min-height: 350px;
+                    Text {
+                        text: "Chargement des captures...";
+                        color: #d1d5db;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+
+                if !root.library-loading && root.library-items.length == 0: Rectangle {
                     background: #181d23;
                     border-radius: 8px;
                     border-width: 1px;
@@ -1032,7 +1111,13 @@ export component MainWindow inherits Window {
                         alignment: center;
                         spacing: 8px;
                         Text {
-                            text: "Aucun cliché dans la bibliothèque pour le moment.";
+                            text: root.library-filter == 3
+                                ? "Aucun cliché pour la session actuelle."
+                                : root.library-filter == 1
+                                    ? "Aucune photo dans la bibliothèque."
+                                    : root.library-filter == 2
+                                        ? "Aucune vidéo dans la bibliothèque."
+                                        : "Aucun cliché dans la bibliothèque pour le moment.";
                             color: #ffffff;
                             font-size: 16px;
                             font-weight: 600;
@@ -1047,16 +1132,15 @@ export component MainWindow inherits Window {
                     }
                 }
 
-                if root.library-items.length > 0: ScrollView {
+                if root.library-items.length > 0: library-list := ListView {
                     min-height: 400px;
-                    VerticalBox {
-                        spacing: 8px;
-                        for item in root.library-items: Rectangle {
-                            visible: root.library-filter == 0
-                                || (root.library-filter == 1 && !item.is-video)
-                                || (root.library-filter == 2 && item.is-video)
-                                || (root.library-filter == 3 && item.is-current-session);
-                            height: self.visible ? 92px : 0px;
+                    for item in root.library-items: Rectangle {
+                        width: library-list.visible-width;
+                        height: 100px;
+
+                        Rectangle {
+                            width: 100%;
+                            height: 92px;
                             border-radius: 8px;
                             background: item.is-current-session ? #1c2738 : #181d23;
                             border-width: 1px;
@@ -1382,7 +1466,7 @@ export component MainWindow inherits Window {
                             HorizontalBox { Text { text: "Identité USB :"; color: #9ca3af; } Text { text: root.diagnostics.usb-info; color: #ffffff; } }
                             HorizontalBox { Text { text: "Format actif :"; color: #9ca3af; } Text { text: root.diagnostics.active-format; color: #ffffff; } }
                             HorizontalBox { Text { text: "Résolution :"; color: #9ca3af; } Text { text: root.diagnostics.active-resolution; color: #ffffff; } }
-                            HorizontalBox { Text { text: "FPS mode annoncé :"; color: #9ca3af; } Text { text: root.diagnostics.active-fps; color: #ffffff; } }
+                            HorizontalBox { Text { text: "FPS du mode actif :"; color: #9ca3af; } Text { text: root.diagnostics.active-fps; color: #ffffff; } }
                             HorizontalBox { Text { text: "FPS Mesuré :"; color: #9ca3af; } Text { text: root.diagnostics.measured-fps; color: #34d399; font-weight: 700; } }
                             HorizontalBox { Text { text: "Temps décodage :"; color: #9ca3af; } Text { text: root.diagnostics.decode-time-ms; color: #ffffff; } }
                             HorizontalBox { Text { text: "Frames reçues :"; color: #9ca3af; } Text { text: "" + root.diagnostics.frame-count; color: #ffffff; } }

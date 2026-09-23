@@ -282,6 +282,9 @@ Pour inclure le diagnostic de la caméra branchée :
 ./scripts/ci-local.sh --hardware
 ```
 
+Cette variante échoue si la DE400 est absente ou si elle ne fournit pas trois
+images décodables.
+
 Toutes les vérifications sont exécutées localement sur la machine de développement.
 Le script contrôle Linux nativement et compile aussi les cibles Windows x86_64,
 macOS Intel et macOS Apple Silicon. Les essais matériels Windows et macOS restent

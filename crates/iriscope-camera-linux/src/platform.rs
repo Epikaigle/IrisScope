@@ -175,37 +175,50 @@ impl CameraDevice for LinuxV4l2Device {
     fn start_stream(&mut self, configuration: &StreamConfiguration) -> CameraResult<()> {
         self.stop_stream()?;
 
-        let fourcc = match &configuration.pixel_format {
-            PixelFormat::Mjpeg => FourCC::new(b"MJPG"),
-            PixelFormat::Yuyv => FourCC::new(b"YUYV"),
-            PixelFormat::Nv12 => FourCC::new(b"NV12"),
-            PixelFormat::Bgra8 => FourCC::new(b"BGRA"),
-            PixelFormat::Other(name) => {
-                let bytes = name.as_bytes();
-                if bytes.len() == 4 {
-                    FourCC::new(&[bytes[0], bytes[1], bytes[2], bytes[3]])
-                } else {
-                    return Err(CameraError::new(
+        let mut format_error = None;
+        let mut accepted_format = false;
+        for fourcc in fourcc_candidates(&configuration.pixel_format)? {
+            let requested = Format::new(
+                configuration.resolution.width,
+                configuration.resolution.height,
+                fourcc,
+            );
+            match Capture::set_format(&self.device, &requested) {
+                Ok(applied)
+                    if applied.width == requested.width
+                        && applied.height == requested.height
+                        && map_pixel_format(applied.fourcc) == configuration.pixel_format =>
+                {
+                    accepted_format = true;
+                    break;
+                }
+                Ok(applied) => {
+                    format_error = Some(CameraError::new(
                         CameraErrorKind::InvalidConfiguration,
-                        format!("unsupported FourCC format: {name}"),
+                        format!(
+                            "V4L2 negotiated {}x{} {} instead of {}x{} {}",
+                            applied.width,
+                            applied.height,
+                            applied.fourcc,
+                            requested.width,
+                            requested.height,
+                            requested.fourcc
+                        ),
                     ));
                 }
+                Err(error) => {
+                    format_error = Some(camera_io_error("setting V4L2 format", &error));
+                }
             }
-            _ => {
-                return Err(CameraError::new(
+        }
+        if !accepted_format {
+            return Err(format_error.unwrap_or_else(|| {
+                CameraError::new(
                     CameraErrorKind::InvalidConfiguration,
-                    "unsupported pixel format",
-                ));
-            }
-        };
-
-        let format = Format::new(
-            configuration.resolution.width,
-            configuration.resolution.height,
-            fourcc,
-        );
-        Capture::set_format(&self.device, &format)
-            .map_err(|error| camera_io_error("setting V4L2 format", &error))?;
+                    "no V4L2 format candidate",
+                )
+            }));
+        }
 
         let fps =
             configuration.frame_rate.numerator() / configuration.frame_rate.denominator().max(1);
@@ -214,18 +227,36 @@ impl CameraDevice for LinuxV4l2Device {
             configuration.frame_rate.denominator(),
             configuration.frame_rate.numerator(),
         );
-        let _ = Capture::set_params(&self.device, &params);
+        let applied_params = match Capture::set_params(&self.device, &params) {
+            Ok(params) => params,
+            Err(set_error) => Capture::params(&self.device).map_err(|read_error| {
+                CameraError::new(
+                    CameraErrorKind::Backend,
+                    format!(
+                        "setting V4L2 frame interval failed ({set_error}); reading it failed ({read_error})"
+                    ),
+                )
+            })?,
+        };
+        let applied_frame_rate = frame_rate_from_interval(applied_params.interval)?;
 
         let stream =
             MmapStream::with_buffers(&self.device, BufferType::VideoCapture, MMAP_BUFFER_COUNT)
                 .map_err(|error| camera_io_error("allocating V4L2 MMAP stream buffers", &error))?;
 
         self.stream = Some(stream);
-        self.configuration = Some(configuration.clone());
+        self.configuration = Some(StreamConfiguration {
+            frame_rate: applied_frame_rate,
+            ..configuration.clone()
+        });
         self.sequence_number = 0;
         self.last_native_sequence = None;
         self.first_native_timestamp = None;
         Ok(())
+    }
+
+    fn active_configuration(&self) -> Option<StreamConfiguration> {
+        self.configuration.clone()
     }
 
     fn stop_stream(&mut self) -> CameraResult<()> {
@@ -322,6 +353,15 @@ impl CameraDevice for LinuxV4l2Device {
 
         Ok(())
     }
+}
+
+fn frame_rate_from_interval(interval: Fraction) -> CameraResult<FrameRate> {
+    FrameRate::new(interval.denominator, interval.numerator).ok_or_else(|| {
+        CameraError::new(
+            CameraErrorKind::InvalidConfiguration,
+            format!("V4L2 returned an invalid frame interval: {interval}"),
+        )
+    })
 }
 
 fn copy_fresh_mmap_frame(
@@ -673,6 +713,30 @@ fn map_pixel_format(fourcc: FourCC) -> PixelFormat {
         b"NV12" => PixelFormat::Nv12,
         b"BGRA" | b"BGR4" => PixelFormat::Bgra8,
         bytes => PixelFormat::Other(fourcc_label(*bytes)),
+    }
+}
+
+fn fourcc_candidates(pixel_format: &PixelFormat) -> CameraResult<Vec<FourCC>> {
+    match pixel_format {
+        PixelFormat::Mjpeg => Ok(vec![FourCC::new(b"MJPG")]),
+        PixelFormat::Yuyv => Ok(vec![FourCC::new(b"YUYV"), FourCC::new(b"YUY2")]),
+        PixelFormat::Nv12 => Ok(vec![FourCC::new(b"NV12")]),
+        PixelFormat::Bgra8 => Ok(vec![FourCC::new(b"BGRA"), FourCC::new(b"BGR4")]),
+        PixelFormat::Other(name) => {
+            let bytes = name.as_bytes();
+            if bytes.len() == 4 {
+                Ok(vec![FourCC::new(&[bytes[0], bytes[1], bytes[2], bytes[3]])])
+            } else {
+                Err(CameraError::new(
+                    CameraErrorKind::InvalidConfiguration,
+                    format!("unsupported FourCC format: {name}"),
+                ))
+            }
+        }
+        _ => Err(CameraError::new(
+            CameraErrorKind::InvalidConfiguration,
+            "unsupported pixel format",
+        )),
     }
 }
 
@@ -1101,9 +1165,19 @@ mod tests {
 
     use super::{
         LinuxV4l2Backend, expand_stepwise_frame_intervals, expand_stepwise_frame_sizes,
-        format_bcd_revision, map_control_description, map_pixel_format, native_sequence_increment,
-        stable_device_id,
+        format_bcd_revision, fourcc_candidates, frame_rate_from_interval, map_control_description,
+        map_pixel_format, native_sequence_increment, stable_device_id,
     };
+
+    #[test]
+    fn negotiated_v4l2_interval_sets_the_actual_frame_rate() {
+        assert_eq!(
+            frame_rate_from_interval(Fraction::new(2, 25)).expect("valid interval"),
+            FrameRate::new(25, 2).expect("valid frame rate")
+        );
+        assert!(frame_rate_from_interval(Fraction::new(0, 8)).is_err());
+        assert!(frame_rate_from_interval(Fraction::new(1, 0)).is_err());
+    }
 
     #[test]
     fn native_sequence_tracks_skips_and_wrap_without_reset_jump() {
@@ -1157,6 +1231,20 @@ mod tests {
         assert_eq!(
             map_pixel_format(v4l::format::FourCC::new(b"GREY")),
             PixelFormat::Other("GREY".to_owned())
+        );
+    }
+
+    #[test]
+    fn native_format_candidates_include_supported_v4l2_aliases() {
+        let yuyv = fourcc_candidates(&PixelFormat::Yuyv).expect("YUYV candidates");
+        assert_eq!(
+            yuyv.iter().map(|format| format.repr).collect::<Vec<_>>(),
+            vec![*b"YUYV", *b"YUY2"]
+        );
+        let bgra = fourcc_candidates(&PixelFormat::Bgra8).expect("BGRA candidates");
+        assert_eq!(
+            bgra.iter().map(|format| format.repr).collect::<Vec<_>>(),
+            vec![*b"BGRA", *b"BGR4"]
         );
     }
 

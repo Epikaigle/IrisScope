@@ -252,6 +252,12 @@ pub trait CameraDevice: Send {
     /// Returns an error when the configuration is unsupported or streaming fails.
     fn start_stream(&mut self, configuration: &StreamConfiguration) -> CameraResult<()>;
 
+    /// Returns the mode accepted by the native API after starting a stream.
+    /// Backends that cannot query it may return `None`.
+    fn active_configuration(&self) -> Option<StreamConfiguration> {
+        None
+    }
+
     /// Stops the active stream. Implementations must also stop safely when dropped.
     ///
     /// # Errors

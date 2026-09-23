@@ -1,9 +1,8 @@
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     sync::{
         Arc, Condvar, Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
-        mpsc,
     },
     thread,
     time::{Duration, Instant},
@@ -49,9 +48,191 @@ slint::include_modules!();
 
 const DE400_VENDOR_ID: u16 = 0x21cd;
 const DE400_PRODUCT_ID: u16 = 0x603b;
-const NO_VIDEO_SEEK: u64 = u64::MAX;
 const MAX_QUEUED_RECORDING_FRAMES: usize = 8;
+const MAX_QUEUED_PHOTOS: usize = 2;
+const MAX_THUMBNAIL_CACHE_BYTES: usize = 128 * 1024 * 1024;
+const LIBRARY_PAGE_SIZE: usize = 100;
 type DecodedFrame = (u32, u32, Vec<u8>);
+
+struct ViewerSeekState {
+    epoch: u64,
+    requested_frame: Option<u64>,
+}
+
+struct ViewerDisplayFrame {
+    generation: u64,
+    seek_epoch: u64,
+    pixels: DecodedFrame,
+    progress: f32,
+    position: String,
+}
+
+impl ViewerDisplayFrame {
+    fn is_current(&self, generation: u64, seek_epoch: u64) -> bool {
+        self.generation == generation && self.seek_epoch == seek_epoch
+    }
+}
+
+#[derive(Default)]
+struct ViewerDisplayState {
+    frame: Option<ViewerDisplayFrame>,
+    update_pending: bool,
+}
+
+/// Keeps the newest decoded playback frame while limiting the UI event queue to one update.
+#[derive(Default)]
+struct ViewerDisplayMailbox(Mutex<ViewerDisplayState>);
+
+impl ViewerDisplayMailbox {
+    /// Returns true only when the caller needs to schedule an event-loop update.
+    fn publish(&self, frame: ViewerDisplayFrame) -> bool {
+        let mut state = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.frame = Some(frame);
+        if state.update_pending {
+            return false;
+        }
+        state.update_pending = true;
+        true
+    }
+
+    fn take_for_ui(&self) -> Option<ViewerDisplayFrame> {
+        let mut state = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.update_pending = false;
+        state.frame.take()
+    }
+
+    fn clear(&self) {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .frame = None;
+    }
+}
+
+struct ViewerOpenRequest {
+    path: std::path::PathBuf,
+    generation: u64,
+    is_photo: bool,
+}
+
+#[derive(Default)]
+struct ViewerOpenState {
+    pending: Option<ViewerOpenRequest>,
+    closed: bool,
+}
+
+/// A single viewer worker handles the newest open request, bounding file I/O and decoding.
+#[derive(Default)]
+struct ViewerOpenMailbox {
+    state: Mutex<ViewerOpenState>,
+    ready: Condvar,
+}
+
+impl ViewerOpenMailbox {
+    fn request(&self, request: ViewerOpenRequest) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !state.closed {
+            state.pending = Some(request);
+            self.ready.notify_one();
+        }
+    }
+
+    fn receive(&self) -> Option<ViewerOpenRequest> {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        while state.pending.is_none() && !state.closed {
+            state = self
+                .ready
+                .wait(state)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+        if state.closed {
+            None
+        } else {
+            state.pending.take()
+        }
+    }
+
+    fn close(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.closed = true;
+        state.pending = None;
+        self.ready.notify_all();
+    }
+}
+
+struct PhotoRequest {
+    frame: CapturedFrame,
+    directory: std::path::PathBuf,
+    filename_template: String,
+    session: CaptureSession,
+    timestamp: CaptureTimestamp,
+    context_generation: u64,
+}
+
+#[derive(Default)]
+struct PhotoMailbox {
+    state: Mutex<PhotoMailboxState>,
+    ready: Condvar,
+}
+
+#[derive(Default)]
+struct PhotoMailboxState {
+    pending: VecDeque<PhotoRequest>,
+    closed: bool,
+}
+
+impl PhotoMailbox {
+    fn enqueue(&self, request: PhotoRequest) -> bool {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if state.closed || state.pending.len() >= MAX_QUEUED_PHOTOS {
+            return false;
+        }
+        state.pending.push_back(request);
+        self.ready.notify_one();
+        true
+    }
+
+    fn receive(&self) -> Option<PhotoRequest> {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        while state.pending.is_empty() && !state.closed {
+            state = self
+                .ready
+                .wait(state)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+        state.pending.pop_front()
+    }
+
+    fn close(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.closed = true;
+        self.ready.notify_all();
+    }
+}
 
 fn is_de400(descriptor: &CameraDescriptor) -> bool {
     descriptor
@@ -116,9 +297,221 @@ fn video_frame_for_progress(progress: f32, frame_count: u64) -> u64 {
     (normalized * frame_count.saturating_sub(1) as f32).round() as u64
 }
 
+struct ViewerRuntime {
+    weak: slint::Weak<MainWindow>,
+    generation: Arc<AtomicU64>,
+    playing: Arc<AtomicBool>,
+    frame_count: Arc<AtomicU64>,
+    seek: Arc<Mutex<ViewerSeekState>>,
+    display: Arc<ViewerDisplayMailbox>,
+}
+
+impl ViewerRuntime {
+    fn run(&self, mailbox: &ViewerOpenMailbox) {
+        while let Some(request) = mailbox.receive() {
+            if self.generation.load(Ordering::Acquire) != request.generation {
+                continue;
+            }
+            if request.is_photo {
+                self.open_photo(&request);
+            } else {
+                self.open_video(&request);
+            }
+        }
+    }
+
+    fn open_photo(&self, request: &ViewerOpenRequest) {
+        let generation = request.generation;
+        let bytes = std::fs::read(&request.path).ok();
+        if self.generation.load(Ordering::Acquire) != generation {
+            return;
+        }
+        let decoded = bytes.and_then(|bytes| decode_image_to_rgb8(&bytes).ok());
+        if self.generation.load(Ordering::Acquire) != generation {
+            return;
+        }
+        let generation_state = Arc::clone(&self.generation);
+        let _ = self.weak.upgrade_in_event_loop(move |viewer| {
+            if generation_state.load(Ordering::Acquire) != generation {
+                return;
+            }
+            if let Some((width, height, rgb)) = decoded {
+                let pixels = SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(&rgb, width, height);
+                viewer.set_viewer_image(slint::Image::from_rgb8(pixels));
+                viewer.set_viewer_is_video(false);
+                viewer.set_viewer_video_playing(false);
+                viewer.set_viewer_video_progress(0.0);
+                viewer.set_viewer_video_position("00:00".into());
+                viewer.set_viewer_video_duration("00:00".into());
+                viewer.set_viewer_open(true);
+            } else {
+                viewer.set_last_capture_message("Image illisible ou indisponible.".into());
+                viewer.set_show_last_capture(true);
+            }
+        });
+    }
+
+    fn open_video(&self, request: &ViewerOpenRequest) {
+        let generation = request.generation;
+        let Ok(mut reader) = AviMjpegReader::open(&request.path) else {
+            let generation_state = Arc::clone(&self.generation);
+            let _ = self.weak.upgrade_in_event_loop(move |viewer| {
+                if generation_state.load(Ordering::Acquire) == generation {
+                    viewer
+                        .set_last_capture_message("Vidéo AVI illisible ou non compatible.".into());
+                    viewer.set_show_last_capture(true);
+                }
+            });
+            return;
+        };
+
+        if self.generation.load(Ordering::Acquire) != generation {
+            return;
+        }
+        let frame_count = reader.frame_count();
+        let fps = reader.frame_rate().frames_per_second().max(0.5);
+        self.schedule_video_start(generation, frame_count, fps);
+
+        let frame_duration = Duration::from_secs_f64(1.0 / fps);
+        let mut frame_index = 0_usize;
+        let mut frame_attempted = false;
+        while self.generation.load(Ordering::Acquire) == generation {
+            let (requested_seek, seek_epoch) = {
+                let mut seek = self
+                    .seek
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                (seek.requested_frame.take(), seek.epoch)
+            };
+            if let Some(requested_seek) = requested_seek {
+                frame_index = usize::try_from(requested_seek)
+                    .unwrap_or(usize::MAX)
+                    .min(frame_count.saturating_sub(1));
+            }
+
+            let playing = self.playing.load(Ordering::Acquire);
+            if !playing && requested_seek.is_none() && frame_attempted {
+                thread::sleep(Duration::from_millis(20));
+                continue;
+            }
+
+            let frame_started = Instant::now();
+            let Ok(jpeg) = reader.read_frame(frame_index) else {
+                break;
+            };
+            let jpeg = ensure_jpeg_has_dht(&jpeg);
+
+            if let Ok((width, height, rgb)) = decode_mjpeg_to_rgb8(&jpeg) {
+                if self.generation.load(Ordering::Acquire) != generation {
+                    break;
+                }
+                let frame = ViewerDisplayFrame {
+                    generation,
+                    seek_epoch,
+                    pixels: (width, height, rgb),
+                    progress: video_progress(frame_index, frame_count),
+                    position: format_playback_time(video_time_seconds(frame_index, fps)),
+                };
+                self.publish_video_frame(frame);
+            }
+            frame_attempted = true;
+
+            if playing {
+                frame_index = (frame_index + 1) % frame_count;
+                let remaining = frame_duration.saturating_sub(frame_started.elapsed());
+                // Bound the delay before a newly opened file can replace this playback.
+                let deadline = Instant::now() + remaining;
+                while self.generation.load(Ordering::Acquire) == generation {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        break;
+                    }
+                    thread::sleep(remaining.min(Duration::from_millis(20)));
+                }
+            } else {
+                thread::sleep(Duration::from_millis(20));
+            }
+        }
+
+        self.schedule_video_finish(generation);
+    }
+
+    fn schedule_video_start(&self, generation: u64, frame_count: usize, fps: f64) {
+        let frame_count_u64 = u64::try_from(frame_count).unwrap_or(u64::MAX);
+        let setup_generation = Arc::clone(&self.generation);
+        let setup_playing = Arc::clone(&self.playing);
+        let setup_frame_count = Arc::clone(&self.frame_count);
+        let _ = self.weak.upgrade_in_event_loop(move |viewer| {
+            if setup_generation.load(Ordering::Acquire) != generation {
+                return;
+            }
+            setup_frame_count.store(frame_count_u64, Ordering::Release);
+            setup_playing.store(true, Ordering::Release);
+            viewer.set_viewer_is_video(true);
+            viewer.set_viewer_video_playing(true);
+            viewer.set_viewer_video_progress(0.0);
+            viewer.set_viewer_video_position("00:00".into());
+            viewer.set_viewer_video_duration(
+                format_playback_time(video_time_seconds(frame_count, fps)).into(),
+            );
+            viewer.set_viewer_open(true);
+        });
+    }
+
+    fn publish_video_frame(&self, frame: ViewerDisplayFrame) {
+        if !self.display.publish(frame) {
+            return;
+        }
+        let ui_mailbox = Arc::clone(&self.display);
+        let ui_generation = Arc::clone(&self.generation);
+        let ui_seek = Arc::clone(&self.seek);
+        let _ = self.weak.upgrade_in_event_loop(move |viewer| {
+            let Some(frame) = ui_mailbox.take_for_ui() else {
+                return;
+            };
+            let current_seek_epoch = ui_seek
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .epoch;
+            if !frame.is_current(ui_generation.load(Ordering::Acquire), current_seek_epoch) {
+                return;
+            }
+            let (width, height, rgb) = frame.pixels;
+            let pixels = SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(&rgb, width, height);
+            viewer.set_viewer_image(slint::Image::from_rgb8(pixels));
+            viewer.set_viewer_video_progress(frame.progress);
+            viewer.set_viewer_video_position(frame.position.into());
+        });
+    }
+
+    fn schedule_video_finish(&self, generation: u64) {
+        let finish_generation = Arc::clone(&self.generation);
+        let finish_playing = Arc::clone(&self.playing);
+        let _ = self.weak.upgrade_in_event_loop(move |viewer| {
+            if finish_generation.load(Ordering::Acquire) == generation {
+                finish_playing.store(false, Ordering::Release);
+                viewer.set_viewer_video_playing(false);
+            }
+        });
+    }
+}
+
 #[cfg(test)]
 mod playback_tests {
-    use super::{format_playback_time, video_frame_for_progress, video_progress};
+    use super::{
+        ViewerDisplayFrame, ViewerDisplayMailbox, ViewerOpenMailbox, ViewerOpenRequest,
+        format_playback_time, video_frame_for_progress, video_progress,
+    };
+
+    fn display_frame(position: &str) -> ViewerDisplayFrame {
+        ViewerDisplayFrame {
+            generation: 7,
+            seek_epoch: 11,
+            pixels: (1, 1, vec![0, 0, 0]),
+            progress: 0.0,
+            position: position.to_owned(),
+        }
+    }
 
     #[test]
     fn formats_video_time_for_short_and_long_clips() {
@@ -139,12 +532,172 @@ mod playback_tests {
         let progress = video_progress(50, 101);
         assert!((progress - 500.0).abs() < f32::EPSILON);
     }
+
+    #[test]
+    fn playback_mailbox_keeps_latest_frame_with_one_pending_ui_update() {
+        let mailbox = ViewerDisplayMailbox::default();
+        assert!(mailbox.publish(display_frame("first")));
+        assert!(!mailbox.publish(display_frame("latest")));
+        assert_eq!(mailbox.take_for_ui().unwrap().position, "latest");
+
+        assert!(mailbox.publish(display_frame("before close")));
+        mailbox.clear();
+        assert!(mailbox.take_for_ui().is_none());
+        assert!(mailbox.publish(display_frame("after close")));
+        assert_eq!(mailbox.take_for_ui().unwrap().position, "after close");
+    }
+
+    #[test]
+    fn playback_frame_expires_after_reopen_or_seek() {
+        let frame = display_frame("frame");
+        assert!(frame.is_current(7, 11));
+        assert!(!frame.is_current(8, 11));
+        assert!(!frame.is_current(7, 12));
+    }
+
+    #[test]
+    fn viewer_open_mailbox_keeps_latest_request_and_stops_cleanly() {
+        let mailbox = ViewerOpenMailbox::default();
+        for generation in 1..=1_000 {
+            mailbox.request(ViewerOpenRequest {
+                path: format!("capture-{generation}.avi").into(),
+                generation,
+                is_photo: false,
+            });
+        }
+        let request = mailbox.receive().expect("latest request");
+        assert_eq!(request.generation, 1_000);
+        assert_eq!(request.path.to_string_lossy(), "capture-1000.avi");
+
+        mailbox.request(ViewerOpenRequest {
+            path: "stale.jpg".into(),
+            generation: 1_001,
+            is_photo: true,
+        });
+        mailbox.close();
+        assert!(mailbox.receive().is_none());
+    }
 }
 
-enum WorkerCommand {
-    SetControl(CameraControlId, CameraControlValue),
-    ResetControls,
-    Stop,
+#[derive(Default)]
+struct ControlCommandMailbox {
+    state: Mutex<ControlCommandState>,
+}
+
+#[derive(Default)]
+struct ControlCommandState {
+    updates: VecDeque<(CameraControlId, CameraControlValue)>,
+    reset: bool,
+    stop: bool,
+}
+
+struct ControlCommandBatch {
+    updates: VecDeque<(CameraControlId, CameraControlValue)>,
+    reset: bool,
+    stop: bool,
+}
+
+impl ControlCommandMailbox {
+    fn set_control(&self, id: CameraControlId, value: CameraControlValue) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !state.stop {
+            if let Some(previous) = state.updates.iter().position(|(key, _)| *key == id) {
+                state.updates.remove(previous);
+            }
+            state.updates.push_back((id, value));
+        }
+    }
+
+    fn reset_controls(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.updates.clear();
+        state.reset = true;
+    }
+
+    fn stop(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.stop = true;
+        state.reset = false;
+        state.updates.clear();
+    }
+
+    fn take(&self) -> ControlCommandBatch {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        ControlCommandBatch {
+            updates: std::mem::take(&mut state.updates),
+            reset: std::mem::take(&mut state.reset),
+            stop: state.stop,
+        }
+    }
+}
+
+#[cfg(test)]
+mod control_command_tests {
+    use iriscope_core::capabilities::{CameraControlId, CameraControlValue, StandardCameraControl};
+
+    use super::ControlCommandMailbox;
+
+    #[test]
+    fn slider_burst_keeps_only_the_newest_value_and_stop_wins() {
+        let mailbox = ControlCommandMailbox::default();
+        let id = CameraControlId::Standard(StandardCameraControl::Brightness);
+        for value in 0..10_000 {
+            mailbox.set_control(id.clone(), CameraControlValue::Integer(value));
+        }
+        let batch = mailbox.take();
+        assert_eq!(batch.updates.len(), 1);
+        assert_eq!(
+            batch.updates.front(),
+            Some(&(id.clone(), CameraControlValue::Integer(9_999)))
+        );
+
+        mailbox.set_control(id.clone(), CameraControlValue::Integer(1));
+        mailbox.reset_controls();
+        mailbox.set_control(id.clone(), CameraControlValue::Integer(2));
+        let batch = mailbox.take();
+        assert!(batch.reset);
+        assert_eq!(
+            batch.updates.front(),
+            Some(&(id.clone(), CameraControlValue::Integer(2)))
+        );
+
+        mailbox.set_control(id, CameraControlValue::Integer(3));
+        mailbox.stop();
+        let batch = mailbox.take();
+        assert!(batch.stop);
+        assert!(batch.updates.is_empty());
+    }
+
+    #[test]
+    fn dependent_controls_keep_the_order_of_the_latest_changes() {
+        let mailbox = ControlCommandMailbox::default();
+        let automatic = CameraControlId::Standard(StandardCameraControl::ExposureMode);
+        let manual = CameraControlId::Standard(StandardCameraControl::Exposure);
+        mailbox.set_control(manual.clone(), CameraControlValue::Integer(20));
+        mailbox.set_control(automatic.clone(), CameraControlValue::Menu(1));
+        mailbox.set_control(manual.clone(), CameraControlValue::Integer(30));
+
+        let updates = mailbox.take().updates.into_iter().collect::<Vec<_>>();
+        assert_eq!(
+            updates,
+            vec![
+                (automatic, CameraControlValue::Menu(1)),
+                (manual, CameraControlValue::Integer(30))
+            ]
+        );
+    }
 }
 
 struct RecordingRequest {
@@ -519,8 +1072,8 @@ fn run_diagnose() {
     };
 
     if devices.is_empty() {
-        println!("No video capture device detected.");
-        return;
+        eprintln!("No video capture device detected.");
+        std::process::exit(1);
     }
 
     for (index, device) in devices.iter().enumerate() {
@@ -541,8 +1094,8 @@ fn run_diagnose() {
     }
 
     let Some(target) = devices.iter().find(|device| is_de400(device)) else {
-        println!("\nFirefly DE400 not detected.");
-        return;
+        eprintln!("Firefly DE400 not detected.");
+        std::process::exit(1);
     };
 
     println!("\nOpening device: {} [{}]", target.display_name, target.id);
@@ -586,8 +1139,8 @@ fn run_diagnose() {
     let candidates = ranked_stream_configurations(caps);
 
     if candidates.is_empty() {
-        println!("No usable mode found.");
-        return;
+        eprintln!("No usable mode found.");
+        std::process::exit(1);
     }
 
     let mut active_configuration = None;
@@ -603,7 +1156,7 @@ fn run_diagnose() {
         match dev.start_stream(&candidate) {
             Ok(()) => {
                 println!("OK");
-                active_configuration = Some(candidate);
+                active_configuration = Some(dev.active_configuration().unwrap_or(candidate));
                 break;
             }
             Err(error) => {
@@ -625,7 +1178,8 @@ fn run_diagnose() {
     );
     let start_time = Instant::now();
     let mut captured = 0;
-    while captured < 3 && start_time.elapsed() < Duration::from_secs(5) {
+    let mut decoded = 0;
+    while decoded < 3 && start_time.elapsed() < Duration::from_secs(5) {
         match dev.next_event(Duration::from_millis(1500)) {
             Ok(CameraEvent::Frame(frame)) => {
                 captured += 1;
@@ -637,6 +1191,7 @@ fn run_diagnose() {
                     frame.timestamp
                 );
                 if let Some((width, height, rgb)) = decode_camera_frame_to_rgb8(&frame) {
+                    decoded += 1;
                     println!(
                         "  ✓ Successfully decoded {} to RGB8: {width}×{height} ({} bytes)",
                         frame.pixel_format,
@@ -662,9 +1217,12 @@ fn run_diagnose() {
     let elapsed = start_time.elapsed();
     let _ = dev.stop_stream();
     println!(
-        "Stopped stream. Captured {captured} frames in {:.2}s",
+        "Stopped stream. Captured {captured} frames, decoded {decoded} in {:.2}s",
         elapsed.as_secs_f64()
     );
+    if decoded < 3 {
+        std::process::exit(1);
+    }
 }
 
 fn load_full_image(path: &std::path::Path) -> Option<slint::Image> {
@@ -708,6 +1266,7 @@ fn load_video_thumbnail(path: &std::path::Path) -> Option<DecodedFrame> {
     resize_rgb8_to_fit(&rgb, width, height, 240).ok()
 }
 
+#[derive(Clone)]
 struct LibraryItemPayload {
     date_time: String,
     eye_label: String,
@@ -715,37 +1274,159 @@ struct LibraryItemPayload {
     id: String,
     is_current_session: bool,
     is_video: bool,
-    thumbnail: Option<DecodedFrame>,
+    thumbnail: Option<SharedPixelBuffer<Rgb8Pixel>>,
     title: String,
+}
+
+struct CachedThumbnail {
+    length: u64,
+    modified: Option<std::time::SystemTime>,
+    image: SharedPixelBuffer<Rgb8Pixel>,
+    last_used: u64,
+}
+
+#[derive(Default)]
+struct ThumbnailCache {
+    entries: HashMap<std::path::PathBuf, CachedThumbnail>,
+    bytes: usize,
+    clock: u64,
+}
+
+impl ThumbnailCache {
+    fn invalidate(&mut self) {
+        self.entries.clear();
+        self.bytes = 0;
+    }
+
+    fn get_or_load(
+        &mut self,
+        path: &std::path::Path,
+        load: impl FnOnce(&std::path::Path) -> Option<DecodedFrame>,
+    ) -> Option<SharedPixelBuffer<Rgb8Pixel>> {
+        let metadata = std::fs::metadata(path).ok()?;
+        let length = metadata.len();
+        let modified = metadata.modified().ok();
+        self.clock = self.clock.wrapping_add(1);
+        if let Some(entry) = self.entries.get_mut(path)
+            && entry.length == length
+            && entry.modified == modified
+        {
+            entry.last_used = self.clock;
+            return Some(entry.image.clone());
+        }
+        self.remove(path);
+        let (width, height, rgb) = load(path)?;
+        let image = SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(&rgb, width, height);
+        let image_bytes = image.as_bytes().len();
+        if image_bytes <= MAX_THUMBNAIL_CACHE_BYTES {
+            while self.bytes.saturating_add(image_bytes) > MAX_THUMBNAIL_CACHE_BYTES {
+                let Some(oldest) = self
+                    .entries
+                    .iter()
+                    .min_by_key(|(_, item)| item.last_used)
+                    .map(|(path, _)| path.clone())
+                else {
+                    break;
+                };
+                self.remove(&oldest);
+            }
+            self.bytes += image_bytes;
+            self.entries.insert(
+                path.to_path_buf(),
+                CachedThumbnail {
+                    length,
+                    modified,
+                    image: image.clone(),
+                    last_used: self.clock,
+                },
+            );
+        }
+        Some(image)
+    }
+
+    fn remove(&mut self, path: &std::path::Path) {
+        if let Some(removed) = self.entries.remove(path) {
+            self.bytes = self.bytes.saturating_sub(removed.image.as_bytes().len());
+        }
+    }
+
+    fn retain_paths(&mut self, paths: &std::collections::HashSet<std::path::PathBuf>) {
+        self.entries.retain(|path, _| paths.contains(path));
+        self.bytes = self
+            .entries
+            .values()
+            .map(|entry| entry.image.as_bytes().len())
+            .sum();
+    }
+}
+
+struct LibraryPagePayloads {
+    items: Vec<LibraryItemPayload>,
+    total: usize,
+    page: usize,
 }
 
 fn load_library_payloads(
     dir: &std::path::Path,
     active_session: &CaptureSession,
-) -> Vec<LibraryItemPayload> {
+    filter: i32,
+    requested_page: usize,
+    cache: &mut ThumbnailCache,
+    is_current: impl Fn() -> bool,
+) -> Option<LibraryPagePayloads> {
     let raw_entries = scan_library_directory(dir);
+    if !is_current() {
+        return None;
+    }
     let presented = present_library_items(&raw_entries, active_session, LibraryFilter::All);
-    presented
+    let paths = presented
+        .iter()
+        .map(|item| item.file_path.clone())
+        .collect();
+    cache.retain_paths(&paths);
+    let filtered = presented
         .into_iter()
-        .enumerate()
-        .map(|(idx, item)| {
-            let thumbnail = match item.kind {
-                CaptureKind::Photo => load_thumbnail(&item.file_path),
-                CaptureKind::Video => load_video_thumbnail(&item.file_path),
-            };
-
-            LibraryItemPayload {
-                date_time: item.date_time,
-                eye_label: item.eye_label,
-                file_path: item.file_path.to_string_lossy().to_string(),
-                id: idx.to_string(),
-                is_current_session: item.is_current_session,
-                is_video: matches!(item.kind, CaptureKind::Video),
-                thumbnail,
-                title: item.display_title,
-            }
+        .filter(|item| match filter {
+            1 => item.kind == CaptureKind::Photo,
+            2 => item.kind == CaptureKind::Video,
+            3 => item.is_current_session,
+            _ => true,
         })
-        .collect()
+        .collect::<Vec<_>>();
+    let total = filtered.len();
+    let page = requested_page.min(total.saturating_sub(1) / LIBRARY_PAGE_SIZE);
+    let start = page * LIBRARY_PAGE_SIZE;
+    let mut payloads = Vec::with_capacity(total.saturating_sub(start).min(LIBRARY_PAGE_SIZE));
+    for (idx, item) in filtered
+        .into_iter()
+        .skip(start)
+        .take(LIBRARY_PAGE_SIZE)
+        .enumerate()
+    {
+        if !is_current() {
+            return None;
+        }
+        let thumbnail = match item.kind {
+            CaptureKind::Photo => cache.get_or_load(&item.file_path, load_thumbnail),
+            CaptureKind::Video => cache.get_or_load(&item.file_path, load_video_thumbnail),
+        };
+
+        payloads.push(LibraryItemPayload {
+            date_time: item.date_time,
+            eye_label: item.eye_label,
+            file_path: item.file_path.to_string_lossy().to_string(),
+            id: (start + idx).to_string(),
+            is_current_session: item.is_current_session,
+            is_video: matches!(item.kind, CaptureKind::Video),
+            thumbnail,
+            title: item.display_title,
+        });
+    }
+    Some(LibraryPagePayloads {
+        items: payloads,
+        total,
+        page,
+    })
 }
 
 fn present_library_payloads(payloads: Vec<LibraryItemPayload>) -> Vec<LibraryItemData> {
@@ -753,13 +1434,9 @@ fn present_library_payloads(payloads: Vec<LibraryItemPayload>) -> Vec<LibraryIte
         .into_iter()
         .map(|item| {
             let has_thumbnail = item.thumbnail.is_some();
-            let thumbnail =
-                item.thumbnail
-                    .map_or_else(slint::Image::default, |(width, height, rgb)| {
-                        let pixels =
-                            SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(&rgb, width, height);
-                        slint::Image::from_rgb8(pixels)
-                    });
+            let thumbnail = item
+                .thumbnail
+                .map_or_else(slint::Image::default, slint::Image::from_rgb8);
             LibraryItemData {
                 date_time: item.date_time.into(),
                 eye_label: item.eye_label.into(),
@@ -775,11 +1452,242 @@ fn present_library_payloads(payloads: Vec<LibraryItemPayload>) -> Vec<LibraryIte
         .collect()
 }
 
-fn load_library_items(
-    dir: &std::path::Path,
-    active_session: &CaptureSession,
-) -> Vec<LibraryItemData> {
-    present_library_payloads(load_library_payloads(dir, active_session))
+fn clear_library_view(win: &MainWindow) {
+    win.set_library_items(ModelRc::new(VecModel::from(Vec::new())));
+    win.set_library_total_count(0);
+    win.set_library_page_summary("".into());
+    win.set_library_loading(true);
+}
+
+#[cfg(test)]
+mod photo_library_tests {
+    use std::{
+        cell::Cell,
+        path::PathBuf,
+        sync::Arc,
+        time::{Duration, SystemTime},
+    };
+
+    use iriscope_core::{
+        camera::CapturedFrame,
+        capabilities::{PixelFormat, Resolution},
+        library::scan_library_directory,
+        session::{CaptureSession, Eye},
+        storage::CaptureTimestamp,
+    };
+
+    use super::{
+        LIBRARY_PAGE_SIZE, LibraryRefreshMailbox, PhotoMailbox, PhotoRequest, ThumbnailCache,
+        load_library_payloads, save_photo,
+    };
+
+    struct TestDirectory(PathBuf);
+
+    impl TestDirectory {
+        fn new() -> Self {
+            let nonce = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .expect("clock after epoch")
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "iriscope-photo-test-{}-{nonce}",
+                std::process::id()
+            ));
+            std::fs::create_dir_all(&path).expect("create isolated test directory");
+            Self(path)
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn request(directory: &std::path::Path) -> PhotoRequest {
+        PhotoRequest {
+            frame: CapturedFrame {
+                sequence_number: 1,
+                timestamp: Duration::ZERO,
+                pixel_format: PixelFormat::Yuyv,
+                resolution: Resolution::new(2, 2),
+                data: Arc::from([128_u8; 8]),
+            },
+            directory: directory.to_path_buf(),
+            filename_template: "{prenom}_{nom}_{oeil}_{date}_{heure}".to_owned(),
+            session: CaptureSession::new("Ada", "Lovelace", Eye::Right),
+            timestamp: CaptureTimestamp {
+                year: 2026,
+                month: 9,
+                day: 23,
+                hour: 10,
+                minute: 11,
+                second: 12,
+            },
+            context_generation: 0,
+        }
+    }
+
+    #[test]
+    fn photo_worker_input_is_bounded_and_drains_on_close() {
+        let mailbox = PhotoMailbox::default();
+        let directory = TestDirectory::new();
+        assert!(mailbox.enqueue(request(&directory.0)));
+        assert!(mailbox.enqueue(request(&directory.0)));
+        assert!(!mailbox.enqueue(request(&directory.0)));
+        mailbox.close();
+        assert!(mailbox.receive().is_some());
+        assert!(mailbox.receive().is_some());
+        assert!(mailbox.receive().is_none());
+    }
+
+    #[test]
+    fn photo_save_writes_png_and_index_metadata() {
+        let directory = TestDirectory::new();
+        let saved = save_photo(&request(&directory.0)).expect("photo saved");
+        assert_eq!(
+            saved.path.extension().and_then(|value| value.to_str()),
+            Some("png")
+        );
+        assert!(saved.thumbnail.is_some());
+        let entries = scan_library_directory(&directory.0);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].first_name.as_deref(), Some("Ada"));
+        assert_eq!(entries[0].last_name.as_deref(), Some("Lovelace"));
+        assert_eq!(entries[0].eye, Eye::Right);
+    }
+
+    #[test]
+    fn thumbnail_cache_reuses_unchanged_file_and_invalidates_changed_file() {
+        let directory = TestDirectory::new();
+        let path = directory.0.join("thumbnail.jpg");
+        std::fs::write(&path, b"one").expect("write source");
+        let mut cache = ThumbnailCache::default();
+        let loads = Cell::new(0);
+        let loader = |_: &std::path::Path| {
+            loads.set(loads.get() + 1);
+            Some((1, 1, vec![0, 1, 2]))
+        };
+        assert!(cache.get_or_load(&path, loader).is_some());
+        assert!(cache.get_or_load(&path, loader).is_some());
+        assert_eq!(loads.get(), 1);
+        std::fs::write(&path, b"changed").expect("change source");
+        assert!(cache.get_or_load(&path, loader).is_some());
+        assert_eq!(loads.get(), 2);
+        cache.retain_paths(&std::collections::HashSet::new());
+        assert_eq!(cache.bytes, 0);
+    }
+
+    #[test]
+    fn explicit_refresh_reloads_a_thumbnail_with_unchanged_file_metadata() {
+        let directory = TestDirectory::new();
+        let path = directory.0.join("thumbnail.jpg");
+        std::fs::write(&path, b"same metadata").expect("write source");
+        let mut cache = ThumbnailCache::default();
+        let loads = Cell::new(0_u8);
+        let loader = |_: &std::path::Path| {
+            loads.set(loads.get() + 1);
+            Some((1, 1, vec![loads.get(); 3]))
+        };
+
+        assert_eq!(
+            cache.get_or_load(&path, loader).unwrap().as_bytes(),
+            &[1; 3]
+        );
+        assert_eq!(
+            cache.get_or_load(&path, loader).unwrap().as_bytes(),
+            &[1; 3]
+        );
+        assert_eq!(loads.get(), 1);
+
+        cache.invalidate();
+        assert_eq!(cache.bytes, 0);
+        assert_eq!(
+            cache.get_or_load(&path, loader).unwrap().as_bytes(),
+            &[2; 3]
+        );
+        assert_eq!(loads.get(), 2);
+    }
+
+    #[test]
+    fn library_refresh_keeps_only_latest_request() {
+        let mailbox = LibraryRefreshMailbox::default();
+        let directory = TestDirectory::new();
+        mailbox.request(directory.0.join("old"), CaptureSession::default());
+        mailbox.set_filter(2);
+        mailbox.set_page(3);
+        mailbox.request(directory.0.join("new"), CaptureSession::default());
+        let request = mailbox.receive().expect("latest request");
+        assert!(request.directory.ends_with("new"));
+        assert_eq!(request.filter, 2);
+        assert_eq!(request.page, 3);
+        assert!(mailbox.is_current(request.revision));
+        mailbox.close();
+        assert!(!mailbox.is_current(request.revision));
+        assert!(mailbox.receive().is_none());
+    }
+
+    #[test]
+    fn resolved_page_is_used_by_later_refreshes_but_stale_results_are_ignored() {
+        let mailbox = LibraryRefreshMailbox::default();
+        let directory = TestDirectory::new();
+        let session = CaptureSession::default();
+        mailbox.set_page(1);
+        mailbox.request(directory.0.clone(), session.clone());
+        let first = mailbox.receive().expect("first request");
+        assert_eq!(first.page, 1);
+
+        mailbox.request(directory.0.clone(), session.clone());
+        let current = mailbox.receive().expect("current request");
+        assert!(!mailbox.set_resolved_page(first.revision, 0));
+        assert!(mailbox.set_resolved_page(current.revision, 0));
+
+        mailbox.request(directory.0.clone(), session);
+        assert_eq!(mailbox.receive().expect("later refresh").page, 0);
+    }
+
+    #[test]
+    fn only_explicit_refresh_invalidates_cached_thumbnails() {
+        let mailbox = LibraryRefreshMailbox::default();
+        let directory = TestDirectory::new();
+        let session = CaptureSession::default();
+        mailbox.request(directory.0.clone(), session.clone());
+        let initial = mailbox.receive().expect("initial request");
+
+        mailbox.set_page(1);
+        mailbox.request(directory.0.clone(), session.clone());
+        let navigation = mailbox.receive().expect("navigation request");
+        assert_eq!(navigation.cache_revision, initial.cache_revision);
+
+        mailbox.invalidate_thumbnails();
+        mailbox.request(directory.0.clone(), session);
+        let explicit_refresh = mailbox.receive().expect("explicit refresh request");
+        assert_ne!(explicit_refresh.cache_revision, navigation.cache_revision);
+    }
+
+    #[test]
+    fn library_page_limits_loaded_items_and_keeps_later_captures_accessible() {
+        let directory = TestDirectory::new();
+        for index in 0..(LIBRARY_PAGE_SIZE + 5) {
+            std::fs::write(
+                directory.0.join(format!("capture-{index}.jpg")),
+                b"invalid jpg",
+            )
+            .expect("write capture placeholder");
+        }
+        let mut cache = ThumbnailCache::default();
+        let session = CaptureSession::default();
+        let first = load_library_payloads(&directory.0, &session, 0, 0, &mut cache, || true)
+            .expect("first page");
+        assert_eq!(first.total, LIBRARY_PAGE_SIZE + 5);
+        assert_eq!(first.items.len(), LIBRARY_PAGE_SIZE);
+        assert_eq!(first.page, 0);
+
+        let last = load_library_payloads(&directory.0, &session, 0, 99, &mut cache, || true)
+            .expect("last page");
+        assert_eq!(last.items.len(), 5);
+        assert_eq!(last.page, 1);
+    }
 }
 
 #[derive(Clone)]
@@ -953,28 +1861,191 @@ struct ActiveRecording {
     error: Option<String>,
 }
 
-fn refresh_library_in_background(
-    weak: slint::Weak<MainWindow>,
-    settings: Arc<Mutex<AppSettings>>,
-    active_session: Arc<Mutex<CaptureSession>>,
-) {
-    thread::spawn(move || {
-        let directory = settings_snapshot(&settings).capture_directory;
-        let session = active_session
+struct LibraryRefreshRequest {
+    directory: std::path::PathBuf,
+    session: CaptureSession,
+    filter: i32,
+    page: usize,
+    revision: u64,
+    cache_revision: u64,
+}
+
+#[derive(Default)]
+struct LibraryRefreshMailbox {
+    state: Mutex<LibraryRefreshState>,
+    ready: Condvar,
+}
+
+#[derive(Default)]
+struct LibraryRefreshState {
+    pending: Option<LibraryRefreshRequest>,
+    filter: i32,
+    page: usize,
+    revision: u64,
+    cache_revision: u64,
+    closed: bool,
+}
+
+impl LibraryRefreshMailbox {
+    fn invalidate_thumbnails(&self) {
+        let mut state = self
+            .state
             .lock()
-            .map_or_else(|_| CaptureSession::default(), |guard| guard.clone());
-        let payloads = load_library_payloads(&directory, &session);
-        let settings_for_ui = Arc::clone(&settings);
-        let session_for_ui = Arc::clone(&active_session);
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.cache_revision = state.cache_revision.wrapping_add(1);
+    }
+
+    fn set_filter(&self, filter: i32) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.filter = filter;
+        state.page = 0;
+    }
+
+    fn set_page(&self, page: usize) {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .page = page;
+    }
+
+    fn request(&self, directory: std::path::PathBuf, session: CaptureSession) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if state.closed {
+            return;
+        }
+        state.revision = state.revision.wrapping_add(1);
+        state.pending = Some(LibraryRefreshRequest {
+            directory,
+            session,
+            filter: state.filter,
+            page: state.page,
+            revision: state.revision,
+            cache_revision: state.cache_revision,
+        });
+        self.ready.notify_one();
+    }
+
+    fn receive(&self) -> Option<LibraryRefreshRequest> {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        while state.pending.is_none() && !state.closed {
+            state = self
+                .ready
+                .wait(state)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+        state.pending.take()
+    }
+
+    fn is_current(&self, revision: u64) -> bool {
+        let state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        !state.closed && state.revision == revision
+    }
+
+    fn set_resolved_page(&self, revision: u64, page: usize) -> bool {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if state.closed || state.revision != revision {
+            return false;
+        }
+        state.page = page;
+        true
+    }
+
+    fn close(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.closed = true;
+        state.pending = None;
+        self.ready.notify_all();
+    }
+}
+
+fn refresh_library_in_background(
+    mailbox: &LibraryRefreshMailbox,
+    settings: &Arc<Mutex<AppSettings>>,
+    active_session: &Arc<Mutex<CaptureSession>>,
+) {
+    let directory = settings_snapshot(settings).capture_directory;
+    let session = active_session
+        .lock()
+        .map_or_else(|_| CaptureSession::default(), |guard| guard.clone());
+    mailbox.request(directory, session);
+}
+
+fn run_library_worker(
+    mailbox: &Arc<LibraryRefreshMailbox>,
+    weak: &slint::Weak<MainWindow>,
+    settings: &Arc<Mutex<AppSettings>>,
+    active_session: &Arc<Mutex<CaptureSession>>,
+) {
+    let mut cache = ThumbnailCache::default();
+    let mut cached_directory = None;
+    let mut cached_revision = 0;
+    while let Some(request) = mailbox.receive() {
+        if cached_directory.as_ref() != Some(&request.directory) {
+            cache.invalidate();
+            cached_directory = Some(request.directory.clone());
+        }
+        if cached_revision != request.cache_revision {
+            cache.invalidate();
+            cached_revision = request.cache_revision;
+        }
+        let Some(result) = load_library_payloads(
+            &request.directory,
+            &request.session,
+            request.filter,
+            request.page,
+            &mut cache,
+            || mailbox.is_current(request.revision),
+        ) else {
+            continue;
+        };
+        if !mailbox.is_current(request.revision) {
+            continue;
+        }
+        let mailbox_for_ui = Arc::clone(mailbox);
+        let settings_for_ui = Arc::clone(settings);
+        let session_for_ui = Arc::clone(active_session);
         let _ = weak.upgrade_in_event_loop(move |win| {
-            if !library_context_matches(&settings_for_ui, &session_for_ui, &directory, &session) {
+            if win.get_library_filter() != request.filter
+                || !library_context_matches(
+                    &settings_for_ui,
+                    &session_for_ui,
+                    &request.directory,
+                    &request.session,
+                )
+                || !mailbox_for_ui.set_resolved_page(request.revision, result.page)
+            {
                 return;
             }
+            let first = result.page * LIBRARY_PAGE_SIZE + usize::from(result.total > 0);
+            let last = ((result.page + 1) * LIBRARY_PAGE_SIZE).min(result.total);
+            let summary = format!("{first}–{last} sur {}", result.total);
             win.set_library_items(ModelRc::new(VecModel::from(present_library_payloads(
-                payloads,
+                result.items,
             ))));
+            win.set_library_total_count(i32::try_from(result.total).unwrap_or(i32::MAX));
+            win.set_library_page(i32::try_from(result.page).unwrap_or(i32::MAX));
+            win.set_library_page_summary(summary.into());
+            win.set_library_loading(false);
         });
-    });
+    }
 }
 
 fn library_context_matches(
@@ -1000,9 +2071,109 @@ fn recording_context_matches(
         && library_context_matches(settings, active_session, directory, recorded_session)
 }
 
+struct SavedPhoto {
+    path: std::path::PathBuf,
+    thumbnail: Option<SharedPixelBuffer<Rgb8Pixel>>,
+}
+
+fn save_photo(request: &PhotoRequest) -> Result<SavedPhoto, String> {
+    let (extension, bytes) = match request.frame.pixel_format {
+        PixelFormat::Mjpeg => ("jpg", ensure_jpeg_has_dht(&request.frame.data).into_owned()),
+        PixelFormat::Yuyv | PixelFormat::Bgra8 | PixelFormat::Nv12 => {
+            let (width, height, rgb) = decode_camera_frame_to_rgb8(&request.frame)
+                .ok_or_else(|| "Erreur de conversion photo : image caméra invalide".to_owned())?;
+            let png = encode_rgb8_png(&rgb, width, height)
+                .map_err(|error| format!("Erreur de conversion photo : {error}"))?;
+            ("png", png)
+        }
+        _ => return Err("Le format caméra actif ne peut pas être enregistré en photo.".to_owned()),
+    };
+    let policy = CaptureNamingPolicy::new(&request.filename_template);
+    let file_name = policy.filename(&request.session, request.timestamp, extension);
+    let path = save_new_capture(&request.directory, &file_name, &bytes)
+        .map_err(|error| format!("Erreur d'enregistrement : {error}"))?;
+    if let Err(error) = record_capture_metadata(
+        &request.directory,
+        &path,
+        &request.session,
+        CaptureKind::Photo,
+        request.timestamp,
+    ) {
+        eprintln!("[IrisScope] Index bibliothèque non mis à jour : {error}");
+    }
+    let thumbnail = decode_image_to_rgb8(&bytes)
+        .ok()
+        .and_then(|(width, height, rgb)| resize_rgb8_to_fit(&rgb, width, height, 240).ok())
+        .map(|(width, height, rgb)| {
+            SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(&rgb, width, height)
+        });
+    Ok(SavedPhoto { path, thumbnail })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_photo_worker(
+    mailbox: &PhotoMailbox,
+    weak: &slint::Weak<MainWindow>,
+    settings: &Arc<Mutex<AppSettings>>,
+    active_session: &Arc<Mutex<CaptureSession>>,
+    last_toast_time: &Arc<Mutex<Option<Instant>>>,
+    library_mailbox: &LibraryRefreshMailbox,
+    context_generation: &Arc<AtomicU64>,
+) {
+    while let Some(request) = mailbox.receive() {
+        let saved = save_photo(&request);
+        if saved.is_ok() {
+            refresh_library_in_background(library_mailbox, settings, active_session);
+        }
+        let settings_for_ui = Arc::clone(settings);
+        let session_for_ui = Arc::clone(active_session);
+        let toast_for_ui = Arc::clone(last_toast_time);
+        let generation_for_ui = Arc::clone(context_generation);
+        let _ = weak.upgrade_in_event_loop(move |win| {
+            if generation_for_ui.load(Ordering::Acquire) != request.context_generation
+                || !recording_context_matches(
+                    &settings_for_ui,
+                    &session_for_ui,
+                    &request.directory,
+                    &request.session,
+                    capture_session_from_window(&win).ok().as_ref(),
+                )
+            {
+                return;
+            }
+            match saved {
+                Ok(photo) => {
+                    let count = win.get_session_photo_count() + 1;
+                    win.set_session_photo_count(count);
+                    let display_name = photo
+                        .path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("photo");
+                    if let Some(pixels) = photo.thumbnail {
+                        win.set_last_capture_thumbnail(slint::Image::from_rgb8(pixels));
+                        win.set_has_last_capture(true);
+                        win.set_last_capture_file_name(display_name.into());
+                        win.set_last_capture_path(photo.path.to_string_lossy().to_string().into());
+                    }
+                    win.set_last_capture_message(
+                        format!("✓ Photo #{count} enregistrée : {display_name}").into(),
+                    );
+                }
+                Err(error) => win.set_last_capture_message(error.into()),
+            }
+            win.set_show_last_capture(true);
+            if let Ok(mut toast) = toast_for_ui.lock() {
+                *toast = Some(Instant::now());
+            }
+        });
+    }
+}
+
 #[allow(clippy::too_many_lines)]
 fn run_recording_worker(
     mailbox: &Arc<RecordingMailbox>,
+    library_mailbox: &LibraryRefreshMailbox,
     weak: &slint::Weak<MainWindow>,
     settings: &Arc<Mutex<AppSettings>>,
     active_session: &Arc<Mutex<CaptureSession>>,
@@ -1193,11 +2364,7 @@ fn run_recording_worker(
                         win.set_show_last_capture(true);
                     }
                 });
-                refresh_library_in_background(
-                    weak.clone(),
-                    Arc::clone(settings),
-                    Arc::clone(active_session),
-                );
+                refresh_library_in_background(library_mailbox, settings, active_session);
             }
         }
     }
@@ -1425,11 +2592,15 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     let stream_generation = Arc::new(AtomicU64::new(0));
     let latest_decoded_frame: Arc<Mutex<Option<(u64, DecodedFrame)>>> = Arc::new(Mutex::new(None));
     let decoded_frame_update_pending = Arc::new(AtomicBool::new(false));
+    let preview_active = Arc::new(AtomicBool::new(true));
     let decode_time_micros = Arc::new(AtomicU64::new(0));
     let dropped_decode_frames = Arc::new(AtomicU64::new(0));
     let active_stream_configuration: Arc<Mutex<Option<StreamConfiguration>>> =
         Arc::new(Mutex::new(None));
     let recording_mailbox = Arc::new(RecordingMailbox::default());
+    let photo_mailbox = Arc::new(PhotoMailbox::default());
+    let library_mailbox = Arc::new(LibraryRefreshMailbox::default());
+    let photo_context_generation = Arc::new(AtomicU64::new(0));
     let active_session = Arc::new(Mutex::new(CaptureSession::default()));
     let recording_start: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
     let last_toast_time: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
@@ -1437,14 +2608,47 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     let viewer_generation = Arc::new(AtomicU64::new(0));
     let viewer_video_playing = Arc::new(AtomicBool::new(false));
     let viewer_video_frame_count = Arc::new(AtomicU64::new(0));
-    let viewer_video_seek_request = Arc::new(AtomicU64::new(NO_VIDEO_SEEK));
+    let viewer_video_seek_request = Arc::new(Mutex::new(ViewerSeekState {
+        epoch: 0,
+        requested_frame: None,
+    }));
     let camera_controls: Arc<Mutex<Vec<CameraControlRuntimeState>>> =
         Arc::new(Mutex::new(Vec::new()));
 
-    let (cmd_tx, cmd_rx) = mpsc::channel::<WorkerCommand>();
+    let control_commands = Arc::new(ControlCommandMailbox::default());
+
+    let library_worker = thread::spawn({
+        let mailbox = Arc::clone(&library_mailbox);
+        let weak = main_window.as_weak();
+        let settings = Arc::clone(&settings);
+        let active_session = Arc::clone(&active_session);
+        move || run_library_worker(&mailbox, &weak, &settings, &active_session)
+    });
+
+    let photo_worker = thread::spawn({
+        let mailbox = Arc::clone(&photo_mailbox);
+        let weak = main_window.as_weak();
+        let settings = Arc::clone(&settings);
+        let active_session = Arc::clone(&active_session);
+        let last_toast_time = Arc::clone(&last_toast_time);
+        let library_mailbox = Arc::clone(&library_mailbox);
+        let context_generation = Arc::clone(&photo_context_generation);
+        move || {
+            run_photo_worker(
+                &mailbox,
+                &weak,
+                &settings,
+                &active_session,
+                &last_toast_time,
+                &library_mailbox,
+                &context_generation,
+            );
+        }
+    });
 
     let recorder_worker = thread::spawn({
         let mailbox = Arc::clone(&recording_mailbox);
+        let library_mailbox = Arc::clone(&library_mailbox);
         let weak = main_window.as_weak();
         let settings = Arc::clone(&settings);
         let active_session = Arc::clone(&active_session);
@@ -1453,6 +2657,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         move || {
             run_recording_worker(
                 &mailbox,
+                &library_mailbox,
                 &weak,
                 &settings,
                 &active_session,
@@ -1469,10 +2674,13 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     let decoded_frame_update_pending_worker = Arc::clone(&decoded_frame_update_pending);
     let decode_time_micros_worker = Arc::clone(&decode_time_micros);
     let stream_generation_decoder = Arc::clone(&stream_generation);
+    let preview_active_decoder = Arc::clone(&preview_active);
     let decode_weak = main_window.as_weak();
     let decoder_worker = thread::spawn(move || {
         while let Some(job) = decode_mailbox_worker.receive() {
-            if !job.is_current(&stream_generation_decoder) {
+            if !job.is_current(&stream_generation_decoder)
+                || !preview_active_decoder.load(Ordering::Acquire)
+            {
                 continue;
             }
             let decode_start = Instant::now();
@@ -1484,7 +2692,9 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             let Some(decoded_frame) = decoded_frame else {
                 continue;
             };
-            if !job.is_current(&stream_generation_decoder) {
+            if !job.is_current(&stream_generation_decoder)
+                || !preview_active_decoder.load(Ordering::Acquire)
+            {
                 continue;
             }
             if let Ok(mut latest) = latest_decoded_frame_worker.lock() {
@@ -1503,7 +2713,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 // queue one follow-up update, while the queue remains strictly bounded.
                 pending.store(false, Ordering::Release);
                 let decoded = latest.lock().ok().and_then(|mut slot| slot.take());
-                if win.get_is_frozen() {
+                if win.get_is_frozen() || win.get_current_tab() != 0 {
                     return;
                 }
                 let Some((job_generation, (width, height, raw_rgb))) = decoded else {
@@ -1530,6 +2740,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     let main_weak = main_window.as_weak();
     let latest_frame_clone = Arc::clone(&latest_frame);
     let decode_mailbox_camera = Arc::clone(&decode_mailbox);
+    let preview_active_camera = Arc::clone(&preview_active);
     let latest_decoded_frame_camera = Arc::clone(&latest_decoded_frame);
     let stream_generation_camera = Arc::clone(&stream_generation);
     let decode_time_micros_camera = Arc::clone(&decode_time_micros);
@@ -1539,6 +2750,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     let toast_clone = Arc::clone(&last_toast_time);
     let active_stream_configuration_worker = Arc::clone(&active_stream_configuration);
     let camera_controls_worker = Arc::clone(&camera_controls);
+    let control_commands_worker = Arc::clone(&control_commands);
     let settings_worker = Arc::clone(&settings);
     let frozen_frame_worker = Arc::clone(&frozen_frame);
 
@@ -1621,7 +2833,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             let mut active_config = None;
             for candidate in candidates {
                 if device.start_stream(&candidate).is_ok() {
-                    active_config = Some(candidate);
+                    active_config = Some(device.active_configuration().unwrap_or(candidate));
                     break;
                 }
             }
@@ -1660,6 +2872,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 let fps_text = format!("{:.2} fps", config.frame_rate.frames_per_second());
                 let controls = discovered_controls.clone();
                 let ui_generation = Arc::clone(&stream_generation_camera);
+                let preview_active_for_ui = Arc::clone(&preview_active_camera);
 
                 move |win| {
                     if ui_generation.load(Ordering::Acquire) != generation {
@@ -1668,6 +2881,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                     win.set_camera_connected(true);
                     win.set_is_streaming(false);
                     win.set_is_frozen(false);
+                    preview_active_for_ui.store(win.get_current_tab() == 0, Ordering::Release);
                     win.set_live_frame(slint::Image::default());
                     win.set_status_text("DE400 connecté — démarrage du flux...".into());
 
@@ -1691,25 +2905,23 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             let mut stream_ready_announced = false;
 
             loop {
-                // Check commands
-                while let Ok(cmd) = cmd_rx.try_recv() {
-                    match cmd {
-                        WorkerCommand::SetControl(id, val) => {
-                            let _ = device.set_control_value(&id, &val);
-                        }
-                        WorkerCommand::ResetControls => {
-                            let _ = device.reset_controls();
-                        }
-                        WorkerCommand::Stop => {
-                            stop_recording(
-                                &recording_mailbox_camera,
-                                &rec_start_clone,
-                                RecordingStopReason::Interrupted,
-                            );
-                            let _ = device.stop_stream();
-                            return;
-                        }
-                    }
+                // Multiple slider changes to the same control collapse to the
+                // newest value, while shutdown remains highest priority.
+                let commands = control_commands_worker.take();
+                if commands.stop {
+                    stop_recording(
+                        &recording_mailbox_camera,
+                        &rec_start_clone,
+                        RecordingStopReason::Interrupted,
+                    );
+                    let _ = device.stop_stream();
+                    return;
+                }
+                if commands.reset {
+                    let _ = device.reset_controls();
+                }
+                for (id, value) in commands.updates {
+                    let _ = device.set_control_value(&id, &value);
                 }
 
                 match device.next_event(Duration::from_millis(500)) {
@@ -1718,7 +2930,9 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                         stat_frames += 1;
 
                         latest_frame_clone.publish(frame.clone());
-                        if decode_mailbox_camera.publish(generation, frame.clone()) {
+                        if preview_active_camera.load(Ordering::Acquire)
+                            && decode_mailbox_camera.publish(generation, frame.clone())
+                        {
                             dropped_decode_frames_camera.fetch_add(1, Ordering::Relaxed);
                         }
                         recording_mailbox_camera.publish_frame(frame);
@@ -1885,44 +3099,103 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // Hook callbacks
-    let refresh_lib_for_win =
-        |win: &MainWindow, dir: &std::path::Path, sess: &Arc<Mutex<CaptureSession>>| {
-            let cur_session = sess
-                .lock()
-                .map_or_else(|_| CaptureSession::default(), |g| g.clone());
-            let items = load_library_items(dir, &cur_session);
-            win.set_library_items(ModelRc::new(VecModel::from(items)));
-        };
+    // Library loading and photo encoding happen on dedicated workers.
+    main_window.set_library_loading(true);
+    refresh_library_in_background(&library_mailbox, &settings, &active_session);
 
-    // Initial library population
-    let initial_capture_directory = settings_snapshot(&settings).capture_directory;
-    refresh_lib_for_win(&main_window, &initial_capture_directory, &active_session);
+    let library_mailbox_filter = Arc::clone(&library_mailbox);
+    let settings_filter = Arc::clone(&settings);
+    let session_filter = Arc::clone(&active_session);
+    let weak_library_filter = main_window.as_weak();
+    main_window.on_library_filter_changed(move |filter| {
+        let Some(win) = weak_library_filter.upgrade() else {
+            return;
+        };
+        library_mailbox_filter.set_filter(filter);
+        clear_library_view(&win);
+        refresh_library_in_background(&library_mailbox_filter, &settings_filter, &session_filter);
+    });
+
+    let library_mailbox_page = Arc::clone(&library_mailbox);
+    let settings_page = Arc::clone(&settings);
+    let session_page = Arc::clone(&active_session);
+    let weak_library_page = main_window.as_weak();
+    main_window.on_library_page_changed(move |page| {
+        let Some(win) = weak_library_page.upgrade() else {
+            return;
+        };
+        library_mailbox_page.set_page(usize::try_from(page).unwrap_or(0));
+        clear_library_view(&win);
+        refresh_library_in_background(&library_mailbox_page, &settings_page, &session_page);
+    });
+
+    let session_changed_session = Arc::clone(&active_session);
+    let session_changed_settings = Arc::clone(&settings);
+    let session_changed_mailbox = Arc::clone(&library_mailbox);
+    let session_changed_generation = Arc::clone(&photo_context_generation);
+    let weak_session_changed = main_window.as_weak();
+    main_window.on_session_changed(move || {
+        let Some(win) = weak_session_changed.upgrade() else {
+            return;
+        };
+        let eye = match win.get_selected_eye() {
+            1 => Eye::Left,
+            2 => Eye::Right,
+            _ => Eye::Unspecified,
+        };
+        let session = CaptureSession::new(
+            win.get_patient_first_name().to_string(),
+            win.get_patient_last_name().to_string(),
+            eye,
+        );
+        let changed = if let Ok(mut current) = session_changed_session.lock() {
+            let changed = *current != session;
+            *current = session;
+            changed
+        } else {
+            false
+        };
+        if changed {
+            session_changed_generation.fetch_add(1, Ordering::AcqRel);
+            session_changed_mailbox.set_page(0);
+            clear_library_view(&win);
+            win.set_has_last_capture(false);
+            win.set_last_capture_thumbnail(slint::Image::default());
+            win.set_last_capture_path("".into());
+            win.set_last_capture_file_name("".into());
+            win.set_session_photo_count(0);
+            refresh_library_in_background(
+                &session_changed_mailbox,
+                &session_changed_settings,
+                &session_changed_session,
+            );
+        }
+    });
 
     let weak = main_window.as_weak();
     let latest_frame_cap = Arc::clone(&latest_frame);
     let frozen_frame_cap = Arc::clone(&frozen_frame);
     let settings_cap = Arc::clone(&settings);
     let session_cap = Arc::clone(&active_session);
-    let toast_cap = Arc::clone(&last_toast_time);
+    let photo_mailbox_cap = Arc::clone(&photo_mailbox);
+    let library_mailbox_cap = Arc::clone(&library_mailbox);
+    let context_generation_cap = Arc::clone(&photo_context_generation);
 
     main_window.on_trigger_capture(move || {
         let Some(win) = weak.upgrade() else { return };
-        let frame_opt = if win.get_is_frozen() {
+        let frame = if win.get_is_frozen() {
             frozen_frame_cap
                 .lock()
                 .ok()
-                .and_then(|g| g.clone())
+                .and_then(|guard| guard.clone())
                 .or_else(|| latest_frame_cap.snapshot())
         } else {
             latest_frame_cap.snapshot()
         };
-
-        let Some(frame) = frame_opt else {
+        let Some(frame) = frame else {
             eprintln!("[IrisScope] Capture demandée mais aucune frame caméra disponible");
             return;
         };
-
         let session = match capture_session_from_window(&win) {
             Ok(session) => session,
             Err(message) => {
@@ -1931,175 +3204,55 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 return;
             }
         };
-        if let Ok(mut guard) = session_cap.lock() {
-            *guard = session.clone();
-        }
-        let timestamp = CaptureTimestamp::now();
         let capture_settings = settings_snapshot(&settings_cap);
-        let policy = CaptureNamingPolicy::new(&capture_settings.filename_template);
-        let (ext, data_to_save) = match frame.pixel_format {
-            PixelFormat::Mjpeg => ("jpg", ensure_jpeg_has_dht(&frame.data)),
-            PixelFormat::Yuyv => {
-                let rgb = convert_yuyv_to_rgb8(
-                    &frame.data,
-                    frame.resolution.width,
-                    frame.resolution.height,
-                );
-                let png =
-                    match encode_rgb8_png(&rgb, frame.resolution.width, frame.resolution.height) {
-                        Ok(png) => png,
-                        Err(error) => {
-                            win.set_last_capture_message(
-                                format!("Erreur de conversion photo : {error}").into(),
-                            );
-                            win.set_show_last_capture(true);
-                            return;
-                        }
-                    };
-                ("png", std::borrow::Cow::Owned(png))
-            }
-            PixelFormat::Bgra8 => {
-                let rgb = match convert_bgra8_to_rgb8(
-                    &frame.data,
-                    frame.resolution.width,
-                    frame.resolution.height,
-                ) {
-                    Ok(rgb) => rgb,
-                    Err(error) => {
-                        win.set_last_capture_message(
-                            format!("Erreur de conversion photo : {error}").into(),
-                        );
-                        win.set_show_last_capture(true);
-                        return;
-                    }
-                };
-                let png =
-                    match encode_rgb8_png(&rgb, frame.resolution.width, frame.resolution.height) {
-                        Ok(png) => png,
-                        Err(error) => {
-                            win.set_last_capture_message(
-                                format!("Erreur de conversion photo : {error}").into(),
-                            );
-                            win.set_show_last_capture(true);
-                            return;
-                        }
-                    };
-                ("png", std::borrow::Cow::Owned(png))
-            }
-            PixelFormat::Nv12 => {
-                let rgb = match convert_nv12_to_rgb8(
-                    &frame.data,
-                    frame.resolution.width,
-                    frame.resolution.height,
-                ) {
-                    Ok(rgb) => rgb,
-                    Err(error) => {
-                        win.set_last_capture_message(
-                            format!("Erreur de conversion photo : {error}").into(),
-                        );
-                        win.set_show_last_capture(true);
-                        return;
-                    }
-                };
-                let png =
-                    match encode_rgb8_png(&rgb, frame.resolution.width, frame.resolution.height) {
-                        Ok(png) => png,
-                        Err(error) => {
-                            win.set_last_capture_message(
-                                format!("Erreur de conversion photo : {error}").into(),
-                            );
-                            win.set_show_last_capture(true);
-                            return;
-                        }
-                    };
-                ("png", std::borrow::Cow::Owned(png))
-            }
-            _ => {
-                win.set_last_capture_message(
-                    "Le format caméra actif ne peut pas encore être enregistré en photo.".into(),
-                );
-                win.set_show_last_capture(true);
-                return;
-            }
+        let request = PhotoRequest {
+            frame,
+            directory: capture_settings.capture_directory,
+            filename_template: capture_settings.filename_template,
+            session: session.clone(),
+            timestamp: CaptureTimestamp::now(),
+            context_generation: context_generation_cap.load(Ordering::Acquire),
         };
-        let file_name = policy.filename(&session, timestamp, ext);
-
-        match save_new_capture(
-            &capture_settings.capture_directory,
-            &file_name,
-            data_to_save.as_ref(),
-        ) {
-            Ok(saved_path) => {
-                if let Err(error) = record_capture_metadata(
-                    &capture_settings.capture_directory,
-                    &saved_path,
-                    &session,
-                    CaptureKind::Photo,
-                    timestamp,
-                ) {
-                    eprintln!("[IrisScope] Index bibliothèque non mis à jour : {error}");
+        if !photo_mailbox_cap.enqueue(request) {
+            win.set_last_capture_message(
+                "Traitement photo en cours : réessayez dans un instant.".into(),
+            );
+            win.set_show_last_capture(true);
+            return;
+        }
+        let changed = if let Ok(mut current) = session_cap.lock() {
+            let changed = *current != session;
+            *current = session;
+            changed
+        } else {
+            false
+        };
+        if changed {
+            clear_library_view(&win);
+            refresh_library_in_background(&library_mailbox_cap, &settings_cap, &session_cap);
+        }
+        win.set_shutter_flash_opacity(0.85);
+        slint::Timer::single_shot(Duration::from_millis(50), {
+            let weak_flash = win.as_weak();
+            move || {
+                if let Some(window) = weak_flash.upgrade() {
+                    window.set_shutter_flash_opacity(0.0);
                 }
-
-                let display_stem = saved_path
-                    .file_name()
-                    .and_then(|f| f.to_str())
-                    .unwrap_or(&file_name);
-
-                // 1. Shutter flash effect
-                win.set_shutter_flash_opacity(0.85);
-                slint::Timer::single_shot(Duration::from_millis(50), {
-                    let weak_flash = win.as_weak();
-                    move || {
-                        if let Some(w) = weak_flash.upgrade() {
-                            w.set_shutter_flash_opacity(0.0);
-                        }
-                    }
-                });
-
-                // 2. Play shutter sound in background
-                thread::spawn(|| {
-                    let sound_path = "/usr/share/sounds/freedesktop/stereo/camera-shutter.oga";
-                    if std::path::Path::new(sound_path).exists() {
-                        let _ = std::process::Command::new("paplay")
+            }
+        });
+        thread::spawn(|| {
+            let sound_path = "/usr/share/sounds/freedesktop/stereo/camera-shutter.oga";
+            if std::path::Path::new(sound_path).exists() {
+                let _ = std::process::Command::new("paplay")
+                    .arg(sound_path)
+                    .status()
+                    .or_else(|_| {
+                        std::process::Command::new("pw-play")
                             .arg(sound_path)
                             .status()
-                            .or_else(|_| {
-                                std::process::Command::new("pw-play")
-                                    .arg(sound_path)
-                                    .status()
-                            });
-                    }
-                });
-
-                // 3. Update session photo counter
-                let new_count = win.get_session_photo_count() + 1;
-                win.set_session_photo_count(new_count);
-
-                // 4. Update thumbnail preview card
-                if let Ok((tw, th, raw_rgb)) = decode_image_to_rgb8(&data_to_save) {
-                    let pixel_buffer =
-                        SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(&raw_rgb, tw, th);
-                    win.set_last_capture_thumbnail(slint::Image::from_rgb8(pixel_buffer));
-                    win.set_has_last_capture(true);
-                    win.set_last_capture_file_name(display_stem.into());
-                    win.set_last_capture_path(saved_path.to_string_lossy().to_string().into());
-                }
-
-                // 5. Toast notification
-                win.set_last_capture_message(
-                    format!("✓ Photo #{new_count} enregistrée : {display_stem}").into(),
-                );
-                win.set_show_last_capture(true);
-                if let Ok(mut g) = toast_cap.lock() {
-                    *g = Some(Instant::now());
-                }
-                refresh_lib_for_win(&win, &capture_settings.capture_directory, &session_cap);
+                    });
             }
-            Err(err) => {
-                win.set_last_capture_message(format!("Erreur d'enregistrement : {err}").into());
-                win.set_show_last_capture(true);
-            }
-        }
+        });
     });
 
     // Recording callback
@@ -2191,6 +3344,8 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     let weak_session = main_window.as_weak();
     let session_clear = Arc::clone(&active_session);
     let settings_clear = Arc::clone(&settings);
+    let library_clear = Arc::clone(&library_mailbox);
+    let photo_generation_clear = Arc::clone(&photo_context_generation);
     main_window.on_clear_session(move || {
         let Some(win) = weak_session.upgrade() else {
             return;
@@ -2200,68 +3355,64 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         win.set_selected_eye(0);
         win.set_session_photo_count(0);
         win.set_has_last_capture(false);
+        win.set_last_capture_thumbnail(slint::Image::default());
+        win.set_last_capture_path("".into());
+        win.set_last_capture_file_name("".into());
+        win.set_show_last_capture(false);
+        photo_generation_clear.fetch_add(1, Ordering::AcqRel);
         if let Ok(mut s) = session_clear.lock() {
             s.clear();
         }
-        let directory = settings_snapshot(&settings_clear).capture_directory;
-        refresh_lib_for_win(&win, &directory, &session_clear);
+        win.set_library_filter(0);
+        library_clear.set_filter(0);
+        clear_library_view(&win);
+        refresh_library_in_background(&library_clear, &settings_clear, &session_clear);
     });
 
     // Refresh library callback
-    let weak_refresh = main_window.as_weak();
     let settings_refresh = Arc::clone(&settings);
     let session_refresh = Arc::clone(&active_session);
+    let library_refresh = Arc::clone(&library_mailbox);
     main_window.on_refresh_library(move || {
-        let Some(win) = weak_refresh.upgrade() else {
-            return;
-        };
-        let directory = settings_snapshot(&settings_refresh).capture_directory;
-        refresh_lib_for_win(&win, &directory, &session_refresh);
+        library_refresh.invalidate_thumbnails();
+        refresh_library_in_background(&library_refresh, &settings_refresh, &session_refresh);
     });
 
-    // Open photos and IrisScope MJPEG videos inside the private in-app viewer.
+    let viewer_display_mailbox = Arc::new(ViewerDisplayMailbox::default());
+    let viewer_open_mailbox = Arc::new(ViewerOpenMailbox::default());
+    let _viewer_worker = thread::spawn({
+        let mailbox = Arc::clone(&viewer_open_mailbox);
+        let runtime = ViewerRuntime {
+            weak: main_window.as_weak(),
+            generation: Arc::clone(&viewer_generation),
+            playing: Arc::clone(&viewer_video_playing),
+            frame_count: Arc::clone(&viewer_video_frame_count),
+            seek: Arc::clone(&viewer_video_seek_request),
+            display: Arc::clone(&viewer_display_mailbox),
+        };
+        move || runtime.run(&mailbox)
+    });
+
+    // File reads, image decoding, and AVI indexing are serialized off the UI thread.
     let weak_viewer = main_window.as_weak();
     let viewer_generation_open = Arc::clone(&viewer_generation);
     let viewer_playing_open = Arc::clone(&viewer_video_playing);
     let viewer_frame_count_open = Arc::clone(&viewer_video_frame_count);
     let viewer_seek_open = Arc::clone(&viewer_video_seek_request);
+    let viewer_display_open = Arc::clone(&viewer_display_mailbox);
+    let viewer_mailbox_open = Arc::clone(&viewer_open_mailbox);
     main_window.on_open_capture_file(move |file_path_str| {
         let Some(win) = weak_viewer.upgrade() else {
             return;
         };
         let path = std::path::PathBuf::from(file_path_str.as_str());
-        if !path.exists() {
-            return;
-        }
-
         let extension = path
             .extension()
             .and_then(|extension| extension.to_str())
             .unwrap_or_default()
             .to_ascii_lowercase();
-
-        if matches!(extension.as_str(), "jpg" | "jpeg" | "png") {
-            viewer_generation_open.fetch_add(1, Ordering::Relaxed);
-            viewer_playing_open.store(false, Ordering::Relaxed);
-            viewer_frame_count_open.store(0, Ordering::Relaxed);
-            viewer_seek_open.store(NO_VIDEO_SEEK, Ordering::Relaxed);
-
-            if let Ok(bytes) = std::fs::read(&path)
-                && let Ok((width, height, rgb)) = decode_image_to_rgb8(&bytes)
-            {
-                let pixels = SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(&rgb, width, height);
-                win.set_viewer_image(slint::Image::from_rgb8(pixels));
-                win.set_viewer_is_video(false);
-                win.set_viewer_video_playing(false);
-                win.set_viewer_video_progress(0.0);
-                win.set_viewer_video_position("00:00".into());
-                win.set_viewer_video_duration("00:00".into());
-                win.set_viewer_open(true);
-            }
-            return;
-        }
-
-        if extension != "avi" {
+        let is_photo = matches!(extension.as_str(), "jpg" | "jpeg" | "png");
+        if !is_photo && extension != "avi" {
             win.set_last_capture_message(
                 "Ce format vidéo n'est pas encore lisible dans IrisScope.".into(),
             );
@@ -2269,90 +3420,23 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             return;
         }
 
-        let Ok(mut reader) = AviMjpegReader::open(&path) else {
-            win.set_last_capture_message("Vidéo AVI illisible ou non compatible.".into());
-            win.set_show_last_capture(true);
-            return;
-        };
-
-        let frame_count = reader.frame_count();
-        let fps = reader.frame_rate().frames_per_second().max(0.5);
-        let frame_count_u64 = u64::try_from(frame_count).unwrap_or(u64::MAX);
         let generation = viewer_generation_open
-            .fetch_add(1, Ordering::Relaxed)
-            .saturating_add(1);
-        viewer_playing_open.store(true, Ordering::Relaxed);
-        viewer_frame_count_open.store(frame_count_u64, Ordering::Relaxed);
-        viewer_seek_open.store(NO_VIDEO_SEEK, Ordering::Relaxed);
-        win.set_viewer_is_video(true);
-        win.set_viewer_video_playing(true);
-        win.set_viewer_video_progress(0.0);
-        win.set_viewer_video_position("00:00".into());
-        win.set_viewer_video_duration(
-            format_playback_time(video_time_seconds(frame_count, fps)).into(),
-        );
-        win.set_viewer_open(true);
-
-        let weak_playback = weak_viewer.clone();
-        let generation_state = Arc::clone(&viewer_generation_open);
-        let playing_state = Arc::clone(&viewer_playing_open);
-        let seek_state = Arc::clone(&viewer_seek_open);
-
-        thread::spawn(move || {
-            let frame_duration = Duration::from_secs_f64(1.0 / fps);
-            let mut frame_index = 0_usize;
-            let mut rendered_once = false;
-
-            while generation_state.load(Ordering::Relaxed) == generation {
-                let requested_seek = seek_state.swap(NO_VIDEO_SEEK, Ordering::Relaxed);
-                if requested_seek != NO_VIDEO_SEEK {
-                    frame_index = usize::try_from(requested_seek)
-                        .unwrap_or(usize::MAX)
-                        .min(frame_count.saturating_sub(1));
-                }
-
-                let playing = playing_state.load(Ordering::Relaxed);
-                if !playing && requested_seek == NO_VIDEO_SEEK && rendered_once {
-                    thread::sleep(Duration::from_millis(20));
-                    continue;
-                }
-
-                let frame_started = Instant::now();
-                let Ok(jpeg) = reader.read_frame(frame_index) else {
-                    break;
-                };
-                let jpeg = ensure_jpeg_has_dht(&jpeg);
-
-                if let Ok((width, height, rgb)) = decode_mjpeg_to_rgb8(&jpeg) {
-                    let progress = video_progress(frame_index, frame_count);
-                    let position = format_playback_time(video_time_seconds(frame_index, fps));
-                    let _ = weak_playback.upgrade_in_event_loop(move |viewer| {
-                        let pixels =
-                            SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(&rgb, width, height);
-                        viewer.set_viewer_image(slint::Image::from_rgb8(pixels));
-                        viewer.set_viewer_video_progress(progress);
-                        viewer.set_viewer_video_position(position.into());
-                    });
-                    rendered_once = true;
-                }
-
-                if playing {
-                    frame_index = (frame_index + 1) % frame_count;
-                    let remaining = frame_duration.saturating_sub(frame_started.elapsed());
-                    if !remaining.is_zero() {
-                        thread::sleep(remaining);
-                    }
-                } else {
-                    thread::sleep(Duration::from_millis(20));
-                }
-            }
-
-            if generation_state.load(Ordering::Relaxed) == generation {
-                playing_state.store(false, Ordering::Relaxed);
-                let _ = weak_playback.upgrade_in_event_loop(|viewer| {
-                    viewer.set_viewer_video_playing(false);
-                });
-            }
+            .fetch_add(1, Ordering::AcqRel)
+            .wrapping_add(1);
+        viewer_playing_open.store(false, Ordering::Release);
+        viewer_frame_count_open.store(0, Ordering::Release);
+        viewer_display_open.clear();
+        {
+            let mut seek = viewer_seek_open
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            seek.epoch = seek.epoch.wrapping_add(1);
+            seek.requested_frame = None;
+        }
+        viewer_mailbox_open.request(ViewerOpenRequest {
+            path,
+            generation,
+            is_photo,
         });
     });
 
@@ -2360,13 +3444,22 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     let viewer_playing_close = Arc::clone(&viewer_video_playing);
     let viewer_frame_count_close = Arc::clone(&viewer_video_frame_count);
     let viewer_seek_close = Arc::clone(&viewer_video_seek_request);
+    let viewer_display_close = Arc::clone(&viewer_display_mailbox);
     let weak_close_viewer = main_window.as_weak();
     main_window.on_close_viewer(move || {
-        viewer_generation_close.fetch_add(1, Ordering::Relaxed);
-        viewer_playing_close.store(false, Ordering::Relaxed);
-        viewer_frame_count_close.store(0, Ordering::Relaxed);
-        viewer_seek_close.store(NO_VIDEO_SEEK, Ordering::Relaxed);
+        viewer_generation_close.fetch_add(1, Ordering::AcqRel);
+        viewer_playing_close.store(false, Ordering::Release);
+        viewer_frame_count_close.store(0, Ordering::Release);
+        viewer_display_close.clear();
+        {
+            let mut seek = viewer_seek_close
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            seek.epoch = seek.epoch.wrapping_add(1);
+            seek.requested_frame = None;
+        }
         if let Some(win) = weak_close_viewer.upgrade() {
+            win.set_viewer_image(slint::Image::default());
             win.set_viewer_is_video(false);
             win.set_viewer_video_playing(false);
             win.set_viewer_video_progress(0.0);
@@ -2394,13 +3487,43 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         let frame_index = video_frame_for_progress(progress, frame_count);
-        viewer_seek_request.store(frame_index, Ordering::Relaxed);
+        let mut seek = viewer_seek_request
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        seek.epoch = seek.epoch.wrapping_add(1);
+        seek.requested_frame = Some(frame_index);
+    });
+
+    // Keep the capture stream running for photos and recordings while avoiding
+    // decode work when its preview is hidden.
+    let weak_preview = main_window.as_weak();
+    let preview_active_tab = Arc::clone(&preview_active);
+    let decode_mailbox_tab = Arc::clone(&decode_mailbox);
+    let latest_decoded_frame_tab = Arc::clone(&latest_decoded_frame);
+    let decode_time_micros_tab = Arc::clone(&decode_time_micros);
+    main_window.on_preview_tab_changed(move |visible| {
+        let frozen = weak_preview
+            .upgrade()
+            .is_some_and(|win| win.get_is_frozen());
+        let active = visible && !frozen;
+        preview_active_tab.store(active, Ordering::Release);
+        if !active {
+            decode_mailbox_tab.clear();
+            if let Ok(mut frame) = latest_decoded_frame_tab.lock() {
+                *frame = None;
+            }
+            decode_time_micros_tab.store(0, Ordering::Relaxed);
+        }
     });
 
     // Freeze frame
     let weak_freeze = main_window.as_weak();
     let latest_frame_freeze = Arc::clone(&latest_frame);
     let frozen_frame_freeze = Arc::clone(&frozen_frame);
+    let preview_active_freeze = Arc::clone(&preview_active);
+    let decode_mailbox_freeze = Arc::clone(&decode_mailbox);
+    let latest_decoded_frame_freeze = Arc::clone(&latest_decoded_frame);
+    let decode_time_micros_freeze = Arc::clone(&decode_time_micros);
     main_window.on_toggle_freeze(move || {
         let Some(win) = weak_freeze.upgrade() else {
             return;
@@ -2408,7 +3531,13 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         let was_frozen = win.get_is_frozen();
         let new_frozen = !was_frozen;
         win.set_is_frozen(new_frozen);
+        preview_active_freeze.store(!new_frozen && win.get_current_tab() == 0, Ordering::Release);
         if new_frozen {
+            decode_mailbox_freeze.clear();
+            if let Ok(mut frame) = latest_decoded_frame_freeze.lock() {
+                *frame = None;
+            }
+            decode_time_micros_freeze.store(0, Ordering::Relaxed);
             if let Ok(mut g) = frozen_frame_freeze.lock() {
                 *g = latest_frame_freeze.snapshot();
             }
@@ -2418,7 +3547,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // Camera controls discovered dynamically from the active backend.
-    let cmd_tx_value = cmd_tx.clone();
+    let control_commands_value = Arc::clone(&control_commands);
     let controls_value = Arc::clone(&camera_controls);
     let weak_value = main_window.as_weak();
     main_window.on_set_camera_control_value(move |key, requested| {
@@ -2438,14 +3567,11 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             return;
         };
         state.value = value.clone();
-        let _ = cmd_tx_value.send(WorkerCommand::SetControl(
-            state.descriptor.id.clone(),
-            value,
-        ));
+        control_commands_value.set_control(state.descriptor.id.clone(), value);
         set_camera_control_model(&win, &controls);
     });
 
-    let cmd_tx_bool = cmd_tx.clone();
+    let control_commands_bool = Arc::clone(&control_commands);
     let controls_bool = Arc::clone(&camera_controls);
     let weak_bool = main_window.as_weak();
     main_window.on_set_camera_control_bool(move |key, requested| {
@@ -2465,14 +3591,11 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         }
         let value = CameraControlValue::Boolean(requested);
         state.value = value.clone();
-        let _ = cmd_tx_bool.send(WorkerCommand::SetControl(
-            state.descriptor.id.clone(),
-            value,
-        ));
+        control_commands_bool.set_control(state.descriptor.id.clone(), value);
         set_camera_control_model(&win, &controls);
     });
 
-    let cmd_tx_menu = cmd_tx.clone();
+    let control_commands_menu = Arc::clone(&control_commands);
     let controls_menu = Arc::clone(&camera_controls);
     let weak_menu = main_window.as_weak();
     main_window.on_cycle_camera_control_menu(move |key| {
@@ -2507,14 +3630,11 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         let next = items[(current_index + 1) % items.len()].value;
         let value = CameraControlValue::Menu(next);
         state.value = value.clone();
-        let _ = cmd_tx_menu.send(WorkerCommand::SetControl(
-            state.descriptor.id.clone(),
-            value,
-        ));
+        control_commands_menu.set_control(state.descriptor.id.clone(), value);
         set_camera_control_model(&win, &controls);
     });
 
-    let cmd_tx_reset = cmd_tx.clone();
+    let control_commands_reset = Arc::clone(&control_commands);
     let controls_reset = Arc::clone(&camera_controls);
     let weak_reset = main_window.as_weak();
     main_window.on_reset_camera_controls(move || {
@@ -2529,13 +3649,15 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             }
             set_camera_control_model(&win, &controls);
         }
-        let _ = cmd_tx_reset.send(WorkerCommand::ResetControls);
+        control_commands_reset.reset_controls();
     });
 
     // Persistent application settings
     let settings_directory = Arc::clone(&settings);
     let settings_path_directory = settings_path.clone();
     let session_directory = Arc::clone(&active_session);
+    let library_directory = Arc::clone(&library_mailbox);
+    let photo_generation_directory = Arc::clone(&photo_context_generation);
     let weak_directory = main_window.as_weak();
     main_window.on_update_capture_directory(move |value| {
         let Some(win) = weak_directory.upgrade() else {
@@ -2546,12 +3668,22 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             return;
         }
         let directory = std::path::PathBuf::from(value);
+        let changed = settings_snapshot(&settings_directory).capture_directory != directory;
         if let Ok(mut guard) = settings_directory.lock() {
             guard.capture_directory.clone_from(&directory);
         }
         persist_settings(&settings_directory, &settings_path_directory);
         win.set_settings_capture_directory(directory.to_string_lossy().to_string().into());
-        refresh_lib_for_win(&win, &directory, &session_directory);
+        if changed {
+            photo_generation_directory.fetch_add(1, Ordering::AcqRel);
+            library_directory.set_page(0);
+            clear_library_view(&win);
+            win.set_has_last_capture(false);
+            win.set_last_capture_thumbnail(slint::Image::default());
+            win.set_last_capture_path("".into());
+            win.set_last_capture_file_name("".into());
+        }
+        refresh_library_in_background(&library_directory, &settings_directory, &session_directory);
     });
 
     let settings_template = Arc::clone(&settings);
@@ -2657,10 +3789,16 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     main_window.run()?;
-    let _ = cmd_tx.send(WorkerCommand::Stop);
+    viewer_generation.fetch_add(1, Ordering::AcqRel);
+    viewer_open_mailbox.close();
+    control_commands.stop();
     recording_mailbox.close();
     decode_mailbox.close();
+    photo_mailbox.close();
     let _ = decoder_worker.join();
     let _ = recorder_worker.join();
+    let _ = photo_worker.join();
+    library_mailbox.close();
+    let _ = library_worker.join();
     Ok(())
 }
