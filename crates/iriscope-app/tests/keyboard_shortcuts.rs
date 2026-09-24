@@ -44,7 +44,7 @@ fn camera_panel_and_image_popup_have_clickable_controls(window: &MainWindow) {
     assert!(window.get_zoom_pan_y().abs() < f32::EPSILON);
     window.set_zoom_level(100);
     window.set_is_streaming(false);
-    click(window, 607.0, 108.0);
+    click(window, 607.0, 124.0);
     assert!(!window.get_image_controls_open());
 
     click(window, 585.0, 26.0);
@@ -79,12 +79,12 @@ fn library_modes_open_capture_and_close_map() {
         }
     });
 
-    click(&window, 954.0, 214.0);
+    click(&window, 960.0, 240.0);
     assert_eq!(window.get_library_view(), 1);
     click(&window, 950.0, 330.0);
     assert_eq!(opens.get(), 1);
 
-    click(&window, 897.0, 214.0);
+    click(&window, 897.0, 240.0);
     assert_eq!(window.get_library_view(), 0);
     click(&window, 685.0, 102.0);
     assert!(window.get_library_map_open());
@@ -151,10 +151,10 @@ fn shortcuts_follow_active_page_capture_guards_and_viewer() {
     assert_eq!((photos.get(), recordings.get()), (1, 1));
     window.set_recording_finalizing(false);
 
-    click(&window, 160.0, 322.0);
+    click(&window, 160.0, 388.0);
     assert_eq!(photos.get(), 2);
     window.set_viewer_open(true);
-    click(&window, 160.0, 322.0);
+    click(&window, 160.0, 388.0);
     assert_eq!(photos.get(), 2);
     window.set_viewer_open(false);
 

@@ -40,6 +40,7 @@ export struct CameraControlUiData {
 
 export component MainWindow inherits Window {
     title: "IrisScope - Digital Microscope";
+    full-screen: root.iris-fullscreen;
     min-width: 1024px;
     min-height: 720px;
     preferred-width: 1280px;
@@ -73,6 +74,7 @@ export component MainWindow inherits Window {
     // Navigation (0: caméra, 2: bibliothèque, 4: paramètres)
     in-out property <int> current-tab: 0;
     in-out property <bool> sidebar-visible: true;
+    in-out property <bool> iris-fullscreen: false;
     in-out property <bool> image-controls-open: false;
 
     // Diagnostic
@@ -173,6 +175,7 @@ export component MainWindow inherits Window {
 
     function navigate-to(tab: int) {
         if (tab == 0 || tab == 2 || tab == 4) && root.current-tab != tab {
+            root.iris-fullscreen = false;
             root.focused-text-fields = 0;
             root.image-controls-open = false;
             root.library-map-open = false;
@@ -226,11 +229,12 @@ export component MainWindow inherits Window {
         }
         KeyBinding {
             keys: @keys(Escape);
-            enabled: root.viewer-open || root.image-controls-open || root.library-map-open;
+            enabled: root.viewer-open || root.image-controls-open || root.library-map-open || root.iris-fullscreen;
             activated => {
                 if root.viewer-open { root.dismiss-viewer(); }
                 else if root.library-map-open { root.library-map-open = false; }
-                else { root.image-controls-open = false; }
+                else if root.image-controls-open { root.image-controls-open = false; }
+                else { root.iris-fullscreen = false; }
             }
         }
 
@@ -243,10 +247,14 @@ export component MainWindow inherits Window {
             x: 0px;
             y: 0px;
             width: 100%;
-            height: 52px;
+            height: 64px;
+            visible: !root.iris-fullscreen;
             background: #1c2127;
 
             HorizontalBox {
+                y: 0px;
+                width: 100%;
+                height: 40px;
                 padding-left: 16px;
                 padding-right: 16px;
                 alignment: space-between;
@@ -254,6 +262,7 @@ export component MainWindow inherits Window {
                 HorizontalBox {
                     spacing: 12px;
                     alignment: start;
+                    height: 40px;
 
                     Text {
                         text: "IrisScope";
@@ -270,12 +279,14 @@ export component MainWindow inherits Window {
                     }
 
                     Button {
+                        height: 40px;
                         text: "Caméra";
                         primary: root.current-tab == 0;
                         clicked => { root.navigate-to(0); root.image-controls-open = false; }
                     }
 
                     Button {
+                        height: 40px;
                         text: root.width < 1120px ? "Image" : "Réglages image";
                         primary: root.current-tab == 0 && root.image-controls-open;
                         clicked => {
@@ -285,19 +296,22 @@ export component MainWindow inherits Window {
                     }
 
                     Button {
+                        height: 40px;
                         text: "Bibliothèque";
                         primary: root.current-tab == 2;
                         clicked => { root.navigate-to(2); }
                     }
 
                     Button {
+                        height: 40px;
                         text: root.width < 1120px ? "Paramètres" : "Paramètres et diagnostic";
                         primary: root.current-tab == 4;
                         clicked => { root.navigate-to(4); }
                     }
 
                     if root.current-tab == 0: Button {
-                        text: root.sidebar-visible ? "Masquer le panneau" : "Afficher le panneau";
+                        height: 40px;
+                        text: root.sidebar-visible ? "◀ Masquer panneau" : "▶ Afficher panneau";
                         clicked => { root.sidebar-visible = !root.sidebar-visible; }
                     }
                 }
@@ -340,20 +354,20 @@ export component MainWindow inherits Window {
         // Main Viewport Container
         Rectangle {
             x: 0px;
-            y: 52px;
+            y: root.iris-fullscreen ? 0px : 64px;
             width: 100%;
-            height: parent.height - 52px;
+            height: parent.height - self.y;
             background: #0f1215;
 
             // Tab 0: Camera Live View
             if root.current-tab == 0: HorizontalBox {
                 min-height: 0px;
                 min-width: 0px;
-                padding: 12px;
-                spacing: 12px;
+                padding: root.iris-fullscreen ? 0px : 12px;
+                spacing: root.iris-fullscreen ? 0px : 12px;
 
                 // Patient preparation and capture stay visible beside the image.
-                if root.sidebar-visible: Rectangle {
+                if root.sidebar-visible && !root.iris-fullscreen: Rectangle {
                     width: root.width < 1120px ? 300px : 324px;
                     border-radius: 10px;
                     background: #1c2127;
@@ -362,10 +376,10 @@ export component MainWindow inherits Window {
 
                     VerticalBox {
                         padding: 14px;
-                        spacing: 9px;
+                        spacing: 7px;
 
                         HorizontalBox {
-                            height: 38px;
+                            height: 42px;
                             vertical-stretch: 0;
                             alignment: space-between;
                             Text {
@@ -376,6 +390,7 @@ export component MainWindow inherits Window {
                                 vertical-alignment: center;
                             }
                             Button {
+                                height: 40px;
                                 text: "Terminer";
                                 enabled: !root.recording-busy;
                                 clicked => { root.clear-session(); }
@@ -383,20 +398,22 @@ export component MainWindow inherits Window {
                         }
 
                         HorizontalBox {
-                            height: 56px;
+                            height: 70px;
                             vertical-stretch: 0;
                             spacing: 8px;
                             VerticalBox {
                                 min-width: 0px;
                                 horizontal-stretch: 1;
                                 spacing: 3px;
-                                Text { text: "Prénom"; color: #b8c4cf; font-size: 11px; }
-                                    patient-first-name-field := LineEdit {
-                                        min-width: 0px;
-                                        text <=> root.patient-first-name;
-                                        changed has-focus => {
-                                            root.focused-text-fields = Math.max(0, root.focused-text-fields + (self.has-focus ? 1 : -1));
-                                        }
+                                Text { height: 18px; text: "Prénom"; color: #b8c4cf; font-size: 11px; }
+                                patient-first-name-field := LineEdit {
+                                    min-width: 0px;
+                                    height: 40px;
+                                    vertical-stretch: 0;
+                                    text <=> root.patient-first-name;
+                                    changed has-focus => {
+                                        root.focused-text-fields = Math.max(0, root.focused-text-fields + (self.has-focus ? 1 : -1));
+                                    }
                                     placeholder-text: "Prénom";
                                     enabled: !root.recording-busy;
                                     edited => { root.session-changed(); }
@@ -406,13 +423,15 @@ export component MainWindow inherits Window {
                                 min-width: 0px;
                                 horizontal-stretch: 1;
                                 spacing: 3px;
-                                Text { text: "Nom"; color: #b8c4cf; font-size: 11px; }
-                                    patient-last-name-field := LineEdit {
-                                        min-width: 0px;
-                                        text <=> root.patient-last-name;
-                                        changed has-focus => {
-                                            root.focused-text-fields = Math.max(0, root.focused-text-fields + (self.has-focus ? 1 : -1));
-                                        }
+                                Text { height: 18px; text: "Nom"; color: #b8c4cf; font-size: 11px; }
+                                patient-last-name-field := LineEdit {
+                                    min-width: 0px;
+                                    height: 40px;
+                                    vertical-stretch: 0;
+                                    text <=> root.patient-last-name;
+                                    changed has-focus => {
+                                        root.focused-text-fields = Math.max(0, root.focused-text-fields + (self.has-focus ? 1 : -1));
+                                    }
                                     placeholder-text: "Nom";
                                     enabled: !root.recording-busy;
                                     edited => { root.session-changed(); }
@@ -421,18 +440,22 @@ export component MainWindow inherits Window {
                         }
 
                         VerticalBox {
-                            height: 54px;
+                            height: 74px;
                             vertical-stretch: 0;
                             spacing: 4px;
                             Text {
+                                height: 18px;
                                 text: "ŒIL EXAMINÉ";
                                 color: #9eabb8;
                                 font-size: 11px;
                                 font-weight: 700;
                             }
                             HorizontalBox {
+                                height: 40px;
+                                vertical-stretch: 0;
                                 spacing: 6px;
                                 Button {
+                                    height: 40px;
                                     horizontal-stretch: 1;
                                     text: "Gauche";
                                     primary: root.selected-eye == 1;
@@ -445,6 +468,7 @@ export component MainWindow inherits Window {
                                     }
                                 }
                                 Button {
+                                    height: 40px;
                                     horizontal-stretch: 1;
                                     text: "Droit";
                                     primary: root.selected-eye == 2;
@@ -466,10 +490,11 @@ export component MainWindow inherits Window {
                         }
 
                         HorizontalBox {
-                            height: 36px;
+                            height: 46px;
                             vertical-stretch: 0;
                             spacing: 6px;
                             Button {
+                                height: 40px;
                                 horizontal-stretch: 1;
                                 text: "Photo";
                                 primary: !root.is-video-mode;
@@ -477,6 +502,7 @@ export component MainWindow inherits Window {
                                 clicked => { root.is-video-mode = false; }
                             }
                             Button {
+                                height: 40px;
                                 horizontal-stretch: 1;
                                 text: "Vidéo";
                                 primary: root.is-video-mode;
@@ -511,7 +537,7 @@ export component MainWindow inherits Window {
                         }
 
                         Text {
-                            height: 28px;
+                            height: 34px;
                             vertical-stretch: 0;
                             text: !root.is-streaming
                                 ? "En attente du flux caméra"
@@ -550,9 +576,10 @@ export component MainWindow inherits Window {
                                     vertical-alignment: center;
                                 }
                                 HorizontalBox {
-                                    height: 36px;
+                                    height: 40px;
                                     spacing: 6px;
                                     Button {
+                                        height: 40px;
                                         horizontal-stretch: 1;
                                         text: root.is-frozen ? "Reprendre" : "Figer";
                                         primary: root.is-frozen;
@@ -560,6 +587,7 @@ export component MainWindow inherits Window {
                                         clicked => { root.toggle-freeze(); }
                                     }
                                     Button {
+                                        height: 40px;
                                         horizontal-stretch: 1;
                                         text: root.show-iridology-grid ? "Grille active" : "Grille iris";
                                         primary: root.show-iridology-grid;
@@ -567,7 +595,7 @@ export component MainWindow inherits Window {
                                     }
                                 }
                                 HorizontalBox {
-                                    height: 38px;
+                                    height: 40px;
                                     spacing: 8px;
                                     Text {
                                         text: "Zoom";
@@ -594,9 +622,10 @@ export component MainWindow inherits Window {
                                     }
                                 }
                                 HorizontalBox {
-                                    height: 36px;
+                                    height: 40px;
                                     spacing: 6px;
                                     Button {
+                                        height: 40px;
                                         horizontal-stretch: 1;
                                         text: "100 %";
                                         primary: root.zoom-level == 100;
@@ -607,6 +636,7 @@ export component MainWindow inherits Window {
                                         }
                                     }
                                     Button {
+                                        height: 40px;
                                         horizontal-stretch: 1;
                                         text: "150 %";
                                         primary: root.zoom-level == 150;
@@ -617,6 +647,7 @@ export component MainWindow inherits Window {
                                         }
                                     }
                                     Button {
+                                        height: 40px;
                                         horizontal-stretch: 1;
                                         text: "200 %";
                                         primary: root.zoom-level == 200;
@@ -628,9 +659,10 @@ export component MainWindow inherits Window {
                                     }
                                 }
                                 HorizontalBox {
-                                    height: 36px;
+                                    height: 40px;
                                     spacing: 6px;
                                     Button {
+                                        height: 40px;
                                         horizontal-stretch: 1;
                                         text: "↻ " + root.rotation-angle + "°";
                                         clicked => {
@@ -638,12 +670,14 @@ export component MainWindow inherits Window {
                                         }
                                     }
                                     Button {
+                                        height: 40px;
                                         horizontal-stretch: 1;
                                         text: "Miroir H";
                                         primary: root.mirror-horizontal;
                                         clicked => { root.mirror-horizontal = !root.mirror-horizontal; }
                                     }
                                     Button {
+                                        height: 40px;
                                         horizontal-stretch: 1;
                                         text: "Miroir V";
                                         primary: root.mirror-vertical;
@@ -654,7 +688,7 @@ export component MainWindow inherits Window {
                         }
 
                         if root.has-last-capture: Rectangle {
-                            height: 88px;
+                            height: 96px;
                             vertical-stretch: 0;
                             border-radius: 8px;
                             background: #121a20;
@@ -690,25 +724,31 @@ export component MainWindow inherits Window {
                                     horizontal-stretch: 1;
                                     spacing: 2px;
                                     Text {
+                                        height: 16px;
                                         text: "DERNIÈRE CAPTURE";
                                         color: #7dc8e9;
                                         font-size: 10px;
                                         font-weight: 700;
                                     }
                                     Text {
+                                        height: 16px;
                                         text: root.last-capture-file-name;
                                         color: #cbd5e1;
                                         font-size: 10px;
                                         overflow: elide;
                                     }
                                     HorizontalBox {
+                                        height: 40px;
+                                        vertical-stretch: 0;
                                         spacing: 4px;
                                         Button {
+                                            height: 40px;
                                             horizontal-stretch: 1;
                                             text: "Voir";
                                             clicked => { root.open-capture-file(root.last-capture-path); }
                                         }
                                         Button {
+                                            height: 40px;
                                             text: "Dossier";
                                             clicked => { root.open-capture-directory(); }
                                         }
@@ -723,7 +763,7 @@ export component MainWindow inherits Window {
                     min-width: 0px;
                     horizontal-stretch: 1;
                     clip: true;
-                    border-radius: 10px;
+                    border-radius: root.iris-fullscreen ? 0px : 10px;
                     background: #000000;
 
                     if root.is-streaming: Image {
@@ -747,7 +787,7 @@ export component MainWindow inherits Window {
                     }
 
                     pan-area := TouchArea {
-                        enabled: root.is-streaming && root.zoom-level > 100;
+                        enabled: root.is-streaming;
                         private property <length> pan-start-x;
                         private property <length> pan-start-y;
 
@@ -759,9 +799,50 @@ export component MainWindow inherits Window {
                         }
 
                         moved => {
-                            if self.pressed {
+                            if self.pressed && root.zoom-level > 100 {
                                 root.zoom-pan-x = self.pan-start-x + self.mouse-x - self.pressed-x;
                                 root.zoom-pan-y = self.pan-start-y + self.mouse-y - self.pressed-y;
+                            }
+                        }
+
+                        scroll-event(event) => {
+                            if event.delta-y == 0 { return reject; }
+                            root.zoom-level = Math.max(100, Math.min(200,
+                                root.zoom-level + (event.delta-y > 0 ? 10 : -10)));
+                            root.zoom-pan-x = 0px;
+                            root.zoom-pan-y = 0px;
+                            return accept;
+                        }
+                    }
+
+                    Button {
+                        x: parent.width - self.width - 16px;
+                        y: root.is-frozen ? 56px : 16px;
+                        height: 40px;
+                        text: root.iris-fullscreen ? "Quitter le plein écran" : "Plein écran";
+                        clicked => {
+                            root.image-controls-open = false;
+                            root.iris-fullscreen = !root.iris-fullscreen;
+                        }
+                    }
+
+                    if root.iris-fullscreen: Button {
+                        x: (parent.width - self.width) / 2;
+                        y: parent.height - self.height - 20px;
+                        height: 48px;
+                        text: root.recording-finalizing ? "Finalisation de la vidéo…"
+                            : root.is-recording ? "■ Arrêter la vidéo"
+                            : root.is-video-mode ? "● Démarrer la vidéo"
+                            : "Capturer une photo";
+                        primary: true;
+                        enabled: !root.recording-finalizing && (root.is-recording
+                            || (root.is-streaming && root.patient-first-name != ""
+                                && root.patient-last-name != "" && root.selected-eye != 0));
+                        clicked => {
+                            if root.is-recording || root.is-video-mode {
+                                root.toggle-recording();
+                            } else {
+                                root.trigger-capture();
                             }
                         }
                     }
@@ -967,7 +1048,7 @@ export component MainWindow inherits Window {
                             padding: 12px;
                             spacing: 8px;
                             HorizontalBox {
-                                height: 36px;
+                                height: 40px;
                                 vertical-stretch: 0;
                                 alignment: space-between;
                                 Text {
@@ -978,12 +1059,13 @@ export component MainWindow inherits Window {
                                     vertical-alignment: center;
                                 }
                                 Button {
+                                    height: 40px;
                                     text: "Fermer";
                                     clicked => { root.image-controls-open = false; }
                                 }
                             }
                             Text {
-                                height: 30px;
+                                height: 36px;
                                 vertical-stretch: 0;
                                 text: "L'image change en direct. Vos choix sont conservés.";
                                 color: #aebfc9;
@@ -1006,27 +1088,35 @@ export component MainWindow inherits Window {
                                 VerticalBox {
                                     spacing: 6px;
                                     for control in root.camera-controls: Rectangle {
-                                        height: control.kind == 0 ? 76px : 62px;
+                                        height: 100px;
                                         border-radius: 6px;
                                         background: #26323c;
                                         VerticalBox {
                                             padding: 8px;
                                             spacing: 5px;
                                             HorizontalBox {
+                                                height: 28px;
+                                                vertical-stretch: 0;
                                                 alignment: space-between;
                                                 Text {
+                                                    height: 28px;
                                                     text: control.name;
                                                     color: #e7eef3;
                                                     font-size: 12px;
                                                     font-weight: 600;
+                                                    vertical-alignment: center;
                                                 }
                                                 if control.read-only: Text {
+                                                    height: 28px;
                                                     text: "Lecture seule";
                                                     color: #aebfc9;
                                                     font-size: 10px;
+                                                    vertical-alignment: center;
                                                 }
                                             }
                                             if control.kind == 0: HorizontalBox {
+                                                height: 40px;
+                                                vertical-stretch: 0;
                                                 spacing: 6px;
                                                 Slider {
                                                     horizontal-stretch: 1;
@@ -1045,11 +1135,15 @@ export component MainWindow inherits Window {
                                                 }
                                             }
                                             if control.kind == 1: Button {
+                                                height: 40px;
+                                                vertical-stretch: 0;
                                                 text: control.boolean-value ? "Activé" : "Désactivé";
                                                 enabled: !control.read-only;
                                                 clicked => { root.set-camera-control-bool(control.key, !control.boolean-value); }
                                             }
                                             if control.kind == 2: Button {
+                                                height: 40px;
+                                                vertical-stretch: 0;
                                                 text: control.menu-label;
                                                 enabled: !control.read-only;
                                                 clicked => { root.cycle-camera-control-menu(control.key); }
@@ -1059,7 +1153,7 @@ export component MainWindow inherits Window {
                                 }
                             }
                             if root.camera-controls.length > 0: Button {
-                                height: 32px;
+                                height: 40px;
                                 vertical-stretch: 0;
                                 text: "Rétablir les valeurs d'origine";
                                 enabled: root.camera-controls.length > 0;
@@ -1075,8 +1169,8 @@ export component MainWindow inherits Window {
 
             // Tab 2: Library
             if root.current-tab == 2: VerticalBox {
-                padding: 24px;
-                spacing: 16px;
+                padding: 20px;
+                spacing: 12px;
 
                 HorizontalBox {
                     height: 52px;
@@ -1103,21 +1197,21 @@ export component MainWindow inherits Window {
                         }
                     }
                     HorizontalBox {
-                        height: 36px;
+                        height: 44px;
                         vertical-stretch: 0;
                         spacing: 8px;
                         Button {
-                            height: 34px;
+                            height: 40px;
                             text: "Carte d'iridologie";
                             clicked => { root.iridology-reference-mode = 0; root.library-map-open = true; }
                         }
                         Button {
-                            height: 34px;
+                            height: 40px;
                             text: "Actualiser";
                             clicked => { root.selected-library-path = ""; root.refresh-library(); }
                         }
                         Button {
-                            height: 34px;
+                            height: 40px;
                             text: "Ouvrir le dossier";
                             clicked => { root.open-capture-directory(); }
                         }
@@ -1125,13 +1219,13 @@ export component MainWindow inherits Window {
                 }
 
                 HorizontalBox {
-                    height: 36px;
+                    height: 44px;
                     vertical-stretch: 0;
                     spacing: 8px;
                     alignment: start;
 
                     Button {
-                        height: 32px;
+                        height: 40px;
                         text: "Patient sélectionné";
                         primary: root.library-filter == 3;
                         enabled: root.patient-first-name != "" && root.patient-last-name != "";
@@ -1142,7 +1236,7 @@ export component MainWindow inherits Window {
                         }
                     }
                     Button {
-                        height: 32px;
+                        height: 40px;
                         text: "Tous";
                         primary: root.library-filter == 0;
                         clicked => {
@@ -1152,7 +1246,7 @@ export component MainWindow inherits Window {
                         }
                     }
                     Button {
-                        height: 32px;
+                        height: 40px;
                         text: "Photos";
                         primary: root.library-filter == 1;
                         clicked => {
@@ -1162,7 +1256,7 @@ export component MainWindow inherits Window {
                         }
                     }
                     Button {
-                        height: 32px;
+                        height: 40px;
                         text: "Vidéos";
                         primary: root.library-filter == 2;
                         clicked => {
@@ -1174,7 +1268,7 @@ export component MainWindow inherits Window {
                 }
 
                 HorizontalBox {
-                    height: 36px;
+                    height: 44px;
                     vertical-stretch: 0;
                     alignment: space-between;
                     Text {
@@ -1184,17 +1278,17 @@ export component MainWindow inherits Window {
                         vertical-alignment: center;
                     }
                     HorizontalBox {
-                        height: 36px;
+                        height: 44px;
                         vertical-stretch: 0;
                         spacing: 6px;
                         Button {
-                            height: 32px;
+                            height: 40px;
                             text: "Grille";
                             primary: root.library-view == 0;
                             clicked => { root.library-view = 0; }
                         }
                         Button {
-                            height: 32px;
+                            height: 40px;
                             text: "Liste";
                             primary: root.library-view == 1;
                             clicked => { root.library-view = 1; }
@@ -1203,12 +1297,12 @@ export component MainWindow inherits Window {
                 }
 
                 if root.library-total-count > 100: HorizontalBox {
-                    height: 36px;
+                    height: 44px;
                     vertical-stretch: 0;
                     spacing: 8px;
                     alignment: start;
                     Button {
-                        height: 32px;
+                        height: 40px;
                         text: "Précédent";
                         enabled: root.library-page > 0 && !root.library-loading;
                         clicked => { root.selected-library-path = ""; root.library-page-changed(root.library-page - 1); }
@@ -1220,7 +1314,7 @@ export component MainWindow inherits Window {
                         vertical-alignment: center;
                     }
                     Button {
-                        height: 32px;
+                        height: 40px;
                         text: "Suivant";
                         enabled: (root.library-page + 1) * 100 < root.library-total-count && !root.library-loading;
                         clicked => { root.selected-library-path = ""; root.library-page-changed(root.library-page + 1); }
@@ -1289,10 +1383,12 @@ export component MainWindow inherits Window {
                             alignment: center;
                             spacing: 8px;
                             Button {
+                                height: 40px;
                                 text: "Réessayer";
                                 clicked => { root.refresh-library(); }
                             }
                             Button {
+                                height: 40px;
                                 text: "Vérifier le dossier";
                                 clicked => { root.navigate-to(4); }
                             }
@@ -1334,6 +1430,7 @@ export component MainWindow inherits Window {
                         HorizontalBox {
                             alignment: center;
                             Button {
+                                height: 40px;
                                 text: root.library-filter == 0 ? "Aller à la caméra" : "Voir toutes les captures";
                                 clicked => {
                                     if root.library-filter == 0 {
@@ -1373,9 +1470,12 @@ export component MainWindow inherits Window {
                             HorizontalBox {
                                 padding-left: 16px;
                                 padding-right: 16px;
+                                spacing: 16px;
                                 alignment: space-between;
 
                                 HorizontalBox {
+                                    min-width: 0px;
+                                    horizontal-stretch: 1;
                                     spacing: 12px;
                                     alignment: start;
 
@@ -1428,17 +1528,23 @@ export component MainWindow inherits Window {
                                     }
 
                                     VerticalBox {
+                                        min-width: 0px;
+                                        horizontal-stretch: 1;
                                         alignment: center;
                                         spacing: 2px;
 
                                         HorizontalBox {
+                                            min-width: 0px;
                                             spacing: 8px;
                                             alignment: start;
                                             Text {
+                                                min-width: 0px;
+                                                horizontal-stretch: 1;
                                                 text: item.title;
                                                 color: #ffffff;
                                                 font-size: 14px;
                                                 font-weight: 600;
+                                                overflow: elide;
                                             }
                                             if item.is-current-patient: Rectangle {
                                                 width: 116px;
@@ -1477,12 +1583,13 @@ export component MainWindow inherits Window {
                                             text: item.date-time;
                                             color: #9ca3af;
                                             font-size: 12px;
+                                            overflow: elide;
                                         }
                                     }
                                 }
 
                                 Button {
-                                    height: 36px;
+                                    height: 40px;
                                     vertical-stretch: 0;
                                     text: "Ouvrir";
                                     primary: root.selected-library-path == item.file-path;
@@ -1506,7 +1613,7 @@ export component MainWindow inherits Window {
                             col: Math.mod(index, root.library-grid-columns);
                             width: root.width < 1250px ? 300px : 280px;
                             horizontal-stretch: 0;
-                            height: 250px;
+                            height: 236px;
                             border-radius: 8px;
                             clip: true;
                             background: root.selected-library-path == item.file-path ? #20334a : #181d23;
@@ -1522,9 +1629,10 @@ export component MainWindow inherits Window {
                             VerticalBox {
                                 padding: 10px;
                                 spacing: 6px;
+                                alignment: start;
 
                                 Rectangle {
-                                    height: 132px;
+                                    height: 128px;
                                     border-radius: 6px;
                                     clip: true;
                                     background: #0b1016;
@@ -1565,6 +1673,8 @@ export component MainWindow inherits Window {
                                         }
                                     }
                                     Text {
+                                        min-width: 0px;
+                                        horizontal-stretch: 1;
                                         text: item.title;
                                         color: #ffffff;
                                         font-size: 13px;
@@ -1575,14 +1685,20 @@ export component MainWindow inherits Window {
                                 }
 
                                 HorizontalBox {
+                                    height: 40px;
+                                    vertical-stretch: 0;
                                     alignment: space-between;
                                     Text {
+                                        min-width: 0px;
+                                        horizontal-stretch: 1;
                                         text: item.date-time;
                                         color: #9ca3af;
                                         font-size: 11px;
                                         vertical-alignment: center;
+                                        overflow: elide;
                                     }
                                     Button {
+                                        height: 40px;
                                         text: "Ouvrir";
                                         primary: root.selected-library-path == item.file-path;
                                         clicked => { root.library-map-open = false; root.open-capture-file(item.file-path); }
@@ -1597,8 +1713,8 @@ export component MainWindow inherits Window {
             // Tab 4: Settings & Diagnostics
             if root.current-tab == 4: ScrollView {
                 VerticalBox {
-                    padding: 24px;
-                    spacing: 16px;
+                    padding: 20px;
+                    spacing: 12px;
                     alignment: start;
 
                     Text {
@@ -1647,6 +1763,7 @@ export component MainWindow inherits Window {
                                     text: root.camera-connected ? root.status-text : "Iridoscope déconnecté";
                                     color: root.camera-connected ? #6ee7b7 : #fca5a5;
                                     font-size: 12px;
+                                    overflow: elide;
                                 }
 
                                 if !root.camera-connected: Text {
@@ -1694,8 +1811,12 @@ export component MainWindow inherits Window {
 
                                 Text { text: "Dossier des captures :"; color: #9ca3af; }
                                 HorizontalBox {
+                                    height: 44px;
+                                    vertical-stretch: 0;
                                     spacing: 8px;
                                     capture-directory-field := LineEdit {
+                                        min-width: 0px;
+                                        height: 40px;
                                         horizontal-stretch: 1;
                                         enabled: !root.recording-busy;
                                         text: root.settings-capture-directory;
@@ -1706,6 +1827,7 @@ export component MainWindow inherits Window {
                                         accepted(value) => { root.update-capture-directory(value); }
                                     }
                                     Button {
+                                        height: 40px;
                                         text: "Enregistrer";
                                         enabled: !root.recording-busy;
                                         clicked => { root.update-capture-directory(capture-directory-field.text); }
@@ -1714,8 +1836,12 @@ export component MainWindow inherits Window {
 
                                 Text { text: "Modèle de nommage :"; color: #9ca3af; }
                                 HorizontalBox {
+                                    height: 44px;
+                                    vertical-stretch: 0;
                                     spacing: 8px;
                                     filename-template-field := LineEdit {
+                                        min-width: 0px;
+                                        height: 40px;
                                         horizontal-stretch: 1;
                                         text: root.settings-filename-template;
                                         changed has-focus => {
@@ -1725,6 +1851,7 @@ export component MainWindow inherits Window {
                                         accepted(value) => { root.update-filename-template(value); }
                                     }
                                     Button {
+                                        height: 40px;
                                         text: "Enregistrer";
                                         clicked => { root.update-filename-template(filename-template-field.text); }
                                     }
@@ -1733,17 +1860,23 @@ export component MainWindow inherits Window {
                                     text: "Obligatoires : {prenom} {nom} {oeil}  •  Optionnels : {date} {heure}";
                                     color: #9ca3af;
                                     font-size: 11px;
+                                    wrap: word-wrap;
                                 }
 
                                 Text { text: "Action du bouton de l'iridoscope :"; color: #9ca3af; }
-                                Button {
-                                    text: root.settings-button-mode == 1
-                                        ? "Toujours prendre une photo"
-                                        : root.settings-button-mode == 2
-                                            ? "Toujours démarrer ou arrêter une vidéo"
-                                            : "Suit le mode actuel";
-                                    clicked => {
-                                        root.cycle-physical-button-mode();
+                                HorizontalBox {
+                                    height: 44px;
+                                    alignment: start;
+                                    Button {
+                                        height: 40px;
+                                        text: root.settings-button-mode == 1
+                                            ? "Toujours prendre une photo"
+                                            : root.settings-button-mode == 2
+                                                ? "Toujours démarrer ou arrêter une vidéo"
+                                                : "Suit le mode actuel";
+                                        clicked => {
+                                            root.cycle-physical-button-mode();
+                                        }
                                     }
                                 }
                                 Text {
@@ -1754,8 +1887,12 @@ export component MainWindow inherits Window {
 
                                 Text { text: "Carte d'iridologie (image) :"; color: #9ca3af; }
                                 HorizontalBox {
+                                    height: 44px;
+                                    vertical-stretch: 0;
                                     spacing: 8px;
                                     map-path-field := LineEdit {
+                                        min-width: 0px;
+                                        height: 40px;
                                         horizontal-stretch: 1;
                                         text: root.settings-iridology-map-path;
                                         changed has-focus => {
@@ -1765,6 +1902,7 @@ export component MainWindow inherits Window {
                                         accepted(value) => { root.update-iridology-map-path(value); }
                                     }
                                     Button {
+                                        height: 40px;
                                         text: "Enregistrer";
                                         clicked => { root.update-iridology-map-path(map-path-field.text); }
                                     }
@@ -1772,8 +1910,12 @@ export component MainWindow inherits Window {
 
                                 Text { text: "Planche de signes et symboles :"; color: #9ca3af; }
                                 HorizontalBox {
+                                    height: 44px;
+                                    vertical-stretch: 0;
                                     spacing: 8px;
                                     symbols-path-field := LineEdit {
+                                        min-width: 0px;
+                                        height: 40px;
                                         horizontal-stretch: 1;
                                         text: root.settings-iridology-symbols-path;
                                         changed has-focus => {
@@ -1783,14 +1925,20 @@ export component MainWindow inherits Window {
                                         accepted(value) => { root.update-iridology-symbols-path(value); }
                                     }
                                     Button {
+                                        height: 40px;
                                         text: "Enregistrer";
                                         clicked => { root.update-iridology-symbols-path(symbols-path-field.text); }
                                     }
                                 }
 
-                                Button {
-                                    text: "Ouvrir le dossier des captures";
-                                    clicked => { root.open-capture-directory(); }
+                                HorizontalBox {
+                                    height: 44px;
+                                    alignment: start;
+                                    Button {
+                                        height: 40px;
+                                        text: "Ouvrir le dossier des captures";
+                                        clicked => { root.open-capture-directory(); }
+                                    }
                                 }
                             }
                         }
@@ -1835,13 +1983,14 @@ export component MainWindow inherits Window {
                         }
                     }
                     Button {
+                        height: 40px;
                         text: "Fermer";
                         clicked => { root.library-map-open = false; }
                     }
                 }
 
                 if root.has-iridology-map || root.has-iridology-symbols: Rectangle {
-                    height: 44px;
+                    height: 48px;
                     vertical-stretch: 0;
                     border-radius: 6px;
                     background: #1c252e;
@@ -1850,10 +1999,10 @@ export component MainWindow inherits Window {
                         padding-right: 8px;
                         alignment: space-between;
                         HorizontalBox {
-                            height: 36px;
+                            height: 44px;
                             spacing: 6px;
                             Button {
-                                height: 32px;
+                                height: 40px;
                                 text: "Carte";
                                 primary: root.iridology-reference-mode == 0;
                                 clicked => {
@@ -1864,7 +2013,7 @@ export component MainWindow inherits Window {
                                 }
                             }
                             if root.settings-iridology-symbols-path != "": Button {
-                                height: 32px;
+                                height: 40px;
                                 text: "Signes et symboles";
                                 primary: root.iridology-reference-mode == 1;
                                 clicked => {
@@ -1876,7 +2025,7 @@ export component MainWindow inherits Window {
                             }
                         }
                         HorizontalBox {
-                            height: 36px;
+                            height: 44px;
                             spacing: 8px;
                             Text {
                                 text: "Zoom";
@@ -1951,6 +2100,7 @@ export component MainWindow inherits Window {
                             alignment: center;
                             Button {
                                 text: "Ouvrir les paramètres";
+                                height: 40px;
                                 clicked => {
                                     root.library-map-open = false;
                                     root.navigate-to(4);
@@ -1999,6 +2149,8 @@ export component MainWindow inherits Window {
                 spacing: 12px;
 
                 HorizontalBox {
+                    height: 44px;
+                    vertical-stretch: 0;
                     alignment: space-between;
 
                     Text {
@@ -2012,6 +2164,7 @@ export component MainWindow inherits Window {
                         spacing: 6px;
 
                         Button {
+                            height: 40px;
                             text: "Ajuster";
                             primary: root.viewer-zoom == 100;
                             enabled: !root.viewer-loading;
@@ -2022,6 +2175,7 @@ export component MainWindow inherits Window {
                             }
                         }
                         Button {
+                            height: 40px;
                             text: "150%";
                             primary: root.viewer-zoom == 150;
                             enabled: !root.viewer-loading;
@@ -2032,6 +2186,7 @@ export component MainWindow inherits Window {
                             }
                         }
                         Button {
+                            height: 40px;
                             text: "200%";
                             primary: root.viewer-zoom == 200;
                             enabled: !root.viewer-loading;
@@ -2042,11 +2197,13 @@ export component MainWindow inherits Window {
                             }
                         }
                         if root.viewer-is-video && !root.viewer-loading: Button {
+                            height: 40px;
                             text: root.viewer-video-playing ? "Pause" : "Lecture";
                             clicked => { root.toggle-viewer-video(); }
                         }
 
                         Button {
+                            height: 40px;
                             text: "Fermer";
                             clicked => { root.dismiss-viewer(); }
                         }
@@ -2116,6 +2273,8 @@ export component MainWindow inherits Window {
                 }
 
                 if root.viewer-is-video && !root.viewer-loading: HorizontalBox {
+                    height: 36px;
+                    vertical-stretch: 0;
                     spacing: 12px;
 
                     Text {
@@ -2172,6 +2331,7 @@ export component MainWindow inherits Window {
                 wrap: word-wrap;
             }
             if root.has-last-capture && root.capture-notice-tone == 1: Button {
+                height: 40px;
                 text: "Voir";
                 clicked => { root.open-capture-file(root.last-capture-path); }
             }
