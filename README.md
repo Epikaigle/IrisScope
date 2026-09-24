@@ -90,19 +90,21 @@ La bibliothèque propose actuellement :
 
 - photos et vidéos réunies au même endroit ;
 - miniatures pour les photos et pour les vidéos AVI à partir de leur première image ;
+- affichage au choix en grille ou en liste, avec sélection puis ouverture dans la visionneuse ;
 - filtres Tous / Photos / Vidéos / Patient sélectionné ;
 - ouverture initiale sur toutes les captures, puis conservation du filtre et de la page entre les onglets ;
 - anonymisation du titre des captures appartenant à d'autres personnes ;
 - index local caché de métadonnées, indépendant du modèle de nom de fichier ;
 - visionneuse photo privée intégrée avec zoom / déplacement ;
 - lecteur vidéo MJPEG privé intégré avec timeline et recherche dans la vidéo ;
-- accès rapide au dossier de stockage.
+- accès rapide au dossier de stockage ;
+- accès à la carte d'iridologie depuis la bibliothèque, dans une fenêtre refermable.
 
 Le stockage reste local à l'ordinateur. Aucun compte ou cloud n'est requis.
 
 ### Réglages de l'image
 
-Les réglages sont accessibles dans un panneau secondaire afin de ne pas surcharger l'écran principal.
+Les réglages s'ouvrent dans une petite fenêtre en haut à gauche de l'aperçu caméra. L'image reste visible pendant le déplacement des curseurs, et les valeurs choisies sont conservées automatiquement pour les prochains lancements.
 
 Lorsque la caméra / le système le permet, IrisScope agit directement sur les contrôles du DE400 plutôt que d'appliquer artificiellement un filtre après capture.
 
@@ -122,6 +124,7 @@ Fonctions d'affichage supplémentaires :
 
 - freeze du live ;
 - zoom d'affichage ;
+- curseur de zoom continu de 100 à 200 %, avec accès direct à 100, 150 et 200 % ;
 - rotation ;
 - miroir ;
 - transformations non destructives pour l'original.
@@ -147,27 +150,31 @@ La page **Réglages** permet notamment de consulter ou modifier :
 - modèle de nommage, avec `{prenom}`, `{nom}` et `{oeil}` obligatoires ;
 - chemins des deux images de référence d'iridologie.
 
-Les contrôles image réellement exposés par le backend sont générés dynamiquement dans l'onglet **Réglages Image**.
+Les contrôles image réellement exposés par le backend sont générés dynamiquement dans la fenêtre **Réglages image** de la caméra.
 
 ## Interface volontairement simple
 
-L'application reste limitée à cinq zones principales :
+L'application comporte trois espaces principaux :
 
 1. **Caméra**
-2. **Réglages Image**
-3. **Bibliothèque**
-4. **Références iris**
-5. **Paramètres & Diagnostic**
+2. **Bibliothèque**
+3. **Paramètres et diagnostic**
+
+Le panneau patient est à gauche de l'image et peut être masqué pour agrandir l'aperçu. Les réglages d'image s'ouvrent au-dessus du direct et la carte d'iridologie s'ouvre depuis la bibliothèque.
 
 ### Raccourcis clavier
 
 | Raccourci | Action |
 | --- | --- |
-| `Ctrl+1` à `Ctrl+5` | Ouvrir, dans l'ordre, Caméra, Réglages Image, Bibliothèque, Références iris et Paramètres & Diagnostic |
+| `Ctrl+1` | Afficher la caméra |
+| `Ctrl+2` | Afficher la caméra et ouvrir ou fermer les réglages d'image |
+| `Ctrl+3` | Ouvrir la bibliothèque |
+| `Ctrl+4` | Ouvrir la carte d'iridologie depuis la bibliothèque |
+| `Ctrl+5` | Ouvrir les paramètres et le diagnostic |
 | `Ctrl+P` | Prendre une photo depuis l'onglet Caméra |
 | `Ctrl+R` | Démarrer ou arrêter l'enregistrement vidéo depuis l'onglet Caméra |
 | `Ctrl+F` | Figer ou reprendre l'aperçu caméra |
-| `Échap` | Fermer la visionneuse de photo ou de vidéo |
+| `Échap` | Fermer la visionneuse, la carte ou les réglages d'image |
 
 Les raccourcis de capture exigent un flux actif, un prénom, un nom et un œil sélectionné. Ils sont désactivés pendant la saisie dans un champ de texte et lorsque la visionneuse est ouverte. La navigation au clavier avec `Tab` reste disponible pour les contrôles.
 

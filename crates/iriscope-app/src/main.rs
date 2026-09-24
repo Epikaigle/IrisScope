@@ -20,7 +20,7 @@ use iriscope_core::{
         try_scan_library_directory,
     },
     session::{CaptureSession, Eye},
-    settings::{AppSettings, PhysicalButtonBehavior},
+    settings::{AppSettings, PhysicalButtonBehavior, SavedCameraControlValue},
     storage::{
         CaptureNamingPolicy, CaptureTimestamp, DEFAULT_FILENAME_TEMPLATE,
         filename_template_preserves_identity, filename_template_uses_supported_tokens,
@@ -691,6 +691,95 @@ impl ControlCommandMailbox {
             reset: std::mem::take(&mut state.reset),
             stop: state.stop,
         }
+    }
+}
+
+/// Coalesces frequent slider updates before writing image settings to disk.
+#[derive(Default)]
+struct CameraSettingsSaveMailbox {
+    state: Mutex<CameraSettingsSaveState>,
+    changed: Condvar,
+}
+
+#[derive(Default)]
+struct CameraSettingsSaveState {
+    generation: u64,
+    dirty: bool,
+    closed: bool,
+}
+
+impl CameraSettingsSaveMailbox {
+    fn mark_dirty(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.generation = state.generation.wrapping_add(1);
+        state.dirty = true;
+        self.changed.notify_one();
+    }
+
+    fn close(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.closed = true;
+        self.changed.notify_one();
+    }
+}
+
+fn run_camera_settings_save_worker(
+    mailbox: &CameraSettingsSaveMailbox,
+    settings: &Arc<Mutex<AppSettings>>,
+    path: &std::path::Path,
+    window: Option<&slint::Weak<MainWindow>>,
+) {
+    let mut state = mailbox
+        .state
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    loop {
+        while !state.dirty && !state.closed {
+            state = mailbox
+                .changed
+                .wait(state)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+        if !state.closed {
+            let generation = state.generation;
+            let (next, _) = mailbox
+                .changed
+                .wait_timeout_while(state, Duration::from_millis(500), |current| {
+                    !current.closed && current.generation == generation
+                })
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state = next;
+            if !state.closed && state.generation != generation {
+                continue;
+            }
+        }
+
+        let dirty = std::mem::take(&mut state.dirty);
+        let closed = state.closed;
+        drop(state);
+        if dirty && let Err(error) = persist_settings(settings, path) {
+            eprintln!("Impossible d'enregistrer les réglages d'image : {error}");
+            if let Some(window) = window {
+                let message = format!("Réglages d'image appliqués, mais non enregistrés : {error}");
+                let _ = window.upgrade_in_event_loop(move |win| {
+                    settings_error(&win, &message);
+                    show_capture_notice(&win, message, NOTICE_ERROR);
+                });
+            }
+        }
+        if closed {
+            break;
+        }
+        state = mailbox
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
     }
 }
 
@@ -1846,6 +1935,205 @@ fn default_camera_control_value(kind: &CameraControlKind) -> Option<CameraContro
     }
 }
 
+fn saved_camera_control_value(value: &CameraControlValue) -> Option<SavedCameraControlValue> {
+    match value {
+        CameraControlValue::Integer(value) => Some(SavedCameraControlValue::Integer(*value)),
+        CameraControlValue::Boolean(value) => Some(SavedCameraControlValue::Boolean(*value)),
+        CameraControlValue::Menu(value) => Some(SavedCameraControlValue::Menu(*value)),
+        _ => None,
+    }
+}
+
+fn compatible_saved_camera_control_value(
+    descriptor: &CameraControlDescriptor,
+    saved: &SavedCameraControlValue,
+) -> Option<CameraControlValue> {
+    if descriptor.read_only {
+        return None;
+    }
+    match (&descriptor.kind, saved) {
+        (
+            CameraControlKind::Integer {
+                minimum,
+                maximum,
+                step,
+                ..
+            },
+            SavedCameraControlValue::Integer(value),
+        ) if value >= minimum
+            && value <= maximum
+            && (i128::from(*value) - i128::from(*minimum)) % i128::from((*step).max(1)) == 0 =>
+        {
+            Some(CameraControlValue::Integer(*value))
+        }
+        (CameraControlKind::Boolean { .. }, SavedCameraControlValue::Boolean(value)) => {
+            Some(CameraControlValue::Boolean(*value))
+        }
+        (CameraControlKind::Menu { items, .. }, SavedCameraControlValue::Menu(value))
+            if items.iter().any(|item| item.value == *value) =>
+        {
+            Some(CameraControlValue::Menu(*value))
+        }
+        _ => None,
+    }
+}
+
+fn remember_camera_control_value(
+    settings: &Arc<Mutex<AppSettings>>,
+    mailbox: &CameraSettingsSaveMailbox,
+    key: &str,
+    value: &CameraControlValue,
+) {
+    let Some(saved) = saved_camera_control_value(value) else {
+        return;
+    };
+    let Ok(mut settings) = settings.lock() else {
+        return;
+    };
+    if settings.camera_control_values.get(key) == Some(&saved) {
+        return;
+    }
+    settings.camera_control_values.insert(key.to_owned(), saved);
+    drop(settings);
+    mailbox.mark_dirty();
+}
+
+#[cfg(test)]
+mod camera_control_settings_tests {
+    use std::{
+        fs,
+        sync::{Arc, Mutex},
+        thread,
+        time::SystemTime,
+    };
+
+    use iriscope_core::{
+        capabilities::{
+            CameraControlDescriptor, CameraControlId, CameraControlKind, CameraControlMenuItem,
+            CameraControlValue, StandardCameraControl,
+        },
+        settings::{AppSettings, SavedCameraControlValue},
+    };
+
+    use super::{
+        CameraSettingsSaveMailbox, compatible_saved_camera_control_value,
+        remember_camera_control_value, run_camera_settings_save_worker,
+    };
+
+    #[test]
+    fn saved_control_must_match_current_camera_capabilities() {
+        let mut descriptor = CameraControlDescriptor {
+            id: CameraControlId::Standard(StandardCameraControl::Brightness),
+            name: "Luminosité".to_owned(),
+            kind: CameraControlKind::Integer {
+                minimum: 10,
+                maximum: 30,
+                step: 5,
+                default: 20,
+                unit: None,
+            },
+            read_only: false,
+        };
+        assert_eq!(
+            compatible_saved_camera_control_value(
+                &descriptor,
+                &SavedCameraControlValue::Integer(25)
+            ),
+            Some(CameraControlValue::Integer(25))
+        );
+        for saved in [
+            SavedCameraControlValue::Integer(31),
+            SavedCameraControlValue::Integer(24),
+            SavedCameraControlValue::Boolean(true),
+        ] {
+            assert_eq!(
+                compatible_saved_camera_control_value(&descriptor, &saved),
+                None
+            );
+        }
+        descriptor.read_only = true;
+        assert_eq!(
+            compatible_saved_camera_control_value(
+                &descriptor,
+                &SavedCameraControlValue::Integer(25)
+            ),
+            None
+        );
+
+        descriptor.read_only = false;
+        descriptor.kind = CameraControlKind::Menu {
+            items: vec![CameraControlMenuItem {
+                value: 3,
+                label: "Manuel".to_owned(),
+            }],
+            default: 3,
+        };
+        assert_eq!(
+            compatible_saved_camera_control_value(&descriptor, &SavedCameraControlValue::Menu(3)),
+            Some(CameraControlValue::Menu(3))
+        );
+        assert_eq!(
+            compatible_saved_camera_control_value(&descriptor, &SavedCameraControlValue::Menu(4)),
+            None
+        );
+    }
+
+    #[test]
+    fn changed_control_updates_in_memory_before_debounced_save() {
+        let settings = Arc::new(Mutex::new(AppSettings::default()));
+        let mailbox = CameraSettingsSaveMailbox::default();
+        remember_camera_control_value(
+            &settings,
+            &mailbox,
+            "standard:Brightness",
+            &CameraControlValue::Integer(42),
+        );
+        assert_eq!(
+            settings
+                .lock()
+                .expect("settings")
+                .camera_control_values
+                .get("standard:Brightness"),
+            Some(&SavedCameraControlValue::Integer(42))
+        );
+        assert!(mailbox.state.lock().expect("mailbox").dirty);
+    }
+
+    #[test]
+    fn closing_save_worker_flushes_last_slider_value() {
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("valid time")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("iriscope_image_settings_{unique}.json"));
+        let settings = Arc::new(Mutex::new(AppSettings::default()));
+        let mailbox = Arc::new(CameraSettingsSaveMailbox::default());
+        let worker = thread::spawn({
+            let settings = Arc::clone(&settings);
+            let mailbox = Arc::clone(&mailbox);
+            let path = path.clone();
+            move || run_camera_settings_save_worker(&mailbox, &settings, &path, None)
+        });
+
+        for value in [20, 42, 71] {
+            remember_camera_control_value(
+                &settings,
+                &mailbox,
+                "standard:Brightness",
+                &CameraControlValue::Integer(value),
+            );
+        }
+        mailbox.close();
+        worker.join().expect("save worker");
+        let restored = AppSettings::load_from_file(&path);
+        assert_eq!(
+            restored.camera_control_values.get("standard:Brightness"),
+            Some(&SavedCameraControlValue::Integer(71))
+        );
+        fs::remove_file(path).expect("remove settings");
+    }
+}
+
 #[allow(clippy::cast_precision_loss)]
 fn camera_control_ui_data(state: &CameraControlRuntimeState) -> CameraControlUiData {
     let mut data = CameraControlUiData {
@@ -2755,6 +3043,14 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         Arc::new(Mutex::new(Vec::new()));
 
     let control_commands = Arc::new(ControlCommandMailbox::default());
+    let camera_settings_save = Arc::new(CameraSettingsSaveMailbox::default());
+    let camera_settings_save_worker = thread::spawn({
+        let mailbox = Arc::clone(&camera_settings_save);
+        let settings = Arc::clone(&settings);
+        let path = settings_path.clone();
+        let window = main_window.as_weak();
+        move || run_camera_settings_save_worker(&mailbox, &settings, &path, Some(&window))
+    });
 
     let library_worker = thread::spawn({
         let mailbox = Arc::clone(&library_mailbox);
@@ -2943,25 +3239,6 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
-            let discovered_controls = device
-                .capabilities()
-                .controls
-                .iter()
-                .cloned()
-                .filter_map(|descriptor| {
-                    let fallback = default_camera_control_value(&descriptor.kind)?;
-                    let value = device.control_value(&descriptor.id).unwrap_or(fallback);
-                    Some(CameraControlRuntimeState {
-                        key: camera_control_key(&descriptor.id),
-                        descriptor,
-                        value,
-                    })
-                })
-                .collect::<Vec<_>>();
-            if let Ok(mut controls) = camera_controls_worker.lock() {
-                controls.clone_from(&discovered_controls);
-            }
-
             let candidates = ranked_stream_configurations(device.capabilities());
 
             let mut active_config = None;
@@ -2981,6 +3258,50 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 thread::sleep(Duration::from_secs(1));
                 continue;
             };
+            let descriptors = device.capabilities().controls.clone();
+            let saved_controls = settings_snapshot(&settings_worker).camera_control_values;
+            let mut restore_values = descriptors
+                .iter()
+                .filter_map(|descriptor| {
+                    let saved = saved_controls.get(&camera_control_key(&descriptor.id))?;
+                    let value = compatible_saved_camera_control_value(descriptor, saved)?;
+                    Some((descriptor, value))
+                })
+                .collect::<Vec<_>>();
+            // Automatic/manual mode controls must be restored before their
+            // dependent numeric values (for example, manual exposure).
+            restore_values.sort_by_key(|(descriptor, _)| {
+                !matches!(
+                    descriptor.kind,
+                    CameraControlKind::Boolean { .. } | CameraControlKind::Menu { .. }
+                )
+            });
+            let mut applied_values = HashMap::new();
+            for (descriptor, value) in restore_values {
+                if device.set_control_value(&descriptor.id, &value).is_ok() {
+                    applied_values.insert(descriptor.id.clone(), value);
+                }
+            }
+            let discovered_controls = descriptors
+                .into_iter()
+                .filter_map(|descriptor| {
+                    let fallback = default_camera_control_value(&descriptor.kind)?;
+                    let value = device
+                        .control_value(&descriptor.id)
+                        .ok()
+                        .or_else(|| applied_values.get(&descriptor.id).cloned())
+                        .unwrap_or(fallback);
+                    Some(CameraControlRuntimeState {
+                        key: camera_control_key(&descriptor.id),
+                        descriptor,
+                        value,
+                    })
+                })
+                .collect::<Vec<_>>();
+            if let Ok(mut controls) = camera_controls_worker.lock() {
+                controls.clone_from(&discovered_controls);
+            }
+
             let generation = stream_generation_camera.fetch_add(1, Ordering::AcqRel) + 1;
             let _ = latest_frame_clone.take();
             decode_mailbox_camera.clear();
@@ -3697,6 +4018,8 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     // Camera controls discovered dynamically from the active backend.
     let control_commands_value = Arc::clone(&control_commands);
     let controls_value = Arc::clone(&camera_controls);
+    let settings_value = Arc::clone(&settings);
+    let save_value = Arc::clone(&camera_settings_save);
     let weak_value = main_window.as_weak();
     main_window.on_set_camera_control_value(move |key, requested| {
         let Some(win) = weak_value.upgrade() else {
@@ -3714,13 +4037,19 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         let Some(value) = snap_integer_control_value(&state.descriptor, requested) else {
             return;
         };
+        if state.value == value {
+            return;
+        }
         state.value = value.clone();
-        control_commands_value.set_control(state.descriptor.id.clone(), value);
+        control_commands_value.set_control(state.descriptor.id.clone(), value.clone());
+        remember_camera_control_value(&settings_value, &save_value, &state.key, &value);
         set_camera_control_model(&win, &controls);
     });
 
     let control_commands_bool = Arc::clone(&control_commands);
     let controls_bool = Arc::clone(&camera_controls);
+    let settings_bool = Arc::clone(&settings);
+    let save_bool = Arc::clone(&camera_settings_save);
     let weak_bool = main_window.as_weak();
     main_window.on_set_camera_control_bool(move |key, requested| {
         let Some(win) = weak_bool.upgrade() else {
@@ -3738,13 +4067,19 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             return;
         }
         let value = CameraControlValue::Boolean(requested);
+        if state.value == value {
+            return;
+        }
         state.value = value.clone();
-        control_commands_bool.set_control(state.descriptor.id.clone(), value);
+        control_commands_bool.set_control(state.descriptor.id.clone(), value.clone());
+        remember_camera_control_value(&settings_bool, &save_bool, &state.key, &value);
         set_camera_control_model(&win, &controls);
     });
 
     let control_commands_menu = Arc::clone(&control_commands);
     let controls_menu = Arc::clone(&camera_controls);
+    let settings_menu = Arc::clone(&settings);
+    let save_menu = Arc::clone(&camera_settings_save);
     let weak_menu = main_window.as_weak();
     main_window.on_cycle_camera_control_menu(move |key| {
         let Some(win) = weak_menu.upgrade() else {
@@ -3778,12 +4113,15 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         let next = items[(current_index + 1) % items.len()].value;
         let value = CameraControlValue::Menu(next);
         state.value = value.clone();
-        control_commands_menu.set_control(state.descriptor.id.clone(), value);
+        control_commands_menu.set_control(state.descriptor.id.clone(), value.clone());
+        remember_camera_control_value(&settings_menu, &save_menu, &state.key, &value);
         set_camera_control_model(&win, &controls);
     });
 
     let control_commands_reset = Arc::clone(&control_commands);
     let controls_reset = Arc::clone(&camera_controls);
+    let settings_reset = Arc::clone(&settings);
+    let save_reset = Arc::clone(&camera_settings_save);
     let weak_reset = main_window.as_weak();
     main_window.on_reset_camera_controls(move || {
         let Some(win) = weak_reset.upgrade() else {
@@ -3798,6 +4136,13 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             set_camera_control_model(&win, &controls);
         }
         control_commands_reset.reset_controls();
+        if let Ok(mut settings) = settings_reset.lock()
+            && !settings.camera_control_values.is_empty()
+        {
+            settings.camera_control_values.clear();
+            drop(settings);
+            save_reset.mark_dirty();
+        }
     });
 
     // Persistent application settings
@@ -4075,5 +4420,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     let _ = photo_worker.join();
     library_mailbox.close();
     let _ = library_worker.join();
+    camera_settings_save.close();
+    let _ = camera_settings_save_worker.join();
     Ok(())
 }

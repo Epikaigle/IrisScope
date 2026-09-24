@@ -1,6 +1,7 @@
 //! Persistent application settings.
 
 use std::{
+    collections::BTreeMap,
     fs,
     io::{self, Write},
     path::{Path, PathBuf},
@@ -35,6 +36,18 @@ pub enum AppTheme {
     Dark,
 }
 
+/// An image control value saved independently of the camera backend.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+pub enum SavedCameraControlValue {
+    /// A bounded integer control.
+    Integer(i64),
+    /// An on/off control.
+    Boolean(bool),
+    /// A value chosen from the camera's menu.
+    Menu(i64),
+}
+
 /// Application settings persisted across restarts.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct AppSettings {
@@ -52,6 +65,9 @@ pub struct AppSettings {
     /// Optional image containing iridology signs/symbols used as a visual reference.
     #[serde(default)]
     pub iridology_symbols_path: Option<PathBuf>,
+    /// Values selected for writable image controls, indexed by stable control key.
+    #[serde(default)]
+    pub camera_control_values: BTreeMap<String, SavedCameraControlValue>,
 }
 
 impl Default for AppSettings {
@@ -68,6 +84,7 @@ impl Default for AppSettings {
             theme: AppTheme::default(),
             iridology_map_path: None,
             iridology_symbols_path: None,
+            camera_control_values: BTreeMap::new(),
         }
     }
 }
@@ -126,7 +143,7 @@ impl AppSettings {
 mod tests {
     use std::{fs, time::SystemTime};
 
-    use super::AppSettings;
+    use super::{AppSettings, SavedCameraControlValue};
 
     #[test]
     fn settings_roundtrip_preserves_values() {
@@ -136,14 +153,19 @@ mod tests {
             .as_nanos();
         let path = std::env::temp_dir().join(format!("iriscope_settings_{unique}.json"));
 
-        let settings = AppSettings {
+        let mut settings = AppSettings {
             filename_template: "test_{date}".to_string(),
             ..AppSettings::default()
         };
+        settings.camera_control_values.insert(
+            "standard:Brightness".to_owned(),
+            SavedCameraControlValue::Integer(42),
+        );
         settings.save_to_file(&path).expect("save settings");
 
         let loaded = AppSettings::load_from_file(&path);
         assert_eq!(loaded.filename_template, "test_{date}");
+        assert_eq!(loaded.camera_control_values, settings.camera_control_values);
         let replacement = AppSettings {
             filename_template: "autre_{prenom}_{nom}_{oeil}".to_string(),
             ..AppSettings::default()
@@ -152,5 +174,16 @@ mod tests {
         let loaded = AppSettings::load_from_file(&path);
         assert_eq!(loaded.filename_template, replacement.filename_template);
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn settings_without_camera_controls_load_with_empty_values() {
+        let mut legacy = serde_json::to_value(AppSettings::default()).expect("serialize settings");
+        legacy
+            .as_object_mut()
+            .expect("object")
+            .remove("camera_control_values");
+        let loaded: AppSettings = serde_json::from_value(legacy).expect("load legacy settings");
+        assert!(loaded.camera_control_values.is_empty());
     }
 }
