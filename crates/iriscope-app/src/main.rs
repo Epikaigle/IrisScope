@@ -1326,31 +1326,39 @@ fn run_diagnose() {
     }
 }
 
-fn load_full_image(path: &std::path::Path) -> Option<slint::Image> {
-    let bytes = std::fs::read(path).ok()?;
-    let (width, height, rgb) = decode_image_to_rgb8(&bytes).ok()?;
-    let pixels = SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(&rgb, width, height);
-    Some(slint::Image::from_rgb8(pixels))
-}
-
-fn apply_reference_images(win: &MainWindow, settings: &AppSettings) {
-    if let Some(path) = settings.iridology_map_path.as_deref()
-        && let Some(image) = load_full_image(path)
-    {
-        win.set_iridology_map_image(image);
-        win.set_has_iridology_map(true);
-    } else {
-        win.set_has_iridology_map(false);
-    }
-
-    if let Some(path) = settings.iridology_symbols_path.as_deref()
-        && let Some(image) = load_full_image(path)
-    {
-        win.set_iridology_symbols_image(image);
-        win.set_has_iridology_symbols(true);
-    } else {
-        win.set_has_iridology_symbols(false);
-    }
+fn load_saved_reference_in_background(
+    weak: slint::Weak<MainWindow>,
+    path: std::path::PathBuf,
+    generation: Arc<AtomicU64>,
+    is_map: bool,
+) {
+    thread::spawn(move || {
+        let pixels = std::fs::read(&path)
+            .ok()
+            .and_then(|bytes| decode_image_to_rgb8(&bytes).ok())
+            .map(|(width, height, rgb)| {
+                SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(&rgb, width, height)
+            });
+        if generation.load(Ordering::Acquire) != 0 {
+            return;
+        }
+        let _ = weak.upgrade_in_event_loop(move |win| {
+            if generation.load(Ordering::Acquire) != 0 {
+                return;
+            }
+            if is_map {
+                win.set_has_iridology_map(pixels.is_some());
+                win.set_iridology_map_image(
+                    pixels.map_or_else(slint::Image::default, slint::Image::from_rgb8),
+                );
+            } else {
+                win.set_has_iridology_symbols(pixels.is_some());
+                win.set_iridology_symbols_image(
+                    pixels.map_or_else(slint::Image::default, slint::Image::from_rgb8),
+                );
+            }
+        });
+    });
 }
 
 fn load_thumbnail(path: &std::path::Path) -> Option<DecodedFrame> {
@@ -2716,8 +2724,9 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             .map_or_else(String::new, |path| path.to_string_lossy().into_owned())
             .into(),
     );
-    apply_reference_images(&main_window, &loaded_settings);
     let settings = Arc::new(Mutex::new(loaded_settings));
+    let map_generation = Arc::new(AtomicU64::new(0));
+    let symbols_generation = Arc::new(AtomicU64::new(0));
     let latest_frame = Arc::new(LatestFrame::new());
     let decode_mailbox = Arc::new(DecodeMailbox::default());
     let stream_generation = Arc::new(AtomicU64::new(0));
@@ -3888,12 +3897,12 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     let settings_map = Arc::clone(&settings);
     let settings_path_map = settings_path.clone();
     let weak_map = main_window.as_weak();
-    let map_generation = Arc::new(AtomicU64::new(0));
+    let map_generation_callback = Arc::clone(&map_generation);
     main_window.on_update_iridology_map_path(move |value| {
         let Some(win) = weak_map.upgrade() else {
             return;
         };
-        let generation = map_generation
+        let generation = map_generation_callback
             .fetch_add(1, Ordering::AcqRel)
             .wrapping_add(1);
         let value = value.trim();
@@ -3915,7 +3924,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         let weak = weak_map.clone();
         let settings = Arc::clone(&settings_map);
         let settings_path = settings_path_map.clone();
-        let current_generation = Arc::clone(&map_generation);
+        let current_generation = Arc::clone(&map_generation_callback);
         thread::spawn(move || {
             let pixels = std::fs::read(&path)
                 .ok()
@@ -3949,12 +3958,12 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     let settings_symbols = Arc::clone(&settings);
     let settings_path_symbols = settings_path.clone();
     let weak_symbols = main_window.as_weak();
-    let symbols_generation = Arc::new(AtomicU64::new(0));
+    let symbols_generation_callback = Arc::clone(&symbols_generation);
     main_window.on_update_iridology_symbols_path(move |value| {
         let Some(win) = weak_symbols.upgrade() else {
             return;
         };
-        let generation = symbols_generation
+        let generation = symbols_generation_callback
             .fetch_add(1, Ordering::AcqRel)
             .wrapping_add(1);
         let value = value.trim();
@@ -3976,7 +3985,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         let weak = weak_symbols.clone();
         let settings = Arc::clone(&settings_symbols);
         let settings_path = settings_path_symbols.clone();
-        let current_generation = Arc::clone(&symbols_generation);
+        let current_generation = Arc::clone(&symbols_generation_callback);
         thread::spawn(move || {
             let pixels = std::fs::read(&path)
                 .ok()
@@ -4035,6 +4044,24 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             );
         }
     });
+
+    let initial_settings = settings_snapshot(&settings);
+    if let Some(path) = initial_settings.iridology_map_path {
+        load_saved_reference_in_background(
+            main_window.as_weak(),
+            path,
+            Arc::clone(&map_generation),
+            true,
+        );
+    }
+    if let Some(path) = initial_settings.iridology_symbols_path {
+        load_saved_reference_in_background(
+            main_window.as_weak(),
+            path,
+            Arc::clone(&symbols_generation),
+            false,
+        );
+    }
 
     main_window.run()?;
     viewer_generation.fetch_add(1, Ordering::AcqRel);
