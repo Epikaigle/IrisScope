@@ -17,13 +17,14 @@ use iriscope_core::{
     capture::LatestFrame,
     library::{
         CaptureKind, LibraryFilter, present_library_items, record_capture_metadata,
-        scan_library_directory,
+        try_scan_library_directory,
     },
     session::{CaptureSession, Eye},
     settings::{AppSettings, PhysicalButtonBehavior},
     storage::{
         CaptureNamingPolicy, CaptureTimestamp, DEFAULT_FILENAME_TEMPLATE,
-        filename_template_preserves_identity, save_new_capture,
+        filename_template_preserves_identity, filename_template_uses_supported_tokens,
+        save_new_capture,
     },
     video::{AviMjpegReader, AviMjpegWriter},
 };
@@ -52,6 +53,9 @@ const MAX_QUEUED_RECORDING_FRAMES: usize = 8;
 const MAX_QUEUED_PHOTOS: usize = 2;
 const MAX_THUMBNAIL_CACHE_BYTES: usize = 128 * 1024 * 1024;
 const LIBRARY_PAGE_SIZE: usize = 100;
+const NOTICE_INFO: i32 = 0;
+const NOTICE_SUCCESS: i32 = 1;
+const NOTICE_ERROR: i32 = 2;
 type DecodedFrame = (u32, u32, Vec<u8>);
 
 struct ViewerSeekState {
@@ -255,6 +259,22 @@ fn camera_error_status(kind: CameraErrorKind) -> &'static str {
     }
 }
 
+fn show_capture_notice(win: &MainWindow, message: impl Into<slint::SharedString>, tone: i32) {
+    let revision = win.get_capture_notice_revision().wrapping_add(1);
+    win.set_capture_notice_revision(revision);
+    win.set_capture_notice_tone(tone);
+    win.set_last_capture_message(message.into());
+    win.set_show_last_capture(true);
+    let weak = win.as_weak();
+    slint::Timer::single_shot(Duration::from_secs(4), move || {
+        if let Some(win) = weak.upgrade()
+            && win.get_capture_notice_revision() == revision
+        {
+            win.set_show_last_capture(false);
+        }
+    });
+}
+
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn format_playback_time(seconds: f64) -> String {
     let total_seconds = seconds.max(0.0).floor() as u64;
@@ -338,6 +358,7 @@ impl ViewerRuntime {
             if let Some((width, height, rgb)) = decoded {
                 let pixels = SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(&rgb, width, height);
                 viewer.set_viewer_image(slint::Image::from_rgb8(pixels));
+                viewer.set_viewer_loading(false);
                 viewer.set_viewer_is_video(false);
                 viewer.set_viewer_video_playing(false);
                 viewer.set_viewer_video_progress(0.0);
@@ -345,8 +366,9 @@ impl ViewerRuntime {
                 viewer.set_viewer_video_duration("00:00".into());
                 viewer.set_viewer_open(true);
             } else {
-                viewer.set_last_capture_message("Image illisible ou indisponible.".into());
-                viewer.set_show_last_capture(true);
+                viewer.set_viewer_loading(false);
+                viewer.set_viewer_open(false);
+                show_capture_notice(&viewer, "Image illisible ou indisponible.", NOTICE_ERROR);
             }
         });
     }
@@ -354,14 +376,7 @@ impl ViewerRuntime {
     fn open_video(&self, request: &ViewerOpenRequest) {
         let generation = request.generation;
         let Ok(mut reader) = AviMjpegReader::open(&request.path) else {
-            let generation_state = Arc::clone(&self.generation);
-            let _ = self.weak.upgrade_in_event_loop(move |viewer| {
-                if generation_state.load(Ordering::Acquire) == generation {
-                    viewer
-                        .set_last_capture_message("Vidéo AVI illisible ou non compatible.".into());
-                    viewer.set_show_last_capture(true);
-                }
-            });
+            self.schedule_video_open_error(generation);
             return;
         };
 
@@ -370,11 +385,31 @@ impl ViewerRuntime {
         }
         let frame_count = reader.frame_count();
         let fps = reader.frame_rate().frames_per_second().max(0.5);
+        let first_frame = reader.read_frame(0).ok().and_then(|jpeg| {
+            let jpeg = ensure_jpeg_has_dht(&jpeg);
+            decode_mjpeg_to_rgb8(&jpeg).ok()
+        });
+        let Some(first_frame) = first_frame else {
+            self.schedule_video_open_error(generation);
+            return;
+        };
         self.schedule_video_start(generation, frame_count, fps);
+        let initial_seek_epoch = self
+            .seek
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .epoch;
+        self.publish_video_frame(ViewerDisplayFrame {
+            generation,
+            seek_epoch: initial_seek_epoch,
+            pixels: first_frame,
+            progress: 0.0,
+            position: "00:00".to_owned(),
+        });
 
         let frame_duration = Duration::from_secs_f64(1.0 / fps);
-        let mut frame_index = 0_usize;
-        let mut frame_attempted = false;
+        let mut frame_index = 1 % frame_count;
+        let mut frame_attempted = true;
         while self.generation.load(Ordering::Acquire) == generation {
             let (requested_seek, seek_epoch) = {
                 let mut seek = self
@@ -436,6 +471,21 @@ impl ViewerRuntime {
         self.schedule_video_finish(generation);
     }
 
+    fn schedule_video_open_error(&self, generation: u64) {
+        let generation_state = Arc::clone(&self.generation);
+        let _ = self.weak.upgrade_in_event_loop(move |viewer| {
+            if generation_state.load(Ordering::Acquire) == generation {
+                viewer.set_viewer_loading(false);
+                viewer.set_viewer_open(false);
+                show_capture_notice(
+                    &viewer,
+                    "Vidéo AVI illisible ou non compatible.",
+                    NOTICE_ERROR,
+                );
+            }
+        });
+    }
+
     fn schedule_video_start(&self, generation: u64, frame_count: usize, fps: f64) {
         let frame_count_u64 = u64::try_from(frame_count).unwrap_or(u64::MAX);
         let setup_generation = Arc::clone(&self.generation);
@@ -447,6 +497,7 @@ impl ViewerRuntime {
             }
             setup_frame_count.store(frame_count_u64, Ordering::Release);
             setup_playing.store(true, Ordering::Release);
+            viewer.set_viewer_loading(false);
             viewer.set_viewer_is_video(true);
             viewer.set_viewer_video_playing(true);
             viewer.set_viewer_video_progress(0.0);
@@ -733,6 +784,7 @@ struct RecordingMailbox {
 struct RecordingMailboxState {
     commands: VecDeque<RecordingCommand>,
     active_generation: Option<u64>,
+    finalizing_generation: Option<u64>,
     next_generation: u64,
     queued_frames: usize,
     dropped_frames: u64,
@@ -740,6 +792,24 @@ struct RecordingMailboxState {
 }
 
 impl RecordingMailbox {
+    fn is_finalizing(&self) -> bool {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .finalizing_generation
+            .is_some()
+    }
+
+    fn finish_finalization(&self, generation: u64) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if state.finalizing_generation == Some(generation) {
+            state.finalizing_generation = None;
+        }
+    }
+
     fn active_generation(&self) -> Option<u64> {
         self.state
             .lock()
@@ -752,7 +822,10 @@ impl RecordingMailbox {
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if state.closed || state.active_generation.is_some() {
+        if state.closed
+            || state.active_generation.is_some()
+            || state.finalizing_generation.is_some()
+        {
             return None;
         }
         state.next_generation = state.next_generation.saturating_add(1);
@@ -793,6 +866,7 @@ impl RecordingMailbox {
         let Some(generation) = state.active_generation.take() else {
             return false;
         };
+        state.finalizing_generation = Some(generation);
         let dropped = state.dropped_frames;
         state
             .commands
@@ -808,7 +882,11 @@ impl RecordingMailbox {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if state.active_generation == Some(generation) {
             state.active_generation = None;
+            state.finalizing_generation = None;
             return true;
+        }
+        if state.finalizing_generation == Some(generation) {
+            state.finalizing_generation = None;
         }
         false
     }
@@ -841,6 +919,7 @@ impl RecordingMailbox {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(generation) = state.active_generation.take() {
+            state.finalizing_generation = Some(generation);
             let dropped = state.dropped_frames;
             state.commands.push_back(RecordingCommand::Stop(
                 generation,
@@ -969,9 +1048,31 @@ fn settings_snapshot(settings: &Arc<Mutex<AppSettings>>) -> AppSettings {
         .map_or_else(|_| AppSettings::default(), |guard| guard.clone())
 }
 
-fn persist_settings(settings: &Arc<Mutex<AppSettings>>, path: &std::path::Path) {
-    if let Ok(guard) = settings.lock() {
-        let _ = guard.save_to_file(path);
+fn persist_settings(
+    settings: &Arc<Mutex<AppSettings>>,
+    path: &std::path::Path,
+) -> std::io::Result<()> {
+    let guard = settings
+        .lock()
+        .map_err(|_| std::io::Error::other("settings lock unavailable"))?;
+    guard.save_to_file(path)
+}
+
+fn settings_error(win: &MainWindow, message: &str) {
+    win.set_settings_feedback_is_error(true);
+    win.set_settings_feedback(message.into());
+}
+
+fn settings_saved(win: &MainWindow, result: std::io::Result<()>, success: &str) {
+    match result {
+        Ok(()) => {
+            win.set_settings_feedback_is_error(false);
+            win.set_settings_feedback(success.into());
+        }
+        Err(error) => settings_error(
+            win,
+            &format!("Appliqué pour cette session, mais impossible d'enregistrer : {error}"),
+        ),
     }
 }
 
@@ -1272,7 +1373,7 @@ struct LibraryItemPayload {
     eye_label: String,
     file_path: String,
     id: String,
-    is_current_session: bool,
+    is_current_patient: bool,
     is_video: bool,
     thumbnail: Option<SharedPixelBuffer<Rgb8Pixel>>,
     title: String,
@@ -1364,6 +1465,7 @@ struct LibraryPagePayloads {
     items: Vec<LibraryItemPayload>,
     total: usize,
     page: usize,
+    error: Option<String>,
 }
 
 fn load_library_payloads(
@@ -1374,7 +1476,19 @@ fn load_library_payloads(
     cache: &mut ThumbnailCache,
     is_current: impl Fn() -> bool,
 ) -> Option<LibraryPagePayloads> {
-    let raw_entries = scan_library_directory(dir);
+    let raw_entries = match try_scan_library_directory(dir) {
+        Ok(entries) => entries,
+        Err(error) => {
+            return Some(LibraryPagePayloads {
+                items: Vec::new(),
+                total: 0,
+                page: 0,
+                error: Some(format!(
+                    "Impossible de lire le dossier des captures : {error}"
+                )),
+            });
+        }
+    };
     if !is_current() {
         return None;
     }
@@ -1389,7 +1503,7 @@ fn load_library_payloads(
         .filter(|item| match filter {
             1 => item.kind == CaptureKind::Photo,
             2 => item.kind == CaptureKind::Video,
-            3 => item.is_current_session,
+            3 => item.is_current_patient,
             _ => true,
         })
         .collect::<Vec<_>>();
@@ -1416,7 +1530,7 @@ fn load_library_payloads(
             eye_label: item.eye_label,
             file_path: item.file_path.to_string_lossy().to_string(),
             id: (start + idx).to_string(),
-            is_current_session: item.is_current_session,
+            is_current_patient: item.is_current_patient,
             is_video: matches!(item.kind, CaptureKind::Video),
             thumbnail,
             title: item.display_title,
@@ -1426,6 +1540,7 @@ fn load_library_payloads(
         items: payloads,
         total,
         page,
+        error: None,
     })
 }
 
@@ -1443,7 +1558,7 @@ fn present_library_payloads(payloads: Vec<LibraryItemPayload>) -> Vec<LibraryIte
                 file_path: item.file_path.into(),
                 has_thumbnail,
                 id: item.id.into(),
-                is_current_session: item.is_current_session,
+                is_current_patient: item.is_current_patient,
                 is_video: item.is_video,
                 thumbnail,
                 title: item.title.into(),
@@ -1456,6 +1571,7 @@ fn clear_library_view(win: &MainWindow) {
     win.set_library_items(ModelRc::new(VecModel::from(Vec::new())));
     win.set_library_total_count(0);
     win.set_library_page_summary("".into());
+    win.set_library_error("".into());
     win.set_library_loading(true);
 }
 
@@ -2043,6 +2159,7 @@ fn run_library_worker(
             win.set_library_total_count(i32::try_from(result.total).unwrap_or(i32::MAX));
             win.set_library_page(i32::try_from(result.page).unwrap_or(i32::MAX));
             win.set_library_page_summary(summary.into());
+            win.set_library_error(result.error.unwrap_or_default().into());
             win.set_library_loading(false);
         });
     }
@@ -2116,7 +2233,6 @@ fn run_photo_worker(
     weak: &slint::Weak<MainWindow>,
     settings: &Arc<Mutex<AppSettings>>,
     active_session: &Arc<Mutex<CaptureSession>>,
-    last_toast_time: &Arc<Mutex<Option<Instant>>>,
     library_mailbox: &LibraryRefreshMailbox,
     context_generation: &Arc<AtomicU64>,
 ) {
@@ -2127,7 +2243,6 @@ fn run_photo_worker(
         }
         let settings_for_ui = Arc::clone(settings);
         let session_for_ui = Arc::clone(active_session);
-        let toast_for_ui = Arc::clone(last_toast_time);
         let generation_for_ui = Arc::clone(context_generation);
         let _ = weak.upgrade_in_event_loop(move |win| {
             if generation_for_ui.load(Ordering::Acquire) != request.context_generation
@@ -2150,21 +2265,20 @@ fn run_photo_worker(
                         .file_name()
                         .and_then(|name| name.to_str())
                         .unwrap_or("photo");
+                    win.set_has_last_capture_thumbnail(photo.thumbnail.is_some());
                     if let Some(pixels) = photo.thumbnail {
                         win.set_last_capture_thumbnail(slint::Image::from_rgb8(pixels));
-                        win.set_has_last_capture(true);
-                        win.set_last_capture_file_name(display_name.into());
-                        win.set_last_capture_path(photo.path.to_string_lossy().to_string().into());
                     }
-                    win.set_last_capture_message(
-                        format!("✓ Photo #{count} enregistrée : {display_name}").into(),
+                    win.set_has_last_capture(true);
+                    win.set_last_capture_file_name(display_name.into());
+                    win.set_last_capture_path(photo.path.to_string_lossy().to_string().into());
+                    show_capture_notice(
+                        &win,
+                        format!("Photo #{count} enregistrée : {display_name}"),
+                        NOTICE_SUCCESS,
                     );
                 }
-                Err(error) => win.set_last_capture_message(error.into()),
-            }
-            win.set_show_last_capture(true);
-            if let Ok(mut toast) = toast_for_ui.lock() {
-                *toast = Some(Instant::now());
+                Err(error) => show_capture_notice(&win, error, NOTICE_ERROR),
             }
         });
     }
@@ -2178,7 +2292,6 @@ fn run_recording_worker(
     settings: &Arc<Mutex<AppSettings>>,
     active_session: &Arc<Mutex<CaptureSession>>,
     recording_start: &Arc<Mutex<Option<Instant>>>,
-    last_toast_time: &Arc<Mutex<Option<Instant>>>,
 ) {
     let mut active: Option<ActiveRecording> = None;
     while let Some(command) = mailbox.receive() {
@@ -2201,33 +2314,6 @@ fn run_recording_worker(
                         ) {
                             eprintln!("[IrisScope] Index bibliothèque non mis à jour : {error}");
                         }
-                        let path_for_ui = saved_path.clone();
-                        let mailbox_for_ui = Arc::clone(mailbox);
-                        let settings_for_ui = Arc::clone(settings);
-                        let active_session_for_ui = Arc::clone(active_session);
-                        let directory_for_ui = request.directory.clone();
-                        let session_for_ui = request.session.clone();
-                        let _ = weak.upgrade_in_event_loop(move |win| {
-                            let form_session = capture_session_from_window(&win).ok();
-                            if mailbox_for_ui.active_generation() == Some(generation)
-                                && recording_context_matches(
-                                    &settings_for_ui,
-                                    &active_session_for_ui,
-                                    &directory_for_ui,
-                                    &session_for_ui,
-                                    form_session.as_ref(),
-                                )
-                            {
-                                win.set_last_capture_path(
-                                    path_for_ui.to_string_lossy().to_string().into(),
-                                );
-                                if let Some(name) =
-                                    path_for_ui.file_name().and_then(|value| value.to_str())
-                                {
-                                    win.set_last_capture_file_name(name.into());
-                                }
-                            }
-                        });
                         active = Some(ActiveRecording {
                             generation,
                             writer,
@@ -2251,9 +2337,9 @@ fn run_recording_worker(
                                     *start = None;
                                 }
                                 win.set_is_recording(false);
+                                win.set_recording_finalizing(false);
                                 win.set_recording_duration("00:00".into());
-                                win.set_last_capture_message(message.into());
-                                win.set_show_last_capture(true);
+                                show_capture_notice(&win, message, NOTICE_ERROR);
                             }
                         });
                     }
@@ -2299,6 +2385,7 @@ fn run_recording_worker(
                     .as_ref()
                     .is_none_or(|recording| recording.generation != generation)
                 {
+                    mailbox.finish_finalization(generation);
                     continue;
                 }
                 let mut recording = active.take().expect("matching active recording");
@@ -2313,6 +2400,7 @@ fn run_recording_worker(
                 let result = recording
                     .error
                     .or_else(|| finish_result.err().map(|error| error.to_string()));
+                let success = result.is_none() && recording.written_frames > 0;
                 let message = if let Some(error) = result {
                     format!("Erreur de finalisation vidéo : {error}")
                 } else if recording.written_frames == 0 {
@@ -2333,37 +2421,68 @@ fn run_recording_worker(
                         format!("{prefix} ({dropped_frames} images ignorées)")
                     }
                 };
-                if let Ok(mut toast) = last_toast_time.lock() {
-                    *toast = Some(Instant::now());
-                }
                 let mailbox_for_ui = Arc::clone(mailbox);
                 let path_for_ui = recording.saved_path;
+                let thumbnail = if success {
+                    load_video_thumbnail(&path_for_ui).map(|(width, height, rgb)| {
+                        SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(&rgb, width, height)
+                    })
+                } else {
+                    None
+                };
                 let settings_for_ui = Arc::clone(settings);
                 let active_session_for_ui = Arc::clone(active_session);
                 let directory_for_ui = recording.directory;
                 let session_for_ui = recording.session;
-                let _ = weak.upgrade_in_event_loop(move |win| {
-                    let form_session = capture_session_from_window(&win).ok();
-                    if mailbox_for_ui.active_generation().is_none()
-                        && recording_context_matches(
-                            &settings_for_ui,
-                            &active_session_for_ui,
-                            &directory_for_ui,
-                            &session_for_ui,
-                            form_session.as_ref(),
-                        )
-                    {
-                        win.set_is_recording(false);
-                        win.set_recording_duration("00:00".into());
-                        win.set_last_capture_path(path_for_ui.to_string_lossy().to_string().into());
-                        if let Some(name) = path_for_ui.file_name().and_then(|value| value.to_str())
-                        {
-                            win.set_last_capture_file_name(name.into());
+                let mailbox_if_ui_closed = Arc::clone(mailbox);
+                if weak
+                    .upgrade_in_event_loop(move |win| {
+                        mailbox_for_ui.finish_finalization(generation);
+                        let form_session = capture_session_from_window(&win).ok();
+                        if mailbox_for_ui.active_generation().is_none() {
+                            win.set_recording_finalizing(false);
                         }
-                        win.set_last_capture_message(message.into());
-                        win.set_show_last_capture(true);
-                    }
-                });
+                        if mailbox_for_ui.active_generation().is_none()
+                            && recording_context_matches(
+                                &settings_for_ui,
+                                &active_session_for_ui,
+                                &directory_for_ui,
+                                &session_for_ui,
+                                form_session.as_ref(),
+                            )
+                        {
+                            win.set_is_recording(false);
+                            win.set_recording_duration("00:00".into());
+                            if success {
+                                win.set_last_capture_path(
+                                    path_for_ui.to_string_lossy().to_string().into(),
+                                );
+                                if let Some(name) =
+                                    path_for_ui.file_name().and_then(|value| value.to_str())
+                                {
+                                    win.set_last_capture_file_name(name.into());
+                                }
+                                win.set_has_last_capture_thumbnail(thumbnail.is_some());
+                                if let Some(pixels) = thumbnail {
+                                    win.set_last_capture_thumbnail(slint::Image::from_rgb8(pixels));
+                                }
+                                win.set_has_last_capture(true);
+                            }
+                            show_capture_notice(
+                                &win,
+                                message,
+                                if success {
+                                    NOTICE_SUCCESS
+                                } else {
+                                    NOTICE_ERROR
+                                },
+                            );
+                        }
+                    })
+                    .is_err()
+                {
+                    mailbox_if_ui_closed.finish_finalization(generation);
+                }
                 refresh_library_in_background(library_mailbox, settings, active_session);
             }
         }
@@ -2436,6 +2555,11 @@ mod recording_pipeline_tests {
             Some(RecordingCommand::Stop(id, RecordingStopReason::User, 2)) if id == generation
         ));
         assert!(mailbox.active_generation().is_none());
+        assert!(mailbox.is_finalizing());
+        assert!(mailbox.start(request()).is_none());
+        mailbox.finish_finalization(generation);
+        assert!(!mailbox.is_finalizing());
+        assert!(mailbox.start(request()).is_some());
     }
 
     #[test]
@@ -2556,10 +2680,17 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     let main_window = MainWindow::new()?;
     let settings_path = settings_file_path();
     let mut loaded_settings = AppSettings::load_from_file(&settings_path);
-    if !filename_template_preserves_identity(&loaded_settings.filename_template) {
+    if !filename_template_preserves_identity(&loaded_settings.filename_template)
+        || !filename_template_uses_supported_tokens(&loaded_settings.filename_template)
+    {
         DEFAULT_FILENAME_TEMPLATE.clone_into(&mut loaded_settings.filename_template);
     }
-    let _ = loaded_settings.save_to_file(&settings_path);
+    if let Err(error) = loaded_settings.save_to_file(&settings_path) {
+        settings_error(
+            &main_window,
+            &format!("Impossible d'enregistrer les paramètres : {error}"),
+        );
+    }
     main_window.set_settings_capture_directory(
         loaded_settings
             .capture_directory
@@ -2603,7 +2734,6 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     let photo_context_generation = Arc::new(AtomicU64::new(0));
     let active_session = Arc::new(Mutex::new(CaptureSession::default()));
     let recording_start: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
-    let last_toast_time: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
     let frozen_frame: Arc<Mutex<Option<CapturedFrame>>> = Arc::new(Mutex::new(None));
     let viewer_generation = Arc::new(AtomicU64::new(0));
     let viewer_video_playing = Arc::new(AtomicBool::new(false));
@@ -2630,7 +2760,6 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         let weak = main_window.as_weak();
         let settings = Arc::clone(&settings);
         let active_session = Arc::clone(&active_session);
-        let last_toast_time = Arc::clone(&last_toast_time);
         let library_mailbox = Arc::clone(&library_mailbox);
         let context_generation = Arc::clone(&photo_context_generation);
         move || {
@@ -2639,7 +2768,6 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 &weak,
                 &settings,
                 &active_session,
-                &last_toast_time,
                 &library_mailbox,
                 &context_generation,
             );
@@ -2653,7 +2781,6 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         let settings = Arc::clone(&settings);
         let active_session = Arc::clone(&active_session);
         let recording_start = Arc::clone(&recording_start);
-        let last_toast_time = Arc::clone(&last_toast_time);
         move || {
             run_recording_worker(
                 &mailbox,
@@ -2662,7 +2789,6 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 &settings,
                 &active_session,
                 &recording_start,
-                &last_toast_time,
             );
         }
     });
@@ -2747,7 +2873,6 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     let dropped_decode_frames_camera = Arc::clone(&dropped_decode_frames);
     let recording_mailbox_camera = Arc::clone(&recording_mailbox);
     let rec_start_clone = Arc::clone(&recording_start);
-    let toast_clone = Arc::clone(&last_toast_time);
     let active_stream_configuration_worker = Arc::clone(&active_stream_configuration);
     let camera_controls_worker = Arc::clone(&camera_controls);
     let control_commands_worker = Arc::clone(&control_commands);
@@ -2965,16 +3090,6 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                                     format!("{:02}:{:02}", el / 60, el % 60)
                                 });
 
-                            let should_hide_toast = toast_clone
-                                .lock()
-                                .ok()
-                                .and_then(|g| *g)
-                                .is_some_and(|st| st.elapsed() >= Duration::from_secs(4));
-
-                            if should_hide_toast && let Ok(mut g) = toast_clone.lock() {
-                                *g = None;
-                            }
-
                             let _ = main_weak.upgrade_in_event_loop(move |win| {
                                 let mut diag = win.get_diagnostics();
                                 diag.measured_fps = format!("{fps:.2} fps").into();
@@ -2986,9 +3101,6 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
 
                                 if let Some(dur) = rec_dur_str {
                                     win.set_recording_duration(dur.into());
-                                }
-                                if should_hide_toast {
-                                    win.set_show_last_capture(false);
                                 }
                             });
                         }
@@ -3023,6 +3135,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                             controls.clear();
                         }
                         let ui_generation = Arc::clone(&stream_generation_camera);
+                        let recording_mailbox_for_ui = Arc::clone(&recording_mailbox_camera);
                         let _ = main_weak.upgrade_in_event_loop(move |win| {
                             if ui_generation.load(Ordering::Acquire) != disconnected_generation {
                                 return;
@@ -3030,6 +3143,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                             win.set_camera_connected(false);
                             win.set_is_streaming(false);
                             win.set_is_recording(false);
+                            win.set_recording_finalizing(recording_mailbox_for_ui.is_finalizing());
                             win.set_is_frozen(false);
                             win.set_live_frame(slint::Image::default());
                             win.set_recording_duration("00:00".into());
@@ -3077,6 +3191,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                             )
                         };
                         let ui_generation = Arc::clone(&stream_generation_camera);
+                        let recording_mailbox_for_ui = Arc::clone(&recording_mailbox_camera);
                         let _ = main_weak.upgrade_in_event_loop(move |win| {
                             if ui_generation.load(Ordering::Acquire) != interrupted_generation {
                                 return;
@@ -3084,6 +3199,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                             win.set_camera_connected(false);
                             win.set_is_streaming(false);
                             win.set_is_recording(false);
+                            win.set_recording_finalizing(recording_mailbox_for_ui.is_finalizing());
                             win.set_is_frozen(false);
                             win.set_live_frame(slint::Image::default());
                             win.set_recording_duration("00:00".into());
@@ -3160,6 +3276,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             session_changed_mailbox.set_page(0);
             clear_library_view(&win);
             win.set_has_last_capture(false);
+            win.set_has_last_capture_thumbnail(false);
             win.set_last_capture_thumbnail(slint::Image::default());
             win.set_last_capture_path("".into());
             win.set_last_capture_file_name("".into());
@@ -3183,6 +3300,10 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
 
     main_window.on_trigger_capture(move || {
         let Some(win) = weak.upgrade() else { return };
+        if win.get_recording_finalizing() {
+            show_capture_notice(&win, "Finalisation de la vidéo en cours...", NOTICE_INFO);
+            return;
+        }
         let frame = if win.get_is_frozen() {
             frozen_frame_cap
                 .lock()
@@ -3194,13 +3315,13 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         };
         let Some(frame) = frame else {
             eprintln!("[IrisScope] Capture demandée mais aucune frame caméra disponible");
+            show_capture_notice(&win, "Aucune image caméra disponible.", NOTICE_ERROR);
             return;
         };
         let session = match capture_session_from_window(&win) {
             Ok(session) => session,
             Err(message) => {
-                win.set_last_capture_message(message.into());
-                win.set_show_last_capture(true);
+                show_capture_notice(&win, message, NOTICE_ERROR);
                 return;
             }
         };
@@ -3214,10 +3335,11 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             context_generation: context_generation_cap.load(Ordering::Acquire),
         };
         if !photo_mailbox_cap.enqueue(request) {
-            win.set_last_capture_message(
-                "Traitement photo en cours : réessayez dans un instant.".into(),
+            show_capture_notice(
+                &win,
+                "Traitement photo en cours : réessayez dans un instant.",
+                NOTICE_INFO,
             );
-            win.set_show_last_capture(true);
             return;
         }
         let changed = if let Ok(mut current) = session_cap.lock() {
@@ -3261,7 +3383,6 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     let settings_rec = Arc::clone(&settings);
     let session_rec = Arc::clone(&active_session);
     let rec_start_rec = Arc::clone(&recording_start);
-    let toast_rec = Arc::clone(&last_toast_time);
     let active_stream_configuration_rec = Arc::clone(&active_stream_configuration);
     let latest_frame_rec = Arc::clone(&latest_frame);
 
@@ -3269,30 +3390,38 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         let Some(win) = weak_rec.upgrade() else {
             return;
         };
+        if win.get_recording_finalizing() {
+            show_capture_notice(&win, "Finalisation de la vidéo en cours...", NOTICE_INFO);
+            return;
+        }
         let currently_recording = recording_mailbox_rec.active_generation().is_some();
         let recording_settings = settings_snapshot(&settings_rec);
 
         if currently_recording {
             // Stop recording
-            stop_recording(
+            let stopped = stop_recording(
                 &recording_mailbox_rec,
                 &rec_start_rec,
                 RecordingStopReason::User,
             );
             win.set_is_recording(false);
+            win.set_recording_finalizing(stopped);
             win.set_recording_duration("00:00".into());
-            win.set_last_capture_message("Finalisation de la vidéo en cours...".into());
-            win.set_show_last_capture(true);
-            if let Ok(mut g) = toast_rec.lock() {
-                *g = Some(Instant::now());
-            }
+            show_capture_notice(
+                &win,
+                if stopped {
+                    "Finalisation de la vidéo en cours..."
+                } else {
+                    "La vidéo est déjà arrêtée."
+                },
+                NOTICE_INFO,
+            );
         } else {
             // Start recording
             let session = match capture_session_from_window(&win) {
                 Ok(session) => session,
                 Err(message) => {
-                    win.set_last_capture_message(message.into());
-                    win.set_show_last_capture(true);
+                    show_capture_notice(&win, message, NOTICE_ERROR);
                     return;
                 }
             };
@@ -3305,16 +3434,16 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 .ok()
                 .and_then(|active| active.clone())
             else {
-                win.set_last_capture_message("Erreur vidéo : aucun flux caméra actif".into());
-                win.set_show_last_capture(true);
+                show_capture_notice(&win, "Erreur vidéo : aucun flux caméra actif", NOTICE_ERROR);
                 return;
             };
 
             let Some(current_frame) = latest_frame_rec.snapshot() else {
-                win.set_last_capture_message(
-                    "Erreur vidéo : aucune frame caméra disponible".into(),
+                show_capture_notice(
+                    &win,
+                    "Erreur vidéo : aucune frame caméra disponible",
+                    NOTICE_ERROR,
                 );
-                win.set_show_last_capture(true);
                 return;
             };
             let timestamp = CaptureTimestamp::now();
@@ -3335,7 +3464,10 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                     *g = Some(Instant::now());
                 }
                 win.set_is_recording(true);
+                win.set_recording_finalizing(false);
                 win.set_recording_duration("00:00".into());
+            } else {
+                show_capture_notice(&win, "La vidéo n'a pas pu démarrer.", NOTICE_ERROR);
             }
         }
     });
@@ -3355,6 +3487,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         win.set_selected_eye(0);
         win.set_session_photo_count(0);
         win.set_has_last_capture(false);
+        win.set_has_last_capture_thumbnail(false);
         win.set_last_capture_thumbnail(slint::Image::default());
         win.set_last_capture_path("".into());
         win.set_last_capture_file_name("".into());
@@ -3413,10 +3546,11 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             .to_ascii_lowercase();
         let is_photo = matches!(extension.as_str(), "jpg" | "jpeg" | "png");
         if !is_photo && extension != "avi" {
-            win.set_last_capture_message(
-                "Ce format vidéo n'est pas encore lisible dans IrisScope.".into(),
+            show_capture_notice(
+                &win,
+                "Ce format vidéo n'est pas encore lisible dans IrisScope.",
+                NOTICE_ERROR,
             );
-            win.set_show_last_capture(true);
             return;
         }
 
@@ -3438,6 +3572,10 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             generation,
             is_photo,
         });
+        win.set_viewer_image(slint::Image::default());
+        win.set_viewer_is_video(!is_photo);
+        win.set_viewer_loading(true);
+        win.set_viewer_open(true);
     });
 
     let viewer_generation_close = Arc::clone(&viewer_generation);
@@ -3460,6 +3598,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         }
         if let Some(win) = weak_close_viewer.upgrade() {
             win.set_viewer_image(slint::Image::default());
+            win.set_viewer_loading(false);
             win.set_viewer_is_video(false);
             win.set_viewer_video_playing(false);
             win.set_viewer_video_progress(0.0);
@@ -3663,22 +3802,33 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         let Some(win) = weak_directory.upgrade() else {
             return;
         };
+        if win.get_is_recording() || win.get_recording_finalizing() {
+            settings_error(&win, "Terminez la vidéo avant de changer de dossier.");
+            return;
+        }
         let value = value.trim();
         if value.is_empty() {
+            settings_error(&win, "Indiquez un dossier pour les captures.");
             return;
         }
         let directory = std::path::PathBuf::from(value);
+        if let Err(error) = std::fs::create_dir_all(&directory) {
+            settings_error(&win, &format!("Dossier inaccessible : {error}"));
+            return;
+        }
         let changed = settings_snapshot(&settings_directory).capture_directory != directory;
         if let Ok(mut guard) = settings_directory.lock() {
             guard.capture_directory.clone_from(&directory);
         }
-        persist_settings(&settings_directory, &settings_path_directory);
+        let saved = persist_settings(&settings_directory, &settings_path_directory);
         win.set_settings_capture_directory(directory.to_string_lossy().to_string().into());
+        settings_saved(&win, saved, "Dossier des captures enregistré.");
         if changed {
             photo_generation_directory.fetch_add(1, Ordering::AcqRel);
             library_directory.set_page(0);
             clear_library_view(&win);
             win.set_has_last_capture(false);
+            win.set_has_last_capture_thumbnail(false);
             win.set_last_capture_thumbnail(slint::Image::default());
             win.set_last_capture_path("".into());
             win.set_last_capture_file_name("".into());
@@ -3695,19 +3845,22 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         };
         let value = value.trim();
         if !filename_template_preserves_identity(value) {
-            let current = settings_snapshot(&settings_template).filename_template;
-            win.set_settings_filename_template(current.into());
-            win.set_last_capture_message(
-                "Le modèle doit contenir {prenom}, {nom} et {oeil}.".into(),
+            settings_error(&win, "Le modèle doit contenir {prenom}, {nom} et {oeil}.");
+            return;
+        }
+        if !filename_template_uses_supported_tokens(value) {
+            settings_error(
+                &win,
+                "Jetons autorisés : {prenom}, {nom}, {oeil}, {date}, {heure}.",
             );
-            win.set_show_last_capture(true);
             return;
         }
         if let Ok(mut guard) = settings_template.lock() {
             value.clone_into(&mut guard.filename_template);
         }
-        persist_settings(&settings_template, &settings_path_template);
+        let saved = persist_settings(&settings_template, &settings_path_template);
         win.set_settings_filename_template(value.into());
+        settings_saved(&win, saved, "Modèle de nommage enregistré.");
     });
 
     let settings_button = Arc::clone(&settings);
@@ -3727,65 +3880,160 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             PhysicalButtonBehavior::FollowMode
         };
-        persist_settings(&settings_button, &settings_path_button);
+        let saved = persist_settings(&settings_button, &settings_path_button);
         win.set_settings_button_mode(physical_button_mode_index(next));
+        settings_saved(&win, saved, "Action du bouton enregistrée.");
     });
 
     let settings_map = Arc::clone(&settings);
     let settings_path_map = settings_path.clone();
     let weak_map = main_window.as_weak();
+    let map_generation = Arc::new(AtomicU64::new(0));
     main_window.on_update_iridology_map_path(move |value| {
         let Some(win) = weak_map.upgrade() else {
             return;
         };
+        let generation = map_generation
+            .fetch_add(1, Ordering::AcqRel)
+            .wrapping_add(1);
         let value = value.trim();
         let path = (!value.is_empty()).then(|| std::path::PathBuf::from(value));
-        if let Ok(mut guard) = settings_map.lock() {
-            guard.iridology_map_path.clone_from(&path);
-        }
-        persist_settings(&settings_map, &settings_path_map);
-        win.set_settings_iridology_map_path(
-            path.as_deref()
-                .map_or_else(String::new, |path| path.to_string_lossy().into_owned())
-                .into(),
-        );
-        let snapshot = settings_snapshot(&settings_map);
-        apply_reference_images(&win, &snapshot);
+        let Some(path) = path else {
+            if let Ok(mut guard) = settings_map.lock() {
+                guard.iridology_map_path = None;
+            }
+            let saved = persist_settings(&settings_map, &settings_path_map);
+            win.set_settings_iridology_map_path("".into());
+            win.set_has_iridology_map(false);
+            win.set_iridology_map_image(slint::Image::default());
+            settings_saved(&win, saved, "Carte d'iridologie enregistrée.");
+            return;
+        };
+
+        win.set_settings_feedback_is_error(false);
+        win.set_settings_feedback("Chargement de la carte d'iridologie…".into());
+        let weak = weak_map.clone();
+        let settings = Arc::clone(&settings_map);
+        let settings_path = settings_path_map.clone();
+        let current_generation = Arc::clone(&map_generation);
+        thread::spawn(move || {
+            let pixels = std::fs::read(&path)
+                .ok()
+                .and_then(|bytes| decode_image_to_rgb8(&bytes).ok())
+                .map(|(width, height, rgb)| {
+                    SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(&rgb, width, height)
+                });
+            if current_generation.load(Ordering::Acquire) != generation {
+                return;
+            }
+            let _ = weak.upgrade_in_event_loop(move |win| {
+                if current_generation.load(Ordering::Acquire) != generation {
+                    return;
+                }
+                let Some(pixels) = pixels else {
+                    settings_error(&win, "Carte introuvable ou image illisible.");
+                    return;
+                };
+                if let Ok(mut guard) = settings.lock() {
+                    guard.iridology_map_path = Some(path.clone());
+                }
+                let saved = persist_settings(&settings, &settings_path);
+                win.set_settings_iridology_map_path(path.to_string_lossy().to_string().into());
+                win.set_has_iridology_map(true);
+                win.set_iridology_map_image(slint::Image::from_rgb8(pixels));
+                settings_saved(&win, saved, "Carte d'iridologie enregistrée.");
+            });
+        });
     });
 
     let settings_symbols = Arc::clone(&settings);
     let settings_path_symbols = settings_path.clone();
     let weak_symbols = main_window.as_weak();
+    let symbols_generation = Arc::new(AtomicU64::new(0));
     main_window.on_update_iridology_symbols_path(move |value| {
         let Some(win) = weak_symbols.upgrade() else {
             return;
         };
+        let generation = symbols_generation
+            .fetch_add(1, Ordering::AcqRel)
+            .wrapping_add(1);
         let value = value.trim();
         let path = (!value.is_empty()).then(|| std::path::PathBuf::from(value));
-        if let Ok(mut guard) = settings_symbols.lock() {
-            guard.iridology_symbols_path.clone_from(&path);
-        }
-        persist_settings(&settings_symbols, &settings_path_symbols);
-        win.set_settings_iridology_symbols_path(
-            path.as_deref()
-                .map_or_else(String::new, |path| path.to_string_lossy().into_owned())
-                .into(),
-        );
-        let snapshot = settings_snapshot(&settings_symbols);
-        apply_reference_images(&win, &snapshot);
+        let Some(path) = path else {
+            if let Ok(mut guard) = settings_symbols.lock() {
+                guard.iridology_symbols_path = None;
+            }
+            let saved = persist_settings(&settings_symbols, &settings_path_symbols);
+            win.set_settings_iridology_symbols_path("".into());
+            win.set_has_iridology_symbols(false);
+            win.set_iridology_symbols_image(slint::Image::default());
+            settings_saved(&win, saved, "Planche de signes enregistrée.");
+            return;
+        };
+
+        win.set_settings_feedback_is_error(false);
+        win.set_settings_feedback("Chargement de la planche de signes…".into());
+        let weak = weak_symbols.clone();
+        let settings = Arc::clone(&settings_symbols);
+        let settings_path = settings_path_symbols.clone();
+        let current_generation = Arc::clone(&symbols_generation);
+        thread::spawn(move || {
+            let pixels = std::fs::read(&path)
+                .ok()
+                .and_then(|bytes| decode_image_to_rgb8(&bytes).ok())
+                .map(|(width, height, rgb)| {
+                    SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(&rgb, width, height)
+                });
+            if current_generation.load(Ordering::Acquire) != generation {
+                return;
+            }
+            let _ = weak.upgrade_in_event_loop(move |win| {
+                if current_generation.load(Ordering::Acquire) != generation {
+                    return;
+                }
+                let Some(pixels) = pixels else {
+                    settings_error(&win, "Planche introuvable ou image illisible.");
+                    return;
+                };
+                if let Ok(mut guard) = settings.lock() {
+                    guard.iridology_symbols_path = Some(path.clone());
+                }
+                let saved = persist_settings(&settings, &settings_path);
+                win.set_settings_iridology_symbols_path(path.to_string_lossy().to_string().into());
+                win.set_has_iridology_symbols(true);
+                win.set_iridology_symbols_image(slint::Image::from_rgb8(pixels));
+                settings_saved(&win, saved, "Planche de signes enregistrée.");
+            });
+        });
     });
 
     // Capture directory opener
     let settings_open = Arc::clone(&settings);
+    let weak_open = main_window.as_weak();
     main_window.on_open_capture_directory(move || {
+        let Some(win) = weak_open.upgrade() else {
+            return;
+        };
         let dir = settings_snapshot(&settings_open).capture_directory;
-        let _ = std::fs::create_dir_all(&dir);
-        #[cfg(target_os = "linux")]
-        let _ = std::process::Command::new("xdg-open").arg(&dir).spawn();
-        #[cfg(target_os = "windows")]
-        let _ = std::process::Command::new("explorer").arg(&dir).spawn();
-        #[cfg(target_os = "macos")]
-        let _ = std::process::Command::new("open").arg(&dir).spawn();
+        let result = std::fs::create_dir_all(&dir).and_then(|()| {
+            #[cfg(target_os = "linux")]
+            let command = "xdg-open";
+            #[cfg(target_os = "windows")]
+            let command = "explorer";
+            #[cfg(target_os = "macos")]
+            let command = "open";
+            std::process::Command::new(command)
+                .arg(&dir)
+                .spawn()
+                .map(|_| ())
+        });
+        if let Err(error) = result {
+            show_capture_notice(
+                &win,
+                format!("Impossible d'ouvrir le dossier des captures : {error}"),
+                NOTICE_ERROR,
+            );
+        }
     });
 
     main_window.run()?;

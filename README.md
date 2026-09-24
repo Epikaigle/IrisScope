@@ -90,8 +90,8 @@ La bibliothèque propose actuellement :
 
 - photos et vidéos réunies au même endroit ;
 - miniatures pour les photos et pour les vidéos AVI à partir de leur première image ;
-- filtres Tous / Photos / Vidéos / Session actuelle ;
-- ouverture par défaut sur la session courante lorsqu'une personne est renseignée ;
+- filtres Tous / Photos / Vidéos / Patient sélectionné ;
+- ouverture initiale sur toutes les captures, puis conservation du filtre et de la page entre les onglets ;
 - anonymisation du titre des captures appartenant à d'autres personnes ;
 - index local caché de métadonnées, indépendant du modèle de nom de fichier ;
 - visionneuse photo privée intégrée avec zoom / déplacement ;
@@ -158,6 +158,18 @@ L'application reste limitée à cinq zones principales :
 3. **Bibliothèque**
 4. **Références iris**
 5. **Paramètres & Diagnostic**
+
+### Raccourcis clavier
+
+| Raccourci | Action |
+| --- | --- |
+| `Ctrl+1` à `Ctrl+5` | Ouvrir, dans l'ordre, Caméra, Réglages Image, Bibliothèque, Références iris et Paramètres & Diagnostic |
+| `Ctrl+P` | Prendre une photo depuis l'onglet Caméra |
+| `Ctrl+R` | Démarrer ou arrêter l'enregistrement vidéo depuis l'onglet Caméra |
+| `Ctrl+F` | Figer ou reprendre l'aperçu caméra |
+| `Échap` | Fermer la visionneuse de photo ou de vidéo |
+
+Les raccourcis de capture exigent un flux actif, un prénom, un nom et un œil sélectionné. Ils sont désactivés pendant la saisie dans un champ de texte et lorsque la visionneuse est ouverte. La navigation au clavier avec `Tab` reste disponible pour les contrôles.
 
 IrisScope n'a pas vocation à devenir un logiciel de cabinet médical complet. Le projet évite volontairement les fonctions qui compliqueraient inutilement l'usage : comptes utilisateurs, cloud obligatoire, agenda, facturation, dossiers médicaux complexes, diagnostic automatique ou IA médicale.
 

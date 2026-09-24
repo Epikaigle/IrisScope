@@ -78,6 +78,25 @@ pub fn filename_template_preserves_identity(template: &str) -> bool {
         .all(|token| template.contains(token))
 }
 
+/// Reports whether every brace-delimited token is supported by the naming policy.
+#[must_use]
+pub fn filename_template_uses_supported_tokens(template: &str) -> bool {
+    let mut rest = template;
+    while let Some((before, after_open)) = rest.split_once('{') {
+        if before.contains('}') {
+            return false;
+        }
+        let Some((token, after_close)) = after_open.split_once('}') else {
+            return false;
+        };
+        if !matches!(token, "prenom" | "nom" | "oeil" | "date" | "heure") {
+            return false;
+        }
+        rest = after_close;
+    }
+    !rest.contains('}')
+}
+
 impl CaptureNamingPolicy {
     /// Creates a policy from a user-visible filename template.
     #[must_use]
@@ -241,7 +260,7 @@ mod tests {
 
     use super::{
         CaptureNamingPolicy, CaptureTimestamp, filename_template_preserves_identity,
-        save_new_capture,
+        filename_template_uses_supported_tokens, save_new_capture,
     };
 
     fn timestamp() -> CaptureTimestamp {
@@ -311,6 +330,22 @@ mod tests {
         ));
         assert!(!filename_template_preserves_identity(
             "{prenom}_{nom}_{date}"
+        ));
+    }
+
+    #[test]
+    fn filename_template_rejects_unknown_and_unbalanced_tokens() {
+        assert!(filename_template_uses_supported_tokens(
+            "{prenom}_{nom}_{oeil}_{date}_{heure}"
+        ));
+        assert!(!filename_template_uses_supported_tokens(
+            "{prenom}_{nom}_{oeil}_{inconnu}"
+        ));
+        assert!(!filename_template_uses_supported_tokens(
+            "{prenom}_{nom}_{oeil"
+        ));
+        assert!(!filename_template_uses_supported_tokens(
+            "{prenom}_{nom}_{oeil}}"
         ));
     }
 }

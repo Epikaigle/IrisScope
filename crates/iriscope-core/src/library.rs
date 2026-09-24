@@ -73,15 +73,15 @@ pub struct PresentedLibraryItem {
     pub file_path: PathBuf,
     /// Type of capture.
     pub kind: CaptureKind,
-    /// Display title. If belonging to the current patient session, shows their name.
+    /// Display title. If belonging to the selected patient, shows their name.
     /// If belonging to another patient, strictly anonymized to e.g. "Photo Iris Droit".
     pub display_title: String,
     /// Date and time for display.
     pub date_time: String,
     /// Eye label ("Œil Droit", "Œil Gauche", or "Œil non renseigné").
     pub eye_label: String,
-    /// Indicates whether this capture belongs to the currently active patient session.
-    pub is_current_session: bool,
+    /// Indicates whether this capture belongs to the selected patient.
+    pub is_current_patient: bool,
 }
 
 /// Filter for browsing the library.
@@ -178,13 +178,25 @@ fn save_library_index(directory: &Path, index: &LibraryIndex) -> io::Result<()> 
 /// Scans a directory and returns indexed library entries sorted by newest first.
 #[must_use]
 pub fn scan_library_directory(directory: &Path) -> Vec<LibraryEntry> {
+    try_scan_library_directory(directory).unwrap_or_default()
+}
+
+/// Scans a directory and reports read errors to the caller. A missing directory is empty.
+///
+/// # Errors
+///
+/// Returns an I/O error if the directory cannot be read.
+pub fn try_scan_library_directory(directory: &Path) -> io::Result<Vec<LibraryEntry>> {
     let mut entries = Vec::new();
     let index = load_library_index(directory);
-    let Ok(read_dir) = fs::read_dir(directory) else {
-        return entries;
+    let read_dir = match fs::read_dir(directory) {
+        Ok(read_dir) => read_dir,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(entries),
+        Err(error) => return Err(error),
     };
 
-    for entry in read_dir.flatten() {
+    for entry in read_dir {
+        let entry = entry?;
         let path = entry.path();
         if !path.is_file() {
             continue;
@@ -243,7 +255,7 @@ pub fn scan_library_directory(directory: &Path) -> Vec<LibraryEntry> {
 
     // Sort newest first
     entries.sort_by(|a, b| b.modified_time.cmp(&a.modified_time));
-    entries
+    Ok(entries)
 }
 
 /// Formats indexed entries according to medical confidentiality rules.
@@ -264,7 +276,7 @@ pub fn present_library_items(
             LibraryFilter::VideosOnly => entry.kind == CaptureKind::Video,
         })
         .map(|entry| {
-            let matches_session = active_session.has_identity()
+            let matches_patient = active_session.has_identity()
                 && entry
                     .first_name
                     .as_deref()
@@ -285,7 +297,7 @@ pub fn present_library_items(
                 CaptureKind::Video => "Vidéo",
             };
 
-            let display_title = if matches_session {
+            let display_title = if matches_patient {
                 let name = format!(
                     "{} {}",
                     active_session.first_name(),
@@ -304,7 +316,7 @@ pub fn present_library_items(
                 display_title,
                 date_time,
                 eye_label: eye_text.to_string(),
-                is_current_session: matches_session,
+                is_current_patient: matches_patient,
             }
         })
         .collect()
@@ -363,8 +375,25 @@ mod tests {
 
     use super::{
         CaptureKind, LibraryEntry, LibraryFilter, present_library_items, record_capture_metadata,
-        scan_library_directory,
+        scan_library_directory, try_scan_library_directory,
     };
+
+    #[test]
+    fn library_scan_reports_unreadable_path_and_allows_missing_directory() {
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("iris_test_invalid_library_{unique}"));
+        std::fs::write(&path, b"not a directory").expect("create regular file");
+        assert!(try_scan_library_directory(&path).is_err());
+        std::fs::remove_file(&path).expect("remove regular file");
+        assert!(
+            try_scan_library_directory(&path)
+                .expect("missing directory")
+                .is_empty()
+        );
+    }
 
     #[test]
     fn privacy_anonymizes_other_patients() {
@@ -398,13 +427,13 @@ mod tests {
         assert_eq!(presented.len(), 2);
         // Current session item displays patient name
         assert!(presented[0].display_title.contains("Jean Dupont"));
-        assert!(presented[0].is_current_session);
+        assert!(presented[0].is_current_patient);
 
         // Previous patient capture is anonymized
         assert_eq!(presented[1].display_title, "Photo Œil Gauche");
         assert!(!presented[1].display_title.contains("Marie"));
         assert!(!presented[1].display_title.contains("Curie"));
-        assert!(!presented[1].is_current_session);
+        assert!(!presented[1].is_current_patient);
     }
 
     #[test]

@@ -1,9 +1,13 @@
 //! Persistent application settings.
 
 use std::{
-    fs, io,
+    fs,
+    io::{self, Write},
     path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
 };
+
+static NEXT_SETTINGS_WRITE_ID: AtomicU64 = AtomicU64::new(0);
 
 use serde::{Deserialize, Serialize};
 
@@ -84,14 +88,37 @@ impl AppSettings {
     ///
     /// # Errors
     ///
-    /// Returns an I/O error if the directory cannot be created or the file written.
+    /// Returns an I/O error if the directory cannot be created or the file replaced.
     pub fn save_to_file(&self, path: &Path) -> io::Result<()> {
-        if let Some(parent) = path.parent() {
+        if let Some(parent) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
             fs::create_dir_all(parent)?;
         }
         let json = serde_json::to_vec_pretty(self)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        fs::write(path, json)
+        let mut temporary_name = path.as_os_str().to_os_string();
+        temporary_name.push(format!(
+            ".{}.{}.tmp",
+            std::process::id(),
+            NEXT_SETTINGS_WRITE_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        let temporary_path = PathBuf::from(temporary_name);
+        let result = (|| {
+            let mut temporary_file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temporary_path)?;
+            temporary_file.write_all(&json)?;
+            temporary_file.sync_all()?;
+            drop(temporary_file);
+            fs::rename(&temporary_path, path)
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(&temporary_path);
+        }
+        result
     }
 }
 
@@ -117,6 +144,13 @@ mod tests {
 
         let loaded = AppSettings::load_from_file(&path);
         assert_eq!(loaded.filename_template, "test_{date}");
+        let replacement = AppSettings {
+            filename_template: "autre_{prenom}_{nom}_{oeil}".to_string(),
+            ..AppSettings::default()
+        };
+        replacement.save_to_file(&path).expect("replace settings");
+        let loaded = AppSettings::load_from_file(&path);
+        assert_eq!(loaded.filename_template, replacement.filename_template);
         let _ = fs::remove_file(path);
     }
 }
