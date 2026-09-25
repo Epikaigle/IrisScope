@@ -24,6 +24,18 @@ pub enum PhysicalButtonBehavior {
     AlwaysVideo,
 }
 
+/// Preferred camera mode used for live preview and video recordings.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub enum VideoQualityPreference {
+    /// Highest available resolution, used by default.
+    #[default]
+    Best,
+    /// A middle resolution when the camera offers one.
+    Balanced,
+    /// Highest available frame rate for smoother motion.
+    Smooth,
+}
+
 /// Interface color theme.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub enum AppTheme {
@@ -57,6 +69,9 @@ pub struct AppSettings {
     pub filename_template: String,
     /// Hardware button behavior.
     pub physical_button_behavior: PhysicalButtonBehavior,
+    /// Preferred video quality and preview frame rate.
+    #[serde(default)]
+    pub video_quality: VideoQualityPreference,
     /// UI theme.
     pub theme: AppTheme,
     /// Optional iridology chart image used as a visual reference.
@@ -81,6 +96,7 @@ impl Default for AppSettings {
             capture_directory,
             filename_template: "{prenom}_{nom}_{oeil}_{date}_{heure}".to_string(),
             physical_button_behavior: PhysicalButtonBehavior::default(),
+            video_quality: VideoQualityPreference::default(),
             theme: AppTheme::default(),
             iridology_map_path: None,
             iridology_symbols_path: None,
@@ -143,7 +159,7 @@ impl AppSettings {
 mod tests {
     use std::{fs, time::SystemTime};
 
-    use super::{AppSettings, SavedCameraControlValue};
+    use super::{AppSettings, SavedCameraControlValue, VideoQualityPreference};
 
     #[test]
     fn settings_roundtrip_preserves_values() {
@@ -155,6 +171,7 @@ mod tests {
 
         let mut settings = AppSettings {
             filename_template: "test_{date}".to_string(),
+            video_quality: VideoQualityPreference::Smooth,
             ..AppSettings::default()
         };
         settings.camera_control_values.insert(
@@ -165,6 +182,7 @@ mod tests {
 
         let loaded = AppSettings::load_from_file(&path);
         assert_eq!(loaded.filename_template, "test_{date}");
+        assert_eq!(loaded.video_quality, VideoQualityPreference::Smooth);
         assert_eq!(loaded.camera_control_values, settings.camera_control_values);
         let replacement = AppSettings {
             filename_template: "autre_{prenom}_{nom}_{oeil}".to_string(),
@@ -183,7 +201,12 @@ mod tests {
             .as_object_mut()
             .expect("object")
             .remove("camera_control_values");
+        legacy
+            .as_object_mut()
+            .expect("object")
+            .remove("video_quality");
         let loaded: AppSettings = serde_json::from_value(legacy).expect("load legacy settings");
         assert!(loaded.camera_control_values.is_empty());
+        assert_eq!(loaded.video_quality, VideoQualityPreference::Best);
     }
 }

@@ -20,7 +20,9 @@ use iriscope_core::{
         try_scan_library_directory,
     },
     session::{CaptureSession, Eye},
-    settings::{AppSettings, PhysicalButtonBehavior, SavedCameraControlValue},
+    settings::{
+        AppSettings, PhysicalButtonBehavior, SavedCameraControlValue, VideoQualityPreference,
+    },
     storage::{
         CaptureNamingPolicy, CaptureTimestamp, DEFAULT_FILENAME_TEMPLATE,
         filename_template_preserves_identity, filename_template_uses_supported_tokens,
@@ -33,7 +35,7 @@ use iriscope_imaging::{
     decode_mjpeg_to_rgb8, encode_rgb8_jpeg, encode_rgb8_png, ensure_jpeg_has_dht,
     resize_rgb8_to_fit,
 };
-use slint::{ComponentHandle, ModelRc, Rgb8Pixel, SharedPixelBuffer, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, Rgb8Pixel, SharedPixelBuffer, VecModel};
 
 #[cfg(target_os = "linux")]
 use iriscope_camera_linux as platform_camera;
@@ -1173,14 +1175,26 @@ fn physical_button_mode_index(behavior: PhysicalButtonBehavior) -> i32 {
     }
 }
 
+const fn video_quality_index(quality: VideoQualityPreference) -> i32 {
+    match quality {
+        VideoQualityPreference::Best => 0,
+        VideoQualityPreference::Balanced => 1,
+        VideoQualityPreference::Smooth => 2,
+    }
+}
+
+const fn video_quality_from_index(index: i32) -> Option<VideoQualityPreference> {
+    match index {
+        0 => Some(VideoQualityPreference::Best),
+        1 => Some(VideoQualityPreference::Balanced),
+        2 => Some(VideoQualityPreference::Smooth),
+        _ => None,
+    }
+}
+
 fn capture_session_from_window(win: &MainWindow) -> Result<CaptureSession, &'static str> {
     let first_name = win.get_patient_first_name().to_string();
     let last_name = win.get_patient_last_name().to_string();
-
-    if first_name.trim().is_empty() || last_name.trim().is_empty() {
-        return Err("Renseignez le prénom et le nom avant la capture.");
-    }
-
     let eye = match win.get_selected_eye() {
         1 => Eye::Left,
         2 => Eye::Right,
@@ -1236,6 +1250,72 @@ fn ranked_stream_configurations(capabilities: &CameraCapabilities) -> Vec<Stream
             frame_rate,
         })
         .collect()
+}
+
+fn stream_configurations_for_quality(
+    capabilities: &CameraCapabilities,
+    quality: VideoQualityPreference,
+) -> Vec<StreamConfiguration> {
+    let mut candidates = ranked_stream_configurations(capabilities);
+    let preferred_index = match quality {
+        VideoQualityPreference::Best => None,
+        VideoQualityPreference::Balanced => candidates.first().and_then(|best| {
+            let maximum_pixels = best.resolution.pixel_count() * 3 / 4;
+            candidates
+                .iter()
+                .position(|mode| mode.resolution.pixel_count() <= maximum_pixels)
+        }),
+        VideoQualityPreference::Smooth => candidates
+            .iter()
+            .enumerate()
+            .max_by_key(|(index, mode)| {
+                (
+                    mode.frame_rate,
+                    mode.resolution.pixel_count(),
+                    std::cmp::Reverse(*index),
+                )
+            })
+            .map(|(index, _)| index),
+    };
+    if let Some(index) = preferred_index {
+        let preferred = candidates.remove(index);
+        candidates.insert(0, preferred);
+    }
+    candidates
+}
+
+#[cfg(test)]
+mod video_quality_tests {
+    use iriscope_core::capabilities::{
+        CameraCapabilities, CameraMode, FrameRate, PixelFormat, Resolution,
+    };
+
+    use super::{VideoQualityPreference, stream_configurations_for_quality};
+
+    #[test]
+    fn quality_choices_select_resolution_or_frame_rate_as_requested() {
+        let modes =
+            [(1280, 1024, 8), (800, 600, 15), (640, 480, 30)].map(|(width, height, fps)| {
+                CameraMode {
+                    pixel_format: PixelFormat::Mjpeg,
+                    resolution: Resolution::new(width, height),
+                    frame_rates: vec![FrameRate::new(fps, 1).expect("valid frame rate")],
+                }
+            });
+        let capabilities = CameraCapabilities {
+            modes: modes.to_vec(),
+            controls: Vec::new(),
+        };
+        for (quality, expected_width) in [
+            (VideoQualityPreference::Best, 1280),
+            (VideoQualityPreference::Balanced, 800),
+            (VideoQualityPreference::Smooth, 640),
+        ] {
+            let selected = stream_configurations_for_quality(&capabilities, quality);
+            assert_eq!(selected[0].resolution.width, expected_width);
+            assert_eq!(selected.len(), 3);
+        }
+    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -2207,6 +2287,19 @@ fn set_camera_control_model(win: &MainWindow, states: &[CameraControlRuntimeStat
     win.set_camera_controls(ModelRc::new(VecModel::from(rows)));
 }
 
+fn update_camera_control_row(win: &MainWindow, states: &[CameraControlRuntimeState], index: usize) {
+    let model = win.get_camera_controls();
+    if model.row_count() == states.len()
+        && model
+            .row_data(index)
+            .is_some_and(|row| row.key.as_str() == states[index].key)
+    {
+        model.set_row_data(index, camera_control_ui_data(&states[index]));
+    } else {
+        set_camera_control_model(win, states);
+    }
+}
+
 #[allow(clippy::cast_possible_truncation)]
 fn snap_integer_control_value(
     descriptor: &CameraControlDescriptor,
@@ -2998,6 +3091,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     main_window.set_settings_button_mode(physical_button_mode_index(
         loaded_settings.physical_button_behavior,
     ));
+    main_window.set_settings_video_quality(video_quality_index(loaded_settings.video_quality));
     main_window.set_settings_iridology_map_path(
         loaded_settings
             .iridology_map_path
@@ -3018,6 +3112,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     let latest_frame = Arc::new(LatestFrame::new());
     let decode_mailbox = Arc::new(DecodeMailbox::default());
     let stream_generation = Arc::new(AtomicU64::new(0));
+    let stream_restart_requested = Arc::new(AtomicBool::new(false));
     let latest_decoded_frame: Arc<Mutex<Option<(u64, DecodedFrame)>>> = Arc::new(Mutex::new(None));
     let decoded_frame_update_pending = Arc::new(AtomicBool::new(false));
     let preview_active = Arc::new(AtomicBool::new(true));
@@ -3174,6 +3269,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     let preview_active_camera = Arc::clone(&preview_active);
     let latest_decoded_frame_camera = Arc::clone(&latest_decoded_frame);
     let stream_generation_camera = Arc::clone(&stream_generation);
+    let stream_restart_requested_worker = Arc::clone(&stream_restart_requested);
     let decode_time_micros_camera = Arc::clone(&decode_time_micros);
     let dropped_decode_frames_camera = Arc::clone(&dropped_decode_frames);
     let recording_mailbox_camera = Arc::clone(&recording_mailbox);
@@ -3239,7 +3335,10 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
-            let candidates = ranked_stream_configurations(device.capabilities());
+            let candidates = stream_configurations_for_quality(
+                device.capabilities(),
+                settings_snapshot(&settings_worker).video_quality,
+            );
 
             let mut active_config = None;
             for candidate in candidates {
@@ -3360,6 +3459,27 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             let mut stream_ready_announced = false;
 
             loop {
+                if stream_restart_requested_worker.swap(false, Ordering::AcqRel) {
+                    stop_recording(
+                        &recording_mailbox_camera,
+                        &rec_start_clone,
+                        RecordingStopReason::Interrupted,
+                    );
+                    let _ = device.stop_stream();
+                    stream_generation_camera.fetch_add(1, Ordering::AcqRel);
+                    decode_mailbox_camera.clear();
+                    if let Ok(mut decoded) = latest_decoded_frame_camera.lock() {
+                        *decoded = None;
+                    }
+                    if let Ok(mut active) = active_stream_configuration_worker.lock() {
+                        *active = None;
+                    }
+                    let _ = main_weak.upgrade_in_event_loop(|win| {
+                        win.set_is_streaming(false);
+                        win.set_status_text("Changement de qualité vidéo…".into());
+                    });
+                    break;
+                }
                 // Multiple slider changes to the same control collapse to the
                 // newest value, while shutdown remains highest priority.
                 let commands = control_commands_worker.take();
@@ -3486,6 +3606,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     Err(error) if error.kind() == CameraErrorKind::TimedOut => {}
                     Err(error) => {
+                        eprintln!("Camera stream interrupted: {error}");
                         let interrupted_generation =
                             stream_generation_camera.fetch_add(1, Ordering::AcqRel) + 1;
                         decode_mailbox_camera.clear();
@@ -3908,6 +4029,38 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         win.set_viewer_open(true);
     });
 
+    let weak_external = main_window.as_weak();
+    main_window.on_open_capture_externally(move |file_path_str| {
+        let Some(win) = weak_external.upgrade() else {
+            return;
+        };
+        let path = std::path::PathBuf::from(file_path_str.as_str());
+        let result = if path.is_file() {
+            #[cfg(target_os = "linux")]
+            let command = "xdg-open";
+            #[cfg(target_os = "windows")]
+            let command = "explorer";
+            #[cfg(target_os = "macos")]
+            let command = "open";
+            std::process::Command::new(command)
+                .arg(&path)
+                .spawn()
+                .map(|_| ())
+        } else {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "capture introuvable",
+            ))
+        };
+        if let Err(error) = result {
+            show_capture_notice(
+                &win,
+                format!("Impossible d'ouvrir la capture avec l'application du PC : {error}"),
+                NOTICE_ERROR,
+            );
+        }
+    });
+
     let viewer_generation_close = Arc::clone(&viewer_generation);
     let viewer_playing_close = Arc::clone(&viewer_video_playing);
     let viewer_frame_count_close = Arc::clone(&viewer_video_frame_count);
@@ -4028,9 +4181,10 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         let Ok(mut controls) = controls_value.lock() else {
             return;
         };
-        let Some(state) = controls.iter_mut().find(|state| state.key == key.as_str()) else {
+        let Some(index) = controls.iter().position(|state| state.key == key.as_str()) else {
             return;
         };
+        let state = &mut controls[index];
         if state.descriptor.read_only {
             return;
         }
@@ -4043,7 +4197,9 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         state.value = value.clone();
         control_commands_value.set_control(state.descriptor.id.clone(), value.clone());
         remember_camera_control_value(&settings_value, &save_value, &state.key, &value);
-        set_camera_control_model(&win, &controls);
+        let updated_controls = controls.clone();
+        drop(controls);
+        update_camera_control_row(&win, &updated_controls, index);
     });
 
     let control_commands_bool = Arc::clone(&control_commands);
@@ -4073,7 +4229,9 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         state.value = value.clone();
         control_commands_bool.set_control(state.descriptor.id.clone(), value.clone());
         remember_camera_control_value(&settings_bool, &save_bool, &state.key, &value);
-        set_camera_control_model(&win, &controls);
+        let updated_controls = controls.clone();
+        drop(controls);
+        set_camera_control_model(&win, &updated_controls);
     });
 
     let control_commands_menu = Arc::clone(&control_commands);
@@ -4115,7 +4273,9 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         state.value = value.clone();
         control_commands_menu.set_control(state.descriptor.id.clone(), value.clone());
         remember_camera_control_value(&settings_menu, &save_menu, &state.key, &value);
-        set_camera_control_model(&win, &controls);
+        let updated_controls = controls.clone();
+        drop(controls);
+        set_camera_control_model(&win, &updated_controls);
     });
 
     let control_commands_reset = Arc::clone(&control_commands);
@@ -4133,7 +4293,9 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                     state.value = value;
                 }
             }
-            set_camera_control_model(&win, &controls);
+            let updated_controls = controls.clone();
+            drop(controls);
+            set_camera_control_model(&win, &updated_controls);
         }
         control_commands_reset.reset_controls();
         if let Ok(mut settings) = settings_reset.lock()
@@ -4237,6 +4399,40 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         let saved = persist_settings(&settings_button, &settings_path_button);
         win.set_settings_button_mode(physical_button_mode_index(next));
         settings_saved(&win, saved, "Action du bouton enregistrée.");
+    });
+
+    let settings_quality = Arc::clone(&settings);
+    let settings_path_quality = settings_path.clone();
+    let weak_quality = main_window.as_weak();
+    let stream_restart_quality = Arc::clone(&stream_restart_requested);
+    main_window.on_update_video_quality(move |index| {
+        let Some(win) = weak_quality.upgrade() else {
+            return;
+        };
+        if win.get_is_recording() || win.get_recording_finalizing() {
+            settings_error(&win, "Terminez la vidéo avant de changer de qualité.");
+            return;
+        }
+        let Some(quality) = video_quality_from_index(index) else {
+            return;
+        };
+        let changed = if let Ok(mut settings) = settings_quality.lock() {
+            let changed = settings.video_quality != quality;
+            settings.video_quality = quality;
+            changed
+        } else {
+            return;
+        };
+        win.set_settings_video_quality(index);
+        if changed {
+            stream_restart_quality.store(true, Ordering::Release);
+            let saved = persist_settings(&settings_quality, &settings_path_quality);
+            settings_saved(
+                &win,
+                saved,
+                "Qualité vidéo enregistrée. Mise à jour du flux…",
+            );
+        }
     });
 
     let settings_map = Arc::clone(&settings);

@@ -56,8 +56,6 @@ fn wheel_zoom_and_fullscreen_capture_work_from_the_live_view() {
     assert_eq!(window.get_zoom_level(), 200);
     window.set_zoom_level(100);
 
-    window.set_patient_first_name("Ada".into());
-    window.set_patient_last_name("Lovelace".into());
     window.set_selected_eye(1);
     let photos = Rc::new(Cell::new(0));
     window.on_trigger_capture({

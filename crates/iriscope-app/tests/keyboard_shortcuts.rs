@@ -47,9 +47,9 @@ fn camera_panel_and_image_popup_have_clickable_controls(window: &MainWindow) {
     click(window, 607.0, 124.0);
     assert!(!window.get_image_controls_open());
 
-    click(window, 585.0, 26.0);
+    click(window, 240.0, 118.0);
     assert!(!window.get_sidebar_visible());
-    click(window, 585.0, 26.0);
+    click(window, 70.0, 112.0);
     assert!(window.get_sidebar_visible());
 }
 
@@ -78,11 +78,21 @@ fn library_modes_open_capture_and_close_map() {
             opens.set(opens.get() + 1);
         }
     });
+    let external_opens = Rc::new(Cell::new(0));
+    window.on_open_capture_externally({
+        let external_opens = external_opens.clone();
+        move |path| {
+            assert_eq!(path.as_str(), "/tmp/sample.jpg");
+            external_opens.set(external_opens.get() + 1);
+        }
+    });
 
     click(&window, 960.0, 240.0);
     assert_eq!(window.get_library_view(), 1);
-    click(&window, 950.0, 330.0);
+    click(&window, 800.0, 335.0);
     assert_eq!(opens.get(), 1);
+    click(&window, 920.0, 335.0);
+    assert_eq!(external_opens.get(), 1);
 
     click(&window, 897.0, 240.0);
     assert_eq!(window.get_library_view(), 0);
@@ -137,8 +147,7 @@ fn shortcuts_follow_active_page_capture_guards_and_viewer() {
     control_key(&window, "r");
     assert_eq!((photos.get(), recordings.get()), (0, 0));
     window.set_is_streaming(true);
-    window.set_patient_first_name("Ada".into());
-    window.set_patient_last_name("Lovelace".into());
+    // Anonymous captures still require an eye, not a patient name.
     window.set_selected_eye(1);
     control_key(&window, "p");
     control_key(&window, "r");
@@ -151,10 +160,10 @@ fn shortcuts_follow_active_page_capture_guards_and_viewer() {
     assert_eq!((photos.get(), recordings.get()), (1, 1));
     window.set_recording_finalizing(false);
 
-    click(&window, 160.0, 388.0);
+    click(&window, 160.0, 375.0);
     assert_eq!(photos.get(), 2);
     window.set_viewer_open(true);
-    click(&window, 160.0, 388.0);
+    click(&window, 160.0, 375.0);
     assert_eq!(photos.get(), 2);
     window.set_viewer_open(false);
 

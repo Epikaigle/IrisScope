@@ -76,6 +76,7 @@ export component MainWindow inherits Window {
     in-out property <bool> sidebar-visible: true;
     in-out property <bool> iris-fullscreen: false;
     in-out property <bool> image-controls-open: false;
+    private property <bool> viewport-controls-visible: true;
 
     // Diagnostic
     in-out property <DiagnosticData> diagnostics;
@@ -100,6 +101,7 @@ export component MainWindow inherits Window {
     in-out property <string> settings-capture-directory: "";
     in-out property <string> settings-filename-template: "";
     in-out property <int> settings-button-mode: 0; // 0 suit le mode, 1 photo, 2 vidéo
+    in-out property <int> settings-video-quality: 0; // 0 maximale, 1 équilibrée, 2 fluide
     in-out property <string> settings-iridology-map-path: "";
     in-out property <string> settings-iridology-symbols-path: "";
     in-out property <string> settings-feedback: "";
@@ -128,6 +130,7 @@ export component MainWindow inherits Window {
     private property <string> selected-library-path: "";
     private property <int> library-grid-columns: root.width < 1250px ? 3 : 4;
     callback open-capture-file(string);
+    callback open-capture-externally(string);
     callback library-filter-changed(int);
     callback library-page-changed(int);
     callback session-changed();
@@ -163,6 +166,7 @@ export component MainWindow inherits Window {
     callback update-capture-directory(string);
     callback update-filename-template(string);
     callback cycle-physical-button-mode();
+    callback update-video-quality(int);
     callback update-iridology-map-path(string);
     callback update-iridology-symbols-path(string);
     callback close-viewer();
@@ -195,6 +199,17 @@ export component MainWindow inherits Window {
         }
     }
 
+    function show-viewport-controls() {
+        root.viewport-controls-visible = true;
+        viewport-controls-timer.restart();
+    }
+
+    viewport-controls-timer := Timer {
+        interval: 1s;
+        running: root.viewport-controls-visible;
+        triggered => { root.viewport-controls-visible = false; }
+    }
+
     app-shortcuts := FocusScope {
         width: 100%;
         height: 100%;
@@ -210,15 +225,13 @@ export component MainWindow inherits Window {
         KeyBinding {
             keys: @keys(Control + P);
             enabled: !root.text-field-focused && !root.viewer-open && root.current-tab == 0
-                && root.is-streaming && !root.recording-busy && root.patient-first-name != ""
-                && root.patient-last-name != "" && root.selected-eye != 0;
+                && root.is-streaming && !root.recording-busy && root.selected-eye != 0;
             activated => { root.trigger-capture(); }
         }
         KeyBinding {
             keys: @keys(Control + R);
             enabled: !root.text-field-focused && !root.viewer-open && root.current-tab == 0
-                && !root.recording-finalizing && (root.is-recording || (root.is-streaming && root.patient-first-name != ""
-                    && root.patient-last-name != "" && root.selected-eye != 0));
+                && !root.recording-finalizing && (root.is-recording || (root.is-streaming && root.selected-eye != 0));
             activated => { root.toggle-recording(); }
         }
         KeyBinding {
@@ -309,11 +322,6 @@ export component MainWindow inherits Window {
                         clicked => { root.navigate-to(4); }
                     }
 
-                    if root.current-tab == 0: Button {
-                        height: 40px;
-                        text: root.sidebar-visible ? "◀ Masquer panneau" : "▶ Afficher panneau";
-                        clicked => { root.sidebar-visible = !root.sidebar-visible; }
-                    }
                 }
 
                 HorizontalBox {
@@ -383,7 +391,7 @@ export component MainWindow inherits Window {
                             vertical-stretch: 0;
                             alignment: space-between;
                             Text {
-                                text: "SESSION PATIENT";
+                                text: "PATIENT";
                                 color: #9eabb8;
                                 font-size: 11px;
                                 font-weight: 700;
@@ -394,6 +402,11 @@ export component MainWindow inherits Window {
                                 text: "Terminer";
                                 enabled: !root.recording-busy;
                                 clicked => { root.clear-session(); }
+                            }
+                            Button {
+                                height: 40px;
+                                text: "◀ Masquer";
+                                clicked => { root.sidebar-visible = false; }
                             }
                         }
 
@@ -443,12 +456,19 @@ export component MainWindow inherits Window {
                             height: 74px;
                             vertical-stretch: 0;
                             spacing: 4px;
-                            Text {
+                            alignment: start;
+                            Rectangle {
                                 height: 18px;
-                                text: "ŒIL EXAMINÉ";
-                                color: #9eabb8;
-                                font-size: 11px;
-                                font-weight: 700;
+                                vertical-stretch: 0;
+                                Text {
+                                    y: 5px;
+                                    height: 18px;
+                                    text: "ŒIL EXAMINÉ";
+                                    color: #9eabb8;
+                                    font-size: 11px;
+                                    font-weight: 700;
+                                    vertical-alignment: center;
+                                }
                             }
                             HorizontalBox {
                                 height: 40px;
@@ -481,12 +501,6 @@ export component MainWindow inherits Window {
                                     }
                                 }
                             }
-                        }
-
-                        Rectangle {
-                            height: 1px;
-                            vertical-stretch: 0;
-                            background: #303a44;
                         }
 
                         HorizontalBox {
@@ -523,10 +537,7 @@ export component MainWindow inherits Window {
                                     : "Capturer une photo";
                             primary: true;
                             enabled: !root.recording-finalizing && (root.is-recording
-                                || (root.is-streaming
-                                    && root.patient-first-name != ""
-                                    && root.patient-last-name != ""
-                                    && root.selected-eye != 0));
+                                || (root.is-streaming && root.selected-eye != 0));
                             clicked => {
                                 if root.is-recording || root.is-video-mode {
                                     root.toggle-recording();
@@ -541,15 +552,15 @@ export component MainWindow inherits Window {
                             vertical-stretch: 0;
                             text: !root.is-streaming
                                 ? "En attente du flux caméra"
-                                : root.patient-first-name == "" || root.patient-last-name == "" || root.selected-eye == 0
-                                    ? "Prénom, nom et œil requis"
+                                : root.selected-eye == 0
+                                    ? "Sélectionnez l'œil gauche ou droit"
                                     : root.recording-finalizing
                                         ? "Finalisation de la vidéo en cours"
                                         : root.is-recording
                                         ? "Enregistrement en cours · " + root.recording-duration
                                         : "Prêt pour la capture";
                             color: !root.is-streaming ? #9eabb8
-                                : root.patient-first-name == "" || root.patient-last-name == "" || root.selected-eye == 0
+                                : root.selected-eye == 0
                                     ? #fbbf65 : #84d7aa;
                             font-size: 11px;
                             vertical-alignment: center;
@@ -799,6 +810,7 @@ export component MainWindow inherits Window {
                         }
 
                         moved => {
+                            root.show-viewport-controls();
                             if self.pressed && root.zoom-level > 100 {
                                 root.zoom-pan-x = self.pan-start-x + self.mouse-x - self.pressed-x;
                                 root.zoom-pan-y = self.pan-start-y + self.mouse-y - self.pressed-y;
@@ -819,25 +831,35 @@ export component MainWindow inherits Window {
                         x: parent.width - self.width - 16px;
                         y: root.is-frozen ? 56px : 16px;
                         height: 40px;
+                        visible: root.viewport-controls-visible;
                         text: root.iris-fullscreen ? "Quitter le plein écran" : "Plein écran";
                         clicked => {
                             root.image-controls-open = false;
                             root.iris-fullscreen = !root.iris-fullscreen;
+                            root.show-viewport-controls();
                         }
+                    }
+
+                    if !root.sidebar-visible && !root.iris-fullscreen: Button {
+                        x: 12px;
+                        y: root.is-recording || root.session-photo-count > 0 ? 56px : 16px;
+                        height: 40px;
+                        text: "▶ Panneau";
+                        clicked => { root.sidebar-visible = true; }
                     }
 
                     if root.iris-fullscreen: Button {
                         x: (parent.width - self.width) / 2;
                         y: parent.height - self.height - 20px;
                         height: 48px;
+                        visible: root.viewport-controls-visible;
                         text: root.recording-finalizing ? "Finalisation de la vidéo…"
                             : root.is-recording ? "■ Arrêter la vidéo"
                             : root.is-video-mode ? "● Démarrer la vidéo"
                             : "Capturer une photo";
                         primary: true;
                         enabled: !root.recording-finalizing && (root.is-recording
-                            || (root.is-streaming && root.patient-first-name != ""
-                                && root.patient-last-name != "" && root.selected-eye != 0));
+                            || (root.is-streaming && root.selected-eye != 0));
                         clicked => {
                             if root.is-recording || root.is-video-mode {
                                 root.toggle-recording();
@@ -848,76 +870,13 @@ export component MainWindow inherits Window {
                     }
 
                     if root.is-streaming && root.show-iridology-grid: Rectangle {
-                        width: 100%;
-                        height: 100%;
-                        private property <length> outer-diameter:
-                            Math.min(parent.height - 32px, 480px);
-
-                        // 1. Pupil circle
-                        Rectangle {
-                            width: parent.outer-diameter / 8;
-                            height: self.width;
-                            x: (parent.width - self.width) / 2;
-                            y: (parent.height - self.height) / 2;
-                            border-radius: self.width / 2;
-                            border-width: 1.5px;
-                            border-color: #38bdf8aa;
-                        }
-                        // 2. Stomach zone
-                        Rectangle {
-                            width: parent.outer-diameter * 7 / 24;
-                            height: self.width;
-                            x: (parent.width - self.width) / 2;
-                            y: (parent.height - self.height) / 2;
-                            border-radius: self.width / 2;
-                            border-width: 1px;
-                            border-color: #38bdf866;
-                        }
-                        // 3. Collarette (ANW) in amber
-                        Rectangle {
-                            width: parent.outer-diameter / 2;
-                            height: self.width;
-                            x: (parent.width - self.width) / 2;
-                            y: (parent.height - self.height) / 2;
-                            border-radius: self.width / 2;
-                            border-width: 1.5px;
-                            border-color: #facc15cc;
-                        }
-                        // 4. Ciliary zone
-                        Rectangle {
-                            width: parent.outer-diameter * 3 / 4;
-                            height: self.width;
-                            x: (parent.width - self.width) / 2;
-                            y: (parent.height - self.height) / 2;
-                            border-radius: self.width / 2;
-                            border-width: 1px;
-                            border-color: #38bdf855;
-                        }
-                        // 5. Limbic outer ring
-                        Rectangle {
-                            width: parent.outer-diameter;
-                            height: self.width;
-                            x: (parent.width - self.width) / 2;
-                            y: (parent.height - self.height) / 2;
-                            border-radius: self.width / 2;
-                            border-width: 1.5px;
-                            border-color: #38bdf899;
-                        }
-                        // Crosshairs
-                        Rectangle {
-                            x: (parent.width - 1px) / 2;
-                            y: (parent.height - parent.outer-diameter) / 2;
-                            width: 1px;
-                            height: parent.outer-diameter;
-                            background: #38bdf855;
-                        }
-                        Rectangle {
-                            x: (parent.width - parent.outer-diameter) / 2;
-                            y: (parent.height - 1px) / 2;
-                            width: parent.outer-diameter;
-                            height: 1px;
-                            background: #38bdf855;
-                        }
+                        width: Math.min(parent.height - 32px, 480px);
+                        height: self.width;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                        border-radius: self.width / 2;
+                        border-width: 1.5px;
+                        border-color: #38bdf8bb;
                     }
 
                     if !root.is-streaming: VerticalBox {
@@ -1226,7 +1185,7 @@ export component MainWindow inherits Window {
 
                     Button {
                         height: 40px;
-                        text: "Patient sélectionné";
+                        text: "Patient actuel";
                         primary: root.library-filter == 3;
                         enabled: root.patient-first-name != "" && root.patient-last-name != "";
                         clicked => {
@@ -1234,6 +1193,15 @@ export component MainWindow inherits Window {
                             root.library-filter = 3;
                             root.library-filter-changed(3);
                         }
+                    }
+                    Text {
+                        text: root.patient-first-name == "" || root.patient-last-name == ""
+                            ? "Prénom et nom à saisir dans la caméra pour filtrer"
+                            : "Captures de " + root.patient-first-name + " " + root.patient-last-name;
+                        color: #9ca3af;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                        overflow: elide;
                     }
                     Button {
                         height: 40px;
@@ -1588,12 +1556,21 @@ export component MainWindow inherits Window {
                                     }
                                 }
 
-                                Button {
+                                HorizontalBox {
                                     height: 40px;
                                     vertical-stretch: 0;
-                                    text: "Ouvrir";
-                                    primary: root.selected-library-path == item.file-path;
-                                    clicked => { root.library-map-open = false; root.open-capture-file(item.file-path); }
+                                    spacing: 6px;
+                                    Button {
+                                        height: 40px;
+                                        text: "Ouvrir ici";
+                                        primary: root.selected-library-path == item.file-path;
+                                        clicked => { root.library-map-open = false; root.open-capture-file(item.file-path); }
+                                    }
+                                    Button {
+                                        height: 40px;
+                                        text: "Application du PC";
+                                        clicked => { root.open-capture-externally(item.file-path); }
+                                    }
                                 }
                             }
                         }
@@ -1613,7 +1590,7 @@ export component MainWindow inherits Window {
                             col: Math.mod(index, root.library-grid-columns);
                             width: root.width < 1250px ? 300px : 280px;
                             horizontal-stretch: 0;
-                            height: 236px;
+                            height: 274px;
                             border-radius: 8px;
                             clip: true;
                             background: root.selected-library-path == item.file-path ? #20334a : #181d23;
@@ -1684,24 +1661,30 @@ export component MainWindow inherits Window {
                                     }
                                 }
 
+                                Text {
+                                    height: 20px;
+                                    text: item.date-time;
+                                    color: #9ca3af;
+                                    font-size: 11px;
+                                    overflow: elide;
+                                }
+
                                 HorizontalBox {
                                     height: 40px;
                                     vertical-stretch: 0;
-                                    alignment: space-between;
-                                    Text {
-                                        min-width: 0px;
+                                    spacing: 6px;
+                                    Button {
+                                        height: 40px;
                                         horizontal-stretch: 1;
-                                        text: item.date-time;
-                                        color: #9ca3af;
-                                        font-size: 11px;
-                                        vertical-alignment: center;
-                                        overflow: elide;
+                                        text: "Ouvrir ici";
+                                        primary: root.selected-library-path == item.file-path;
+                                        clicked => { root.library-map-open = false; root.open-capture-file(item.file-path); }
                                     }
                                     Button {
                                         height: 40px;
-                                        text: "Ouvrir";
-                                        primary: root.selected-library-path == item.file-path;
-                                        clicked => { root.library-map-open = false; root.open-capture-file(item.file-path); }
+                                        horizontal-stretch: 1;
+                                        text: "App. du PC";
+                                        clicked => { root.open-capture-externally(item.file-path); }
                                     }
                                 }
                             }
@@ -1857,7 +1840,7 @@ export component MainWindow inherits Window {
                                     }
                                 }
                                 Text {
-                                    text: "Obligatoires : {prenom} {nom} {oeil}  •  Optionnels : {date} {heure}";
+                                    text: "Jetons du modèle : {prenom}, {nom}, {oeil}, {date}, {heure}. Le nom du patient peut rester vide lors d'une capture.";
                                     color: #9ca3af;
                                     font-size: 11px;
                                     wrap: word-wrap;
@@ -1883,6 +1866,24 @@ export component MainWindow inherits Window {
                                     text: "Cliquez pour parcourir les trois options.";
                                     color: #9ca3af;
                                     font-size: 11px;
+                                }
+
+                                Text { text: "Qualité vidéo et fluidité du direct :"; color: #9ca3af; }
+                                ComboBox {
+                                    height: 40px;
+                                    model: ["Maximale — résolution", "Équilibrée", "Fluide — images par seconde"];
+                                    current-index: root.settings-video-quality;
+                                    enabled: !root.recording-busy;
+                                    selected(value) => {
+                                        root.update-video-quality(value == "Équilibrée" ? 1
+                                            : value == "Fluide — images par seconde" ? 2 : 0);
+                                    }
+                                }
+                                Text {
+                                    text: "Changer de qualité redémarre brièvement le flux. Le mode actif figure dans État de la caméra.";
+                                    color: #9ca3af;
+                                    font-size: 11px;
+                                    wrap: word-wrap;
                                 }
 
                                 Text { text: "Carte d'iridologie (image) :"; color: #9ca3af; }
