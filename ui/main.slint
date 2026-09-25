@@ -802,6 +802,12 @@ export component MainWindow inherits Window {
                         private property <length> pan-start-x;
                         private property <length> pan-start-y;
 
+                        pointer-event(event) => {
+                            if event.kind == PointerEventKind.move {
+                                root.show-viewport-controls();
+                            }
+                        }
+
                         changed pressed => {
                             if self.pressed {
                                 self.pan-start-x = root.zoom-pan-x;
@@ -810,7 +816,6 @@ export component MainWindow inherits Window {
                         }
 
                         moved => {
-                            root.show-viewport-controls();
                             if self.pressed && root.zoom-level > 100 {
                                 root.zoom-pan-x = self.pan-start-x + self.mouse-x - self.pressed-x;
                                 root.zoom-pan-y = self.pan-start-y + self.mouse-y - self.pressed-y;

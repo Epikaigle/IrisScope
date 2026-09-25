@@ -1,4 +1,4 @@
-use std::{cell::Cell, rc::Rc};
+use std::{cell::Cell, rc::Rc, thread, time::Duration};
 
 use slint::{
     ComponentHandle, LogicalPosition, PhysicalSize,
@@ -27,6 +27,24 @@ fn wheel_zoom_and_fullscreen_capture_work_from_the_live_view() {
     window.window().set_size(PhysicalSize::new(1024, 720));
     window.set_is_streaming(true);
     let image_position = LogicalPosition::new(700.0, 350.0);
+
+    thread::sleep(Duration::from_millis(1100));
+    slint::platform::update_timers_and_animations();
+    click(&window, 930.0, 108.0);
+    assert!(
+        !window.get_iris_fullscreen(),
+        "button should hide after inactivity"
+    );
+    window.window().dispatch_event(WindowEvent::PointerMoved {
+        position: image_position,
+    });
+    click(&window, 930.0, 108.0);
+    assert!(
+        window.get_iris_fullscreen(),
+        "hover should reveal the button"
+    );
+    click(&window, 930.0, 35.0);
+    assert!(!window.get_iris_fullscreen());
 
     window
         .window()
