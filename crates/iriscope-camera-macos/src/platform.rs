@@ -3,7 +3,7 @@ use std::{
     slice,
     sync::{
         Arc, Condvar, Mutex,
-        mpsc::{self, Receiver, SyncSender},
+        mpsc::{self, Receiver, SyncSender, TrySendError},
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
@@ -43,7 +43,8 @@ use dispatch2::{DispatchQueue, DispatchQueueAttr, DispatchRetained};
 use iriscope_core::camera::{
     CameraBackend, CameraBackendKind, CameraDescriptor, CameraDevice, CameraDeviceEvent,
     CameraDeviceId, CameraError, CameraErrorKind, CameraEvent, CameraResult, CapturedFrame,
-    StreamConfiguration, UsbDeviceIdentity,
+    MAX_CAMERA_RAW_BYTES, StreamConfiguration, UsbDeviceIdentity, camera_frame_byte_limit,
+    validate_camera_frame_bytes,
 };
 use iriscope_core::capabilities::{
     CameraCapabilities, CameraControlDescriptor, CameraControlId, CameraControlKind,
@@ -149,6 +150,28 @@ enum WorkerCommand {
     Shutdown,
 }
 
+// AVFoundation can wait inside a camera driver while starting or stopping a
+// session. Bound synchronous requests so the application remains responsive.
+const WORKER_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
+// First access may show the operating system camera permission prompt.
+const WORKER_OPEN_TIMEOUT: Duration = Duration::from_secs(30);
+
+impl MacAvFoundationDevice {
+    fn request_worker<T>(
+        &self,
+        command: WorkerCommand,
+        response_receiver: &Receiver<CameraResult<T>>,
+        context: &str,
+    ) -> CameraResult<T> {
+        self.command_sender
+            .try_send(command)
+            .map_err(|error| worker_send_error(context, &error))?;
+        response_receiver
+            .recv_timeout(WORKER_COMMAND_TIMEOUT)
+            .map_err(|error| worker_response_error(context, error))?
+    }
+}
+
 impl CameraDevice for MacAvFoundationDevice {
     fn descriptor(&self) -> &CameraDescriptor {
         &self.descriptor
@@ -159,6 +182,7 @@ impl CameraDevice for MacAvFoundationDevice {
     }
 
     fn start_stream(&mut self, configuration: &StreamConfiguration) -> CameraResult<()> {
+        camera_frame_byte_limit(&configuration.pixel_format, configuration.resolution)?;
         if self
             .capabilities
             .find_mode(&configuration.pixel_format, configuration.resolution)
@@ -171,28 +195,20 @@ impl CameraDevice for MacAvFoundationDevice {
         }
 
         let (response_sender, response_receiver) = mpsc::sync_channel(1);
-        self.command_sender
-            .send(WorkerCommand::Start(configuration.clone(), response_sender))
-            .map_err(|error| worker_channel_error("starting the AVFoundation stream", error))?;
-        response_receiver.recv().map_err(|error| {
-            CameraError::new(
-                CameraErrorKind::Backend,
-                format!("AVFoundation worker stopped while starting the stream: {error}"),
-            )
-        })?
+        self.request_worker(
+            WorkerCommand::Start(configuration.clone(), response_sender),
+            &response_receiver,
+            "starting the AVFoundation stream",
+        )
     }
 
     fn stop_stream(&mut self) -> CameraResult<()> {
         let (response_sender, response_receiver) = mpsc::sync_channel(1);
-        self.command_sender
-            .send(WorkerCommand::Stop(response_sender))
-            .map_err(|error| worker_channel_error("stopping the AVFoundation stream", error))?;
-        response_receiver.recv().map_err(|error| {
-            CameraError::new(
-                CameraErrorKind::Backend,
-                format!("AVFoundation worker stopped while stopping the stream: {error}"),
-            )
-        })?
+        self.request_worker(
+            WorkerCommand::Stop(response_sender),
+            &response_receiver,
+            "stopping the AVFoundation stream",
+        )
     }
 
     fn next_event(&mut self, timeout: Duration) -> CameraResult<CameraEvent> {
@@ -201,18 +217,11 @@ impl CameraDevice for MacAvFoundationDevice {
 
     fn control_value(&self, control_id: &CameraControlId) -> CameraResult<CameraControlValue> {
         let (response_sender, response_receiver) = mpsc::sync_channel(1);
-        self.command_sender
-            .send(WorkerCommand::GetControl(
-                control_id.clone(),
-                response_sender,
-            ))
-            .map_err(|error| worker_channel_error("reading an AVFoundation control", error))?;
-        response_receiver.recv().map_err(|error| {
-            CameraError::new(
-                CameraErrorKind::Backend,
-                format!("AVFoundation worker stopped while reading a control: {error}"),
-            )
-        })?
+        self.request_worker(
+            WorkerCommand::GetControl(control_id.clone(), response_sender),
+            &response_receiver,
+            "reading an AVFoundation control",
+        )
     }
 
     fn set_control_value(
@@ -221,41 +230,32 @@ impl CameraDevice for MacAvFoundationDevice {
         value: &CameraControlValue,
     ) -> CameraResult<()> {
         let (response_sender, response_receiver) = mpsc::sync_channel(1);
-        self.command_sender
-            .send(WorkerCommand::SetControl(
-                control_id.clone(),
-                value.clone(),
-                response_sender,
-            ))
-            .map_err(|error| worker_channel_error("setting an AVFoundation control", error))?;
-        response_receiver.recv().map_err(|error| {
-            CameraError::new(
-                CameraErrorKind::Backend,
-                format!("AVFoundation worker stopped while setting a control: {error}"),
-            )
-        })?
+        self.request_worker(
+            WorkerCommand::SetControl(control_id.clone(), value.clone(), response_sender),
+            &response_receiver,
+            "setting an AVFoundation control",
+        )
     }
 
     fn reset_controls(&mut self) -> CameraResult<()> {
         let (response_sender, response_receiver) = mpsc::sync_channel(1);
-        self.command_sender
-            .send(WorkerCommand::ResetControls(response_sender))
-            .map_err(|error| worker_channel_error("resetting AVFoundation controls", error))?;
-        response_receiver.recv().map_err(|error| {
-            CameraError::new(
-                CameraErrorKind::Backend,
-                format!("AVFoundation worker stopped while resetting controls: {error}"),
-            )
-        })?
+        self.request_worker(
+            WorkerCommand::ResetControls(response_sender),
+            &response_receiver,
+            "resetting AVFoundation controls",
+        )
     }
 }
 
 impl Drop for MacAvFoundationDevice {
     fn drop(&mut self) {
-        let _ = self.command_sender.send(WorkerCommand::Shutdown);
-        if let Some(worker) = self.worker.take() {
+        let _ = self.command_sender.try_send(WorkerCommand::Shutdown);
+        if let Some(worker) = self.worker.take()
+            && worker.is_finished()
+        {
             let _ = worker.join();
         }
+        // A worker blocked in an AVFoundation call must not hold shutdown.
     }
 }
 
@@ -385,7 +385,7 @@ fn open_video_device(device_id: &CameraDeviceId) -> CameraResult<MacAvFoundation
             )
         })?;
 
-    match ready_receiver.recv() {
+    match ready_receiver.recv_timeout(WORKER_OPEN_TIMEOUT) {
         Ok(Ok(opened)) => Ok(MacAvFoundationDevice {
             descriptor: opened.descriptor,
             capabilities: opened.capabilities,
@@ -394,14 +394,23 @@ fn open_video_device(device_id: &CameraDeviceId) -> CameraResult<MacAvFoundation
             worker: Some(worker),
         }),
         Ok(Err(error)) => {
-            let _ = worker.join();
+            if worker.is_finished() {
+                let _ = worker.join();
+            }
             Err(error)
         }
         Err(error) => {
-            let _ = worker.join();
+            if worker.is_finished() {
+                let _ = worker.join();
+            }
+            let kind = if matches!(&error, mpsc::RecvTimeoutError::Timeout) {
+                CameraErrorKind::TimedOut
+            } else {
+                CameraErrorKind::Backend
+            };
             Err(CameraError::new(
-                CameraErrorKind::Backend,
-                format!("AVFoundation device thread stopped while opening: {error}"),
+                kind,
+                format!("AVFoundation device thread did not finish opening: {error}"),
             ))
         }
     }
@@ -529,7 +538,7 @@ fn start_mac_stream(
         ));
     }
     session.add_output(&output);
-    if let Err(error) = configure_safe_output_format(&output) {
+    if let Err(error) = configure_output_format(&output, &configuration.pixel_format) {
         session.commit_configuration();
         return Err(error);
     }
@@ -556,7 +565,18 @@ fn stop_mac_stream(stream: &MacStream) {
     stream.session.stop_running();
 }
 
-fn configure_safe_output_format(output: &AVCaptureVideoDataOutput) -> CameraResult<()> {
+fn configure_output_format(
+    output: &AVCaptureVideoDataOutput,
+    source_format: &PixelFormat,
+) -> CameraResult<()> {
+    if *source_format == PixelFormat::Mjpeg {
+        // AVFoundation documents an empty dictionary as device-native output.
+        // In an MJPEG camera mode this preserves the USB JPEG bytes instead of
+        // decoding them into a pixel buffer and re-encoding every capture.
+        let settings = NSDictionary::<NSString, NSObject>::from_slices::<NSString>(&[], &[]);
+        output.set_video_settings(&settings);
+        return Ok(());
+    }
     let available = output
         .get_available_video_cv_pixel_format_types()
         .iter()
@@ -640,10 +660,16 @@ fn find_matching_format(
             continue;
         };
         let dimensions = video_description.get_dimensions();
-        let resolution = Resolution::new(
-            u32::try_from(dimensions.width).ok()?,
-            u32::try_from(dimensions.height).ok()?,
-        );
+        let (Ok(width), Ok(height)) = (
+            u32::try_from(dimensions.width),
+            u32::try_from(dimensions.height),
+        ) else {
+            continue;
+        };
+        if width == 0 || height == 0 {
+            continue;
+        }
+        let resolution = Resolution::new(width, height);
         let pixel_format = pixel_format_from_ostype(video_description.get_codec_type());
         if resolution != configuration.resolution || pixel_format != configuration.pixel_format {
             continue;
@@ -749,6 +775,18 @@ fn frame_from_sample_buffer(
     if let Some(data_buffer) = sample_buffer.get_data_buffer() {
         let length = data_buffer.get_data_length();
         if length != 0 {
+            let actual_format = sample_buffer
+                .get_format_description()
+                .map(|description| pixel_format_from_ostype(description.get_media_subtype()));
+            if configuration.pixel_format != PixelFormat::Mjpeg
+                || actual_format != Some(PixelFormat::Mjpeg)
+            {
+                return Err(CameraError::new(
+                    CameraErrorKind::InvalidConfiguration,
+                    "AVFoundation delivered a compressed format other than the requested native MJPEG",
+                ));
+            }
+            validate_camera_frame_bytes(&PixelFormat::Mjpeg, configuration.resolution, length)?;
             let mut data = vec![0_u8; length];
             data_buffer
                 .copy_data_bytes(0, &mut data)
@@ -801,11 +839,7 @@ fn copy_pixel_buffer(
     result
 }
 
-fn copy_locked_pixel_buffer(
-    pixel_buffer: &CVPixelBuffer,
-    timestamp: Duration,
-    sequence_number: u64,
-) -> CameraResult<Option<CapturedFrame>> {
+fn pixel_buffer_resolution(pixel_buffer: &CVPixelBuffer) -> CameraResult<Resolution> {
     let width = u32::try_from(pixel_buffer.get_width()).map_err(|_| {
         CameraError::new(
             CameraErrorKind::Backend,
@@ -818,6 +852,17 @@ fn copy_locked_pixel_buffer(
             "AVFoundation frame height is too large",
         )
     })?;
+    Ok(Resolution::new(width, height))
+}
+
+fn copy_locked_pixel_buffer(
+    pixel_buffer: &CVPixelBuffer,
+    timestamp: Duration,
+    sequence_number: u64,
+) -> CameraResult<Option<CapturedFrame>> {
+    let resolution = pixel_buffer_resolution(pixel_buffer)?;
+    let width = resolution.width;
+    let height = resolution.height;
     let format = pixel_buffer.get_pixel_format();
 
     if format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange {
@@ -828,6 +873,7 @@ fn copy_locked_pixel_buffer(
     }
 
     if format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange {
+        camera_frame_byte_limit(&PixelFormat::Nv12, Resolution::new(width, height))?;
         return copy_locked_nv12_pixel_buffer(
             pixel_buffer,
             Resolution::new(width, height),
@@ -846,6 +892,7 @@ fn copy_locked_pixel_buffer(
     } else {
         return Ok(None);
     };
+    camera_frame_byte_limit(&pixel_format, Resolution::new(width, height))?;
 
     let row_bytes = usize::try_from(width)
         .ok()
@@ -881,6 +928,12 @@ fn copy_locked_pixel_buffer(
                 "AVFoundation frame buffer is too large",
             )
         })?;
+    if source_length > MAX_CAMERA_RAW_BYTES {
+        return Err(CameraError::new(
+            CameraErrorKind::Backend,
+            "AVFoundation source frame exceeds the 64 MiB limit",
+        ));
+    }
     // SAFETY: The locked pixel buffer guarantees at least stride * height readable bytes.
     let source = unsafe { slice::from_raw_parts(base.cast::<u8>(), source_length) };
     let destination_length = row_bytes
@@ -891,6 +944,11 @@ fn copy_locked_pixel_buffer(
                 "AVFoundation frame buffer is too large",
             )
         })?;
+    validate_camera_frame_bytes(
+        &pixel_format,
+        Resolution::new(width, height),
+        destination_length,
+    )?;
     let mut data = Vec::with_capacity(destination_length);
 
     for row in 0..usize::try_from(height).unwrap_or_default() {
@@ -900,13 +958,7 @@ fn copy_locked_pixel_buffer(
     }
 
     if convert_uyvy {
-        for pair in data.chunks_exact_mut(4) {
-            let u = pair[0];
-            let y0 = pair[1];
-            let v = pair[2];
-            let y1 = pair[3];
-            pair.copy_from_slice(&[y0, u, y1, v]);
-        }
+        uyvy_to_yuyv_in_place(&mut data);
     }
 
     Ok(Some(CapturedFrame {
@@ -916,6 +968,13 @@ fn copy_locked_pixel_buffer(
         resolution: Resolution::new(width, height),
         data: Arc::from(data),
     }))
+}
+
+fn uyvy_to_yuyv_in_place(data: &mut [u8]) {
+    for pair in data.chunks_exact_mut(4) {
+        pair.swap(0, 1);
+        pair.swap(2, 3);
+    }
 }
 
 fn copy_locked_nv12_pixel_buffer(
@@ -963,6 +1022,7 @@ fn copy_locked_nv12_pixel_buffer(
                 "AVFoundation NV12 frame buffer is too large",
             )
         })?;
+    validate_camera_frame_bytes(&PixelFormat::Nv12, resolution, capacity)?;
     let mut data = Vec::with_capacity(capacity);
 
     copy_pixel_buffer_plane(pixel_buffer, 0, width, height, &mut data)?;
@@ -1007,6 +1067,12 @@ fn copy_pixel_buffer_plane(
             "AVFoundation NV12 plane is too large",
         )
     })?;
+    if source_length > MAX_CAMERA_RAW_BYTES {
+        return Err(CameraError::new(
+            CameraErrorKind::Backend,
+            "AVFoundation NV12 source plane exceeds the 64 MiB limit",
+        ));
+    }
     // SAFETY: The locked plane exposes at least stride * plane height readable bytes.
     let source = unsafe { slice::from_raw_parts(base.cast::<u8>(), source_length) };
     for row in 0..visible_rows {
@@ -1086,6 +1152,11 @@ fn capabilities_from_device(device: &AVCaptureDevice) -> CameraCapabilities {
             continue;
         }
 
+        let pixel_format = pixel_format_from_ostype(video_description.get_codec_type());
+        if camera_frame_byte_limit(&pixel_format, Resolution::new(width, height)).is_err() {
+            continue;
+        }
+
         let mut frame_rates = Vec::new();
         for range in &format.video_supported_frame_rate_ranges() {
             if let Some(minimum) = frame_rate_from_duration(range.max_frame_duration()) {
@@ -1099,7 +1170,7 @@ fn capabilities_from_device(device: &AVCaptureDevice) -> CameraCapabilities {
         merge_mode(
             &mut modes,
             CameraMode {
-                pixel_format: pixel_format_from_ostype(video_description.get_codec_type()),
+                pixel_format,
                 resolution: Resolution::new(width, height),
                 frame_rates,
             },
@@ -1122,8 +1193,23 @@ fn frame_rate_from_duration(duration: CMTime) -> Option<FrameRate> {
     frame_rate_from_duration_parts(duration.value, duration.timescale)
 }
 
-fn worker_channel_error<T: std::fmt::Display>(context: &str, error: T) -> CameraError {
-    CameraError::new(CameraErrorKind::Backend, format!("{context}: {error}"))
+fn worker_send_error(context: &str, error: &TrySendError<WorkerCommand>) -> CameraError {
+    let kind = match error {
+        TrySendError::Full(_) => CameraErrorKind::TimedOut,
+        TrySendError::Disconnected(_) => CameraErrorKind::Backend,
+    };
+    CameraError::new(kind, format!("{context}: AVFoundation worker unavailable"))
+}
+
+fn worker_response_error(context: &str, error: mpsc::RecvTimeoutError) -> CameraError {
+    let kind = match &error {
+        mpsc::RecvTimeoutError::Timeout => CameraErrorKind::TimedOut,
+        mpsc::RecvTimeoutError::Disconnected => CameraErrorKind::Backend,
+    };
+    CameraError::new(
+        kind,
+        format!("AVFoundation worker did not respond while {context}: {error}"),
+    )
 }
 
 fn mac_control_descriptors(device: &AVCaptureDevice) -> Vec<CameraControlDescriptor> {
@@ -1143,9 +1229,7 @@ fn mac_control_descriptors(device: &AVCaptureDevice) -> Vec<CameraControlDescrip
         controls.push(CameraControlDescriptor {
             id: CameraControlId::Standard(StandardCameraControl::WhiteBalanceAutomatic),
             name: "Balance des blancs automatique".to_owned(),
-            kind: CameraControlKind::Boolean {
-                default: device.white_balance_mode() != AVCaptureWhiteBalanceModeLocked,
-            },
+            kind: CameraControlKind::Boolean { default: true },
             read_only: false,
         });
     }
@@ -1175,7 +1259,9 @@ fn mac_control_descriptors(device: &AVCaptureDevice) -> Vec<CameraControlDescrip
             name: "Mode d'exposition".to_owned(),
             kind: CameraControlKind::Menu {
                 items: exposure_items,
-                default: mac_exposure_mode_value(device.exposure_mode()),
+                default: mac_exposure_mode_value(
+                    default_exposure_mode(device).unwrap_or_else(|| device.exposure_mode()),
+                ),
             },
             read_only: false,
         });
@@ -1304,33 +1390,8 @@ fn set_mac_control_value(
 }
 
 fn reset_mac_controls(device: &AVCaptureDevice) -> CameraResult<()> {
-    let white_balance = if device
-        .is_white_balance_mode_supported(AVCaptureWhiteBalanceModeContinuousAutoWhiteBalance)
-        .is_true()
-    {
-        Some(AVCaptureWhiteBalanceModeContinuousAutoWhiteBalance)
-    } else if device
-        .is_white_balance_mode_supported(AVCaptureWhiteBalanceModeAutoWhiteBalance)
-        .is_true()
-    {
-        Some(AVCaptureWhiteBalanceModeAutoWhiteBalance)
-    } else {
-        None
-    };
-
-    let exposure = if device
-        .is_exposure_mode_supported(AVCaptureExposureModeContinuousAutoExposure)
-        .is_true()
-    {
-        Some(AVCaptureExposureModeContinuousAutoExposure)
-    } else if device
-        .is_exposure_mode_supported(AVCaptureExposureModeAutoExpose)
-        .is_true()
-    {
-        Some(AVCaptureExposureModeAutoExpose)
-    } else {
-        None
-    };
+    let white_balance = default_white_balance_mode(device);
+    let exposure = default_exposure_mode(device);
 
     if white_balance.is_none() && exposure.is_none() {
         return Ok(());
@@ -1351,6 +1412,38 @@ fn reset_mac_controls(device: &AVCaptureDevice) -> CameraResult<()> {
     }
     device.unlock_for_configuration();
     Ok(())
+}
+
+fn default_white_balance_mode(device: &AVCaptureDevice) -> Option<isize> {
+    if device
+        .is_white_balance_mode_supported(AVCaptureWhiteBalanceModeContinuousAutoWhiteBalance)
+        .is_true()
+    {
+        Some(AVCaptureWhiteBalanceModeContinuousAutoWhiteBalance)
+    } else if device
+        .is_white_balance_mode_supported(AVCaptureWhiteBalanceModeAutoWhiteBalance)
+        .is_true()
+    {
+        Some(AVCaptureWhiteBalanceModeAutoWhiteBalance)
+    } else {
+        None
+    }
+}
+
+fn default_exposure_mode(device: &AVCaptureDevice) -> Option<isize> {
+    if device
+        .is_exposure_mode_supported(AVCaptureExposureModeContinuousAutoExposure)
+        .is_true()
+    {
+        Some(AVCaptureExposureModeContinuousAutoExposure)
+    } else if device
+        .is_exposure_mode_supported(AVCaptureExposureModeAutoExpose)
+        .is_true()
+    {
+        Some(AVCaptureExposureModeAutoExpose)
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]

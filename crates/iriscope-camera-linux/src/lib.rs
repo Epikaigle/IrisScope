@@ -7,6 +7,9 @@ pub const BACKEND_NAME: &str = "V4L2";
 mod platform;
 
 #[cfg(target_os = "linux")]
+mod mplane;
+
+#[cfg(target_os = "linux")]
 pub use platform::{LinuxV4l2Backend, create_backend};
 
 #[cfg(not(target_os = "linux"))]

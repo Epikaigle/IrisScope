@@ -3,6 +3,7 @@
 pub mod camera;
 pub mod capabilities;
 pub mod capture;
+pub mod file_validation;
 pub mod library;
 pub mod session;
 pub mod settings;

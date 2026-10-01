@@ -1,0 +1,12 @@
+pub(crate) const DE400_VENDOR_ID: u16 = 0x21cd;
+pub(crate) const DE400_PRODUCT_ID: u16 = 0x603b;
+pub(crate) const MAX_QUEUED_RECORDING_FRAMES: usize = 8;
+pub(crate) const MAX_QUEUED_PHOTOS: usize = 2;
+pub(crate) const MAX_THUMBNAIL_CACHE_BYTES: usize = 32 * 1024 * 1024;
+pub(crate) const LIBRARY_PAGE_SIZE: usize = 100;
+pub(crate) const NOTICE_INFO: i32 = 0;
+pub(crate) const NOTICE_SUCCESS: i32 = 1;
+pub(crate) const NOTICE_ERROR: i32 = 2;
+pub(crate) type DecodedFrame = (u32, u32, Vec<u8>);
+pub(crate) const MAX_RECORDING_QUEUE_BYTES: usize = 64 * 1024 * 1024;
+pub(crate) const MAX_PHOTO_QUEUE_BYTES: usize = 64 * 1024 * 1024;

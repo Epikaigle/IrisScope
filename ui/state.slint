@@ -1,0 +1,153 @@
+import { DiagnosticData, LibraryItemData, CameraControlUiData, PatientCandidateData } from "./models.slint";
+
+export global AppState {
+    in-out property <int> focused-text-fields: 0;
+    in-out property <image> live-frame;
+    in-out property <string> status-text: "Recherche de l'iridoscope...";
+    in-out property <bool> camera-connected: false;
+    in-out property <bool> is-streaming: false;
+    in-out property <string> patient-first-name: "";
+    in-out property <string> patient-last-name: "";
+    in-out property <string> patient-id: "";
+    in-out property <string> patient-dossier-number: "";
+    in-out property <[PatientCandidateData]> patient-candidates: [];
+    in-out property <bool> patient-search-pending: false;
+    in-out property <bool> patient-action-pending: false;
+    in-out property <int> selected-eye: 0;
+    in-out property <bool> is-video-mode: false;
+    in-out property <bool> is-recording: false;
+    in-out property <bool> recording-finalizing: false;
+    in-out property <string> recording-duration: "00:00";
+    in-out property <bool> is-frozen: false;
+    in-out property <int> zoom-level: 100;
+    in-out property <length> zoom-pan-x: 0px;
+    in-out property <length> zoom-pan-y: 0px;
+    in-out property <int> rotation-angle: 0;
+    in-out property <bool> mirror-horizontal: false;
+    in-out property <bool> mirror-vertical: false;
+    in-out property <int> current-tab: 0;
+    in-out property <bool> sidebar-visible: true;
+    in-out property <bool> iris-fullscreen: false;
+    in-out property <bool> image-controls-open: false;
+    in-out property <bool> viewport-controls-visible: true;
+    in-out property <int> viewport-controls-revision: 0;
+    in-out property <DiagnosticData> diagnostics;
+    in-out property <string> last-capture-message: "";
+    in-out property <bool> show-last-capture: false;
+    in-out property <int> capture-notice-tone: 0;
+    in-out property <int> capture-notice-revision: 0;
+    in-out property <float> shutter-flash-opacity: 0.0;
+    in-out property <image> last-capture-thumbnail;
+    in-out property <bool> has-last-capture: false;
+    in-out property <bool> has-last-capture-thumbnail: false;
+    in-out property <string> last-capture-file-name: "";
+    in-out property <string> last-capture-path: "";
+    in-out property <string> last-capture-file-version: "";
+    in-out property <int> session-photo-count: 0;
+    in-out property <[CameraControlUiData]> camera-controls: [];
+    in-out property <string> settings-capture-directory: "";
+    in-out property <string> settings-filename-template: "";
+    in-out property <int> settings-button-mode: 0;
+    in-out property <int> settings-video-quality: 0;
+    in-out property <int> settings-theme: 0;
+    in-out property <string> settings-iridology-map-path: "";
+    in-out property <string> settings-iridology-symbols-path: "";
+    in-out property <string> settings-feedback: "";
+    in-out property <bool> settings-feedback-is-error: false;
+    in-out property <image> iridology-map-image;
+    in-out property <image> iridology-symbols-image;
+    in-out property <bool> has-iridology-map: false;
+    in-out property <bool> has-iridology-symbols: false;
+    in-out property <int> iridology-reference-mode: 0;
+    in-out property <int> iridology-reference-zoom: 100;
+    in-out property <length> iridology-reference-pan-x: 0px;
+    in-out property <length> iridology-reference-pan-y: 0px;
+    in-out property <[LibraryItemData]> library-items: [];
+    in-out property <int> library-filter: 0;
+    in-out property <int> library-page: 0;
+    in-out property <int> library-total-count: 0;
+    in-out property <int> pending-recordings-count: 0;
+    in-out property <string> library-page-summary: "";
+    in-out property <bool> library-loading: false;
+    in-out property <string> library-error: "";
+    in-out property <int> library-view: 0;
+    in-out property <bool> library-map-open: false;
+    in-out property <string> selected-library-path: "";
+    in-out property <string> selected-library-file-version: "";
+    in-out property <string> selected-library-dossier-number: "";
+    in-out property <bool> show-iridology-grid: false;
+    in-out property <bool> viewer-open: false;
+    in-out property <bool> viewer-loading: false;
+    in-out property <image> viewer-image;
+    in-out property <int> viewer-zoom: 100;
+    in-out property <length> viewer-pan-x: 0px;
+    in-out property <length> viewer-pan-y: 0px;
+    in-out property <bool> viewer-is-video: false;
+    in-out property <bool> viewer-video-playing: false;
+    in-out property <float> viewer-video-progress: 0;
+    in-out property <string> viewer-video-position: "00:00";
+    in-out property <string> viewer-video-duration: "00:00";
+    in-out property <bool> text-field-focused: AppState.focused-text-fields > 0;
+    in-out property <bool> recording-busy: AppState.is-recording || AppState.recording-finalizing;
+
+    callback open-capture-file(string, string);
+    callback open-capture-externally(string, string);
+    callback library-filter-changed(int);
+    callback library-page-changed(int);
+    callback session-changed();
+    callback patient-name-edited();
+    callback select-patient(string);
+    callback create-patient();
+    callback lookup-patient-by-dossier(string);
+    callback trigger-capture();
+    callback toggle-recording();
+    callback clear-session();
+    callback toggle-freeze();
+    callback preview-tab-changed(bool);
+    callback reset-camera-controls();
+    callback set-camera-control-value(string, float);
+    callback step-camera-control(string, int);
+    callback set-camera-control-bool(string, bool);
+    callback cycle-camera-control-menu(string);
+    callback refresh-library();
+    callback recover-pending-recordings();
+    callback assign-selected-capture-to-patient(string, string);
+    callback open-capture-directory();
+    callback update-capture-directory(string);
+    callback update-filename-template(string);
+    callback cycle-physical-button-mode();
+    callback cycle-theme();
+    callback update-video-quality(int);
+    callback update-iridology-map-path(string);
+    callback update-iridology-symbols-path(string);
+    callback close-viewer();
+    callback toggle-viewer-video();
+    callback seek-viewer-video(float);
+
+    public function navigate-to(tab: int) {
+        if (tab == 0 || tab == 2 || tab == 4) && AppState.current-tab != tab {
+            AppState.iris-fullscreen = false;
+            AppState.focused-text-fields = 0;
+            AppState.image-controls-open = false;
+            AppState.library-map-open = false;
+            AppState.current-tab = tab;
+            AppState.preview-tab-changed(tab == 0);
+        }
+    }
+
+    public function dismiss-viewer() {
+        if AppState.viewer-open {
+            AppState.viewer-open = false;
+            AppState.viewer-loading = false;
+            AppState.viewer-zoom = 100;
+            AppState.viewer-pan-x = 0px;
+            AppState.viewer-pan-y = 0px;
+            AppState.close-viewer();
+        }
+    }
+
+    public function show-viewport-controls() {
+        AppState.viewport-controls-visible = true;
+        AppState.viewport-controls-revision += 1;
+    }
+}

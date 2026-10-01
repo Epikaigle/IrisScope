@@ -2,16 +2,17 @@
 
 set -euo pipefail
 
+# Keep local validation usable on machines with limited memory. Override this
+# explicitly when a faster build is preferable.
+export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-1}"
+
 project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$project_root"
 
 echo "Checking formatting"
 cargo fmt --all --check
 
-echo "Checking the native workspace"
-cargo check --workspace --all-targets --locked
-
-echo "Running native lints"
+echo "Checking and linting the native workspace"
 cargo clippy --workspace --all-targets --locked -- -D warnings
 
 echo "Running native tests"
@@ -30,10 +31,7 @@ for target in "${cross_targets[@]}"; do
         exit 1
     fi
 
-    echo "Checking $target"
-    cargo check --workspace --all-targets --target "$target" --locked
-
-    echo "Running lints for $target"
+    echo "Checking and linting $target"
     cargo clippy --workspace --all-targets --target "$target" --locked -- -D warnings
 done
 

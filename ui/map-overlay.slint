@@ -1,0 +1,198 @@
+import { AppButton, AppSlider } from "./controls.slint";
+import { VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { AppState } from "./state.slint";
+import { Design } from "./theme.slint";
+
+export component MapOverlay inherits Rectangle {
+    accessible-role: groupbox;
+    accessible-label: "Carte d'iridologie";
+    forward-focus: map-close-button;
+    init => { map-close-button.focus(); }
+    Rectangle {
+        x: 0px;
+        y: 0px;
+        width: 100%;
+        height: 100%;
+        background: Design.overlay-surface;
+
+        TouchArea {
+            width: 100%;
+            height: 100%;
+            clicked => {}
+
+            VerticalBox {
+                padding: 24px;
+                spacing: 12px;
+
+                HorizontalBox {
+                    height: 64px;
+                    vertical-stretch: 0;
+                    alignment: space-between;
+                    VerticalBox {
+                        spacing: 4px;
+                        Text {
+                            text: "Carte d'iridologie";
+                            color: Design.overlay-text;
+                            font-family: Design.font-display;
+                            font-size: 27px;
+                            font-weight: 400;
+                        }
+                        Text {
+                            text: "Référence visuelle";
+                            color: Design.overlay-text-muted;
+                            font-size: 12px;
+                        }
+                    }
+                    map-close-button := AppButton {
+                        height: 40px;
+                        text: "Fermer";
+                        clicked => { AppState.library-map-open = false; }
+                    }
+                }
+
+                if AppState.has-iridology-map || AppState.has-iridology-symbols: Rectangle {
+                    height: 48px;
+                    vertical-stretch: 0;
+                    border-radius: Design.card-radius;
+                    background: Design.surface;
+                    HorizontalBox {
+                        padding-left: 8px;
+                        padding-right: 8px;
+                        alignment: space-between;
+                        HorizontalBox {
+                            height: 44px;
+                            spacing: 6px;
+                            AppButton {
+                                height: 40px;
+                                text: "Carte";
+                                primary: AppState.iridology-reference-mode == 0;
+                                selected: AppState.iridology-reference-mode == 0;
+                                clicked => {
+                                    AppState.iridology-reference-mode = 0;
+                                    AppState.iridology-reference-zoom = 100;
+                                    AppState.iridology-reference-pan-x = 0px;
+                                    AppState.iridology-reference-pan-y = 0px;
+                                }
+                            }
+                            if AppState.settings-iridology-symbols-path != "": AppButton {
+                                height: 40px;
+                                text: "Signes et symboles";
+                                primary: AppState.iridology-reference-mode == 1;
+                                selected: AppState.iridology-reference-mode == 1;
+                                clicked => {
+                                    AppState.iridology-reference-mode = 1;
+                                    AppState.iridology-reference-zoom = 100;
+                                    AppState.iridology-reference-pan-x = 0px;
+                                    AppState.iridology-reference-pan-y = 0px;
+                                }
+                            }
+                        }
+                        HorizontalBox {
+                            height: 44px;
+                            spacing: 8px;
+                            Text {
+                                text: "Zoom";
+                                color: Design.text-secondary;
+                                vertical-alignment: center;
+                            }
+                            AppSlider {
+                                label: "Zoom de la carte d'iridologie";
+                                width: 150px;
+                                height: 32px;
+                                minimum: 100;
+                                maximum: 200;
+                                value: AppState.iridology-reference-zoom;
+                                enabled: AppState.iridology-reference-mode == 0
+                                    ? AppState.has-iridology-map : AppState.has-iridology-symbols;
+                                changed => {
+                                    AppState.iridology-reference-zoom = round(self.value);
+                                    AppState.iridology-reference-pan-x = 0px;
+                                    AppState.iridology-reference-pan-y = 0px;
+                                }
+                            }
+                            Text {
+                                width: 48px;
+                                text: AppState.iridology-reference-zoom + " %";
+                                color: Design.text;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    background: Design.preview;
+                    border-radius: Design.card-radius;
+                    clip: true;
+
+                    if AppState.iridology-reference-mode == 0 && AppState.has-iridology-map: Image {
+                        source: AppState.iridology-map-image;
+                        width: parent.width * AppState.iridology-reference-zoom / 100.0;
+                        height: parent.height * AppState.iridology-reference-zoom / 100.0;
+                        x: (parent.width - self.width) / 2 + AppState.iridology-reference-pan-x;
+                        y: (parent.height - self.height) / 2 + AppState.iridology-reference-pan-y;
+                        image-fit: contain;
+                    }
+
+                    if AppState.iridology-reference-mode == 1 && AppState.has-iridology-symbols: Image {
+                        source: AppState.iridology-symbols-image;
+                        width: parent.width * AppState.iridology-reference-zoom / 100.0;
+                        height: parent.height * AppState.iridology-reference-zoom / 100.0;
+                        x: (parent.width - self.width) / 2 + AppState.iridology-reference-pan-x;
+                        y: (parent.height - self.height) / 2 + AppState.iridology-reference-pan-y;
+                        image-fit: contain;
+                    }
+
+                    if AppState.iridology-reference-mode == 0 ? !AppState.has-iridology-map : !AppState.has-iridology-symbols: VerticalBox {
+                        alignment: center;
+                        spacing: 12px;
+                        Text {
+                            text: AppState.iridology-reference-mode == 0
+                                ? "Aucune carte d'iridologie sélectionnée"
+                                : "Aucune planche de signes sélectionnée";
+                            color: Design.text;
+                            font-size: 16px;
+                            horizontal-alignment: center;
+                        }
+                        Text {
+                            text: "Ajoutez votre image dans les paramètres pour l'afficher ici.";
+                            color: Design.text-muted;
+                            font-size: 13px;
+                            horizontal-alignment: center;
+                        }
+                        HorizontalBox {
+                            alignment: center;
+                            AppButton {
+                                text: "Ouvrir les paramètres";
+                                height: 40px;
+                                clicked => {
+                                    AppState.library-map-open = false;
+                                    AppState.navigate-to(4);
+                                }
+                            }
+                        }
+                    }
+
+                    TouchArea {
+                        enabled: AppState.iridology-reference-zoom > 100
+                            && (AppState.iridology-reference-mode == 0 ? AppState.has-iridology-map : AppState.has-iridology-symbols);
+                        private property <length> pan-start-x;
+                        private property <length> pan-start-y;
+                        changed pressed => {
+                            if self.pressed {
+                                self.pan-start-x = AppState.iridology-reference-pan-x;
+                                self.pan-start-y = AppState.iridology-reference-pan-y;
+                            }
+                        }
+                        moved => {
+                            if self.pressed {
+                                AppState.iridology-reference-pan-x = self.pan-start-x + self.mouse-x - self.pressed-x;
+                                AppState.iridology-reference-pan-y = self.pan-start-y + self.mouse-y - self.pressed-y;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

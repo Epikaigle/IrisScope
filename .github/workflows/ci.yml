@@ -1,0 +1,85 @@
+name: CI
+
+'on':
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO_BUILD_JOBS: 2
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            camera: iriscope-camera-linux
+          - os: windows-2022
+            camera: iriscope-camera-windows
+          - os: macos-15
+            camera: iriscope-camera-macos
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.89.0
+          components: clippy, rustfmt
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Linux build and headless test dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev xvfb xauth
+      - name: Check formatting
+        if: runner.os == 'Linux'
+        run: cargo fmt --all --check
+      - name: Lint all workspace targets
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Test full workspace in a virtual display
+        if: runner.os == 'Linux'
+        run: xvfb-run -a cargo test --workspace --locked
+      - name: Test portable crates and native camera backend
+        if: runner.os != 'Linux'
+        run: cargo test -p iriscope-core -p iriscope-imaging -p ${{ matrix.camera }} --locked
+      - name: Test application logic without a display
+        if: runner.os != 'Linux'
+        run: cargo test -p iriscope-app --lib --locked
+      - name: Build native release executable
+        run: cargo build --release -p iriscope-app --locked
+      - name: Package portable application
+        run: python scripts/package-release.py
+      - name: Upload portable application and checksum
+        uses: actions/upload-artifact@v4
+        with:
+          name: iriscope-${{ runner.os }}-${{ runner.arch }}
+          path: dist/*
+          if-no-files-found: error
+
+  cross-check:
+    name: Cross-check ${{ matrix.target }}
+    runs-on: ubuntu-24.04
+    env:
+      CARGO_BUILD_JOBS: 2
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-pc-windows-msvc
+          - x86_64-apple-darwin
+          - aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.89.0
+          targets: ${{ matrix.target }}
+          components: clippy
+      - name: Install Linux build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev
+      - name: Lint target compilation
+        run: cargo clippy --workspace --all-targets --target ${{ matrix.target }} --locked -- -D warnings

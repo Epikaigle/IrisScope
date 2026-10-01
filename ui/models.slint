@@ -1,0 +1,49 @@
+export struct DiagnosticData {
+    device-name: string,
+    device-id: string,
+    backend-name: string,
+    usb-info: string,
+    active-format: string,
+    active-resolution: string,
+    active-fps: string,
+    measured-fps: string,
+    decode-time-ms: string,
+    frame-count: int,
+    dropped-frames: int,
+}
+
+export struct LibraryItemData {
+    id: string,
+    file-path: string,
+    file-version: string,
+    title: string,
+    date-time: string,
+    dossier-number: string,
+    eye-label: string,
+    thumbnail: image,
+    has-thumbnail: bool,
+    is-video: bool,
+    can-open-in-app: bool,
+    is-current-patient: bool,
+}
+
+export struct PatientCandidateData {
+    id: string,
+    dossier-number: string,
+    first-name: string,
+    last-name: string,
+    last-capture: string,
+}
+
+export struct CameraControlUiData {
+    key: string,
+    name: string,
+    kind: int, // 0: slider integer, 1: boolean, 2: menu, 3: large integer
+    minimum: float,
+    maximum: float,
+    value: float,
+    value-label: string,
+    boolean-value: bool,
+    menu-label: string,
+    read-only: bool,
+}

@@ -6,7 +6,6 @@ members = [
     "crates/iriscope-camera-windows",
     "crates/iriscope-core",
     "crates/iriscope-imaging",
-    "crates/iriscope-renderer",
 ]
 default-members = ["crates/iriscope-app"]
 resolver = "2"

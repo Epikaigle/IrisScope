@@ -5,7 +5,7 @@ use slint::{
     platform::{Key, PointerEventButton, WindowEvent},
 };
 
-slint::include_modules!();
+use iriscope_app::ui::{AppState, MainWindow};
 
 fn click(window: &MainWindow, x: f32, y: f32) {
     let position = LogicalPosition::new(x, y);
@@ -76,7 +76,7 @@ fn wheel_zoom_and_fullscreen_capture_work_from_the_live_view() {
 
     window.set_selected_eye(1);
     let photos = Rc::new(Cell::new(0));
-    window.on_trigger_capture({
+    window.global::<AppState>().on_trigger_capture({
         let photos = photos.clone();
         move || photos.set(photos.get() + 1)
     });

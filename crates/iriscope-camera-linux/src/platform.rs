@@ -9,7 +9,7 @@ use std::{
 use iriscope_core::camera::{
     CameraBackend, CameraBackendKind, CameraDescriptor, CameraDevice, CameraDeviceEvent,
     CameraDeviceId, CameraError, CameraErrorKind, CameraEvent, CameraResult, CapturedFrame,
-    StreamConfiguration, UsbDeviceIdentity,
+    StreamConfiguration, UsbDeviceIdentity, camera_frame_byte_limit, validate_camera_frame_bytes,
 };
 use iriscope_core::capabilities::{
     CameraCapabilities, CameraControlDescriptor, CameraControlId, CameraControlKind,
@@ -31,7 +31,8 @@ use v4l::{
     framesize::{FrameSizeEnum, Stepwise as StepwiseFrameSize},
     io::{mmap::Stream as MmapStream, traits::CaptureStream},
     v4l_sys::{
-        V4L2_CTRL_FLAG_NEXT_COMPOUND, V4L2_CTRL_FLAG_NEXT_CTRL, v4l2_query_ext_ctrl, v4l2_querymenu,
+        V4L2_CTRL_FLAG_NEXT_COMPOUND, V4L2_CTRL_FLAG_NEXT_CTRL, v4l2_capability,
+        v4l2_query_ext_ctrl, v4l2_querymenu,
     },
     v4l2,
     video::{Capture, capture::Parameters as CaptureParameters},
@@ -39,11 +40,19 @@ use v4l::{
 
 const MAX_EXPANDED_STEPWISE_MODES: usize = 4_096;
 const MAX_EXPANDED_FRAME_RATES: usize = 512;
+const MAX_CONTROL_QUERY_ATTEMPTS: usize = 1_024;
+const MAX_MENU_QUERY_ATTEMPTS: usize = 256;
+const MAX_MENU_ITEMS: usize = 128;
 // Keep enough buffers queued for uninterrupted USB capture. The driver may
 // allocate more buffers than requested, so draining needs a separate limit.
 const MMAP_BUFFER_COUNT: u32 = 4;
 const MAX_DRAINED_FRAMES: u32 = 64;
 const POLL_IN: i16 = 0x0001;
+
+enum NativeStream {
+    Single(MmapStream<'static>),
+    Multi(super::mplane::MultiPlaneStream),
+}
 
 /// Native Linux camera backend using `V4L2` device nodes.
 #[derive(Debug, Default)]
@@ -135,13 +144,20 @@ impl CameraBackend for LinuxV4l2Backend {
         })?;
         let device = Device::with_path(path)
             .map_err(|error| camera_io_error("opening the V4L2 device", &error))?;
-        let (capabilities, native_controls) = discover_capabilities(&device)?;
+        let buffer_type = preferred_capture_type(node_capabilities(&device)?).ok_or_else(|| {
+            CameraError::new(
+                CameraErrorKind::Unsupported,
+                "V4L2 node does not offer a supported streaming capture API",
+            )
+        })?;
+        let (capabilities, native_controls) = discover_capabilities(&device, buffer_type)?;
 
         Ok(Box::new(LinuxV4l2Device {
             device,
             descriptor,
             capabilities,
             native_controls,
+            buffer_type,
             stream: None,
             configuration: None,
             sequence_number: 0,
@@ -156,7 +172,8 @@ struct LinuxV4l2Device {
     descriptor: CameraDescriptor,
     capabilities: CameraCapabilities,
     native_controls: HashMap<CameraControlId, NativeControl>,
-    stream: Option<MmapStream<'static>>,
+    buffer_type: BufferType,
+    stream: Option<NativeStream>,
     configuration: Option<StreamConfiguration>,
     sequence_number: u64,
     last_native_sequence: Option<u32>,
@@ -173,7 +190,22 @@ impl CameraDevice for LinuxV4l2Device {
     }
 
     fn start_stream(&mut self, configuration: &StreamConfiguration) -> CameraResult<()> {
+        let frame_limit =
+            camera_frame_byte_limit(&configuration.pixel_format, configuration.resolution)?;
         self.stop_stream()?;
+
+        if matches!(self.buffer_type, BufferType::VideoCaptureMplane) {
+            let (stream, applied) =
+                super::mplane::MultiPlaneStream::start(&self.device, configuration).map_err(
+                    |error| camera_io_error("starting V4L2 multi-planar stream", &error),
+                )?;
+            self.stream = Some(NativeStream::Multi(stream));
+            self.configuration = Some(applied);
+            self.sequence_number = 0;
+            self.last_native_sequence = None;
+            self.first_native_timestamp = None;
+            return Ok(());
+        }
 
         let mut format_error = None;
         let mut accepted_format = false;
@@ -189,6 +221,15 @@ impl CameraDevice for LinuxV4l2Device {
                         && applied.height == requested.height
                         && map_pixel_format(applied.fourcc) == configuration.pixel_format =>
                 {
+                    if applied.size == 0 || applied.size as usize > frame_limit {
+                        return Err(CameraError::new(
+                            CameraErrorKind::InvalidConfiguration,
+                            format!(
+                                "V4L2 frame allocation of {} bytes exceeds the safe limit of {frame_limit}",
+                                applied.size
+                            ),
+                        ));
+                    }
                     accepted_format = true;
                     break;
                 }
@@ -244,7 +285,7 @@ impl CameraDevice for LinuxV4l2Device {
             MmapStream::with_buffers(&self.device, BufferType::VideoCapture, MMAP_BUFFER_COUNT)
                 .map_err(|error| camera_io_error("allocating V4L2 MMAP stream buffers", &error))?;
 
-        self.stream = Some(stream);
+        self.stream = Some(NativeStream::Single(stream));
         self.configuration = Some(StreamConfiguration {
             frame_rate: applied_frame_rate,
             ..configuration.clone()
@@ -266,26 +307,38 @@ impl CameraDevice for LinuxV4l2Device {
     }
 
     fn next_event(&mut self, timeout: Duration) -> CameraResult<CameraEvent> {
+        let configuration = self.configuration.clone().ok_or_else(|| {
+            CameraError::new(CameraErrorKind::Backend, "stream configuration is missing")
+        })?;
         let stream = self.stream.as_mut().ok_or_else(|| {
             CameraError::new(CameraErrorKind::Backend, "V4L2 stream is not running")
         })?;
 
         let started_at = Instant::now();
-        stream.set_timeout(timeout.min(Duration::from_millis(i32::MAX as u64)));
 
         // V4L2 dequeues completed buffers in capture order. If rendering or
         // decoding was slower than the camera, returning only one buffer here
         // would replay the backlog and make the preview progressively older.
-        let (payload, metadata) = copy_fresh_mmap_frame(stream, timeout, started_at)?;
+        let (payload, metadata) = match stream {
+            NativeStream::Single(stream) => {
+                stream.set_timeout(timeout.min(Duration::from_millis(i32::MAX as u64)));
+                copy_fresh_mmap_frame(
+                    stream,
+                    timeout,
+                    started_at,
+                    &configuration.pixel_format,
+                    configuration.resolution,
+                )?
+            }
+            NativeStream::Multi(stream) => stream
+                .next_frame(timeout)
+                .map_err(|error| map_capture_error(&error))?,
+        };
 
         let captured_since_last =
             native_sequence_increment(self.last_native_sequence, metadata.sequence);
         self.sequence_number = self.sequence_number.saturating_add(captured_since_last);
         self.last_native_sequence = Some(metadata.sequence);
-
-        let configuration = self.configuration.as_ref().ok_or_else(|| {
-            CameraError::new(CameraErrorKind::Backend, "stream configuration is missing")
-        })?;
 
         let sec = u64::try_from(metadata.timestamp.sec).unwrap_or_default();
         let usec = u64::try_from(metadata.timestamp.usec).unwrap_or_default();
@@ -336,23 +389,98 @@ impl CameraDevice for LinuxV4l2Device {
     }
 
     fn reset_controls(&mut self) -> CameraResult<()> {
-        for control in self
+        let mut controls = self
             .native_controls
             .values()
             .filter(|control| control.writable)
+            .collect::<Vec<_>>();
+        controls.sort_unstable_by_key(|control| control.native_id);
+        let mut first_error = None;
+
+        // Put supported automatic controls in manual mode while their
+        // dependent controls are restored. Otherwise V4L2 marks, for example,
+        // white-balance temperature inactive and its old value survives reset.
+        for control in controls
+            .iter()
+            .filter(|control| is_automatic_control(control.native_id))
         {
-            self.device
-                .set_control(Control {
+            let manual_value = match control.native_id {
+                V4L2_CID_AUTO_WHITE_BALANCE => Some(ControlValue::Boolean(false)),
+                V4L2_CID_EXPOSURE_AUTO if control.menu_values.contains(&1) => {
+                    Some(ControlValue::Integer(1))
+                }
+                _ => None,
+            };
+            if let Some(value) = manual_value
+                && let Err(error) = self.device.set_control(Control {
                     id: control.native_id,
-                    value: control.native_default(),
+                    value,
                 })
-                .map_err(|error| {
-                    camera_io_error(&format!("resetting V4L2 control {}", control.name), &error)
-                })?;
+            {
+                first_error.get_or_insert_with(|| {
+                    camera_io_error(&format!("unlocking V4L2 control {}", control.name), &error)
+                });
+            }
         }
 
-        Ok(())
+        let active_flags = match query_control_descriptions(&self.device) {
+            Ok(descriptions) => descriptions
+                .into_iter()
+                .map(|description| (description.id, description.flags))
+                .collect::<HashMap<_, _>>(),
+            Err(error) => {
+                first_error.get_or_insert(error);
+                HashMap::new()
+            }
+        };
+
+        for control in controls
+            .iter()
+            .filter(|control| !is_automatic_control(control.native_id))
+        {
+            if active_flags.get(&control.native_id).is_some_and(|flags| {
+                flags.intersects(ControlFlags::INACTIVE | ControlFlags::DISABLED)
+            }) {
+                continue;
+            }
+            if let Err(error) = self.device.set_control(Control {
+                id: control.native_id,
+                value: control.native_default(),
+            }) {
+                first_error.get_or_insert_with(|| {
+                    camera_io_error(&format!("resetting V4L2 control {}", control.name), &error)
+                });
+            }
+        }
+
+        // Restore automatic modes last so the manual defaults remain recorded
+        // even when those controls become inactive again.
+        for control in controls
+            .iter()
+            .filter(|control| is_automatic_control(control.native_id))
+        {
+            if let Err(error) = self.device.set_control(Control {
+                id: control.native_id,
+                value: control.native_default(),
+            }) {
+                first_error.get_or_insert_with(|| {
+                    camera_io_error(&format!("resetting V4L2 control {}", control.name), &error)
+                });
+            }
+        }
+
+        first_error.map_or(Ok(()), Err)
     }
+}
+
+const V4L2_CID_AUTO_WHITE_BALANCE: u32 = 0x0098_090c;
+const V4L2_CID_EXPOSURE_AUTO: u32 = 0x009a_0901;
+
+fn is_automatic_control(native_id: u32) -> bool {
+    matches!(
+        native_id,
+        V4L2_CID_AUTO_WHITE_BALANCE | V4L2_CID_EXPOSURE_AUTO
+    )
 }
 
 fn frame_rate_from_interval(interval: Fraction) -> CameraResult<FrameRate> {
@@ -368,6 +496,8 @@ fn copy_fresh_mmap_frame(
     stream: &mut MmapStream<'_>,
     timeout: Duration,
     started_at: Instant,
+    pixel_format: &PixelFormat,
+    resolution: Resolution,
 ) -> CameraResult<(Arc<[u8]>, BufferMetadata)> {
     let handle = stream.handle();
     for skipped in 0..MAX_DRAINED_FRAMES {
@@ -382,7 +512,12 @@ fn copy_fresh_mmap_frame(
                 .map_err(|error| camera_io_error("polling the V4L2 frame queue", &error))?
                 != 0;
         if !ready {
-            let bytes_used = (metadata.bytesused as usize).min(buffer.len());
+            let bytes_used = bounded_mmap_frame_length(
+                buffer.len(),
+                metadata.bytesused as usize,
+                pixel_format,
+                resolution,
+            )?;
             let fallback = (Arc::from(&buffer[..bytes_used]), *metadata);
 
             if skipped > 0 && skipped + 1 < MAX_DRAINED_FRAMES {
@@ -405,7 +540,12 @@ fn copy_fresh_mmap_frame(
                     );
                     let (fresh_buffer, fresh_metadata) =
                         CaptureStream::next(stream).map_err(|error| map_capture_error(&error))?;
-                    let bytes_used = (fresh_metadata.bytesused as usize).min(fresh_buffer.len());
+                    let bytes_used = bounded_mmap_frame_length(
+                        fresh_buffer.len(),
+                        fresh_metadata.bytesused as usize,
+                        pixel_format,
+                        resolution,
+                    )?;
                     return Ok((Arc::from(&fresh_buffer[..bytes_used]), *fresh_metadata));
                 }
             }
@@ -414,6 +554,25 @@ fn copy_fresh_mmap_frame(
         }
     }
     unreachable!("the final dequeued frame is always returned")
+}
+
+fn bounded_mmap_frame_length(
+    mapped: usize,
+    used: usize,
+    pixel_format: &PixelFormat,
+    resolution: Resolution,
+) -> CameraResult<usize> {
+    let limit = camera_frame_byte_limit(pixel_format, resolution)?;
+    if mapped > limit || used > mapped {
+        return Err(CameraError::new(
+            CameraErrorKind::Backend,
+            format!(
+                "V4L2 frame mapping ({mapped} bytes) or payload ({used} bytes) exceeds its safe bounds"
+            ),
+        ));
+    }
+    validate_camera_frame_bytes(pixel_format, resolution, used)?;
+    Ok(used)
 }
 
 fn native_sequence_increment(previous: Option<u32>, current: u32) -> u64 {
@@ -511,7 +670,7 @@ impl NativeControl {
             (NativeControlKind::Integer, CameraControlValue::Integer(value)) => {
                 *value >= self.minimum
                     && *value <= self.maximum
-                    && (*value - self.minimum) % self.step == 0
+                    && (i128::from(*value) - i128::from(self.minimum)) % i128::from(self.step) == 0
             }
             (NativeControlKind::Boolean, CameraControlValue::Boolean(_)) => true,
             (NativeControlKind::Menu, CameraControlValue::Menu(value)) => {
@@ -561,29 +720,38 @@ impl NativeControl {
 
 fn discover_capabilities(
     device: &Device,
+    buffer_type: BufferType,
 ) -> CameraResult<(CameraCapabilities, HashMap<CameraControlId, NativeControl>)> {
-    let modes = discover_modes(device)?;
+    let modes = discover_modes(device, buffer_type)?;
     let (controls, native_controls) = discover_controls(device)?;
 
     Ok((CameraCapabilities { modes, controls }, native_controls))
 }
 
-fn discover_modes(device: &Device) -> CameraResult<Vec<CameraMode>> {
-    let formats = device
-        .enum_formats()
-        .map_err(|error| camera_io_error("enumerating V4L2 pixel formats", &error))?;
+fn discover_modes(device: &Device, buffer_type: BufferType) -> CameraResult<Vec<CameraMode>> {
+    let formats = if matches!(buffer_type, BufferType::VideoCaptureMplane) {
+        super::mplane::enum_formats(device)
+    } else {
+        device
+            .enum_formats()
+            .map(|formats| formats.into_iter().map(|format| format.fourcc).collect())
+    }
+    .map_err(|error| camera_io_error("enumerating V4L2 pixel formats", &error))?;
     let mut modes = Vec::new();
 
     for format in formats {
-        let pixel_format = map_pixel_format(format.fourcc);
+        let pixel_format = map_pixel_format(format);
         let frame_sizes = device
-            .enum_framesizes(format.fourcc)
+            .enum_framesizes(format)
             .map_err(|error| camera_io_error("enumerating V4L2 frame sizes", &error))?;
 
         for frame_size in frame_sizes {
             for resolution in expand_frame_sizes(frame_size.size) {
+                if camera_frame_byte_limit(&pixel_format, resolution).is_err() {
+                    continue;
+                }
                 let intervals = device
-                    .enum_frameintervals(format.fourcc, resolution.width, resolution.height)
+                    .enum_frameintervals(format, resolution.width, resolution.height)
                     .map_err(|error| camera_io_error("enumerating V4L2 frame intervals", &error))?;
                 let mut frame_rates = Vec::new();
 
@@ -634,7 +802,8 @@ fn query_control_descriptions(device: &Device) -> CameraResult<Vec<ControlDescri
     // SAFETY: The all-zero value is the documented starting state for `VIDIOC_QUERY_EXT_CTRL`.
     let mut query = unsafe { mem::zeroed::<v4l2_query_ext_ctrl>() };
 
-    loop {
+    for _ in 0..MAX_CONTROL_QUERY_ATTEMPTS {
+        let previous_id = query.id & !(V4L2_CTRL_FLAG_NEXT_CTRL | V4L2_CTRL_FLAG_NEXT_COMPOUND);
         query.id |= V4L2_CTRL_FLAG_NEXT_CTRL | V4L2_CTRL_FLAG_NEXT_COMPOUND;
         // SAFETY: `query` is a valid writable `v4l2_query_ext_ctrl` for the lifetime of the call,
         // and the file descriptor belongs to the open device retained by `device`.
@@ -648,12 +817,18 @@ fn query_control_descriptions(device: &Device) -> CameraResult<Vec<ControlDescri
 
         match result {
             Ok(()) => {
+                if !controls.is_empty() && query.id <= previous_id {
+                    return Err(CameraError::new(
+                        CameraErrorKind::Backend,
+                        "V4L2 repeated a camera control while enumerating it",
+                    ));
+                }
                 let mut description = ControlDescription::from(query);
                 if matches!(
                     description.typ,
                     ControlType::Menu | ControlType::IntegerMenu
                 ) {
-                    description.items = Some(query_menu_items(device, &description));
+                    description.items = Some(query_menu_items(device, &description)?);
                 }
                 controls.push(description);
             }
@@ -669,20 +844,44 @@ fn query_control_descriptions(device: &Device) -> CameraResult<Vec<ControlDescri
         }
     }
 
-    Ok(controls)
+    if controls.len() >= MAX_CONTROL_QUERY_ATTEMPTS {
+        Err(CameraError::new(
+            CameraErrorKind::Backend,
+            "V4L2 camera advertised too many controls",
+        ))
+    } else {
+        Ok(controls)
+    }
 }
 
-fn query_menu_items(device: &Device, description: &ControlDescription) -> Vec<(u32, MenuItem)> {
-    let mut items = Vec::new();
-    let Ok(minimum) = u32::try_from(description.minimum) else {
-        return items;
+fn menu_query_indices(minimum: i64, maximum: i64, step: u64) -> CameraResult<Vec<u32>> {
+    let invalid = || {
+        CameraError::new(
+            CameraErrorKind::InvalidConfiguration,
+            format!(
+                "V4L2 menu range {minimum}..={maximum} step {step} is invalid or exceeds safe limits"
+            ),
+        )
     };
-    let Ok(maximum) = u32::try_from(description.maximum) else {
-        return items;
-    };
-    let step = u32::try_from(description.step).unwrap_or(u32::MAX).max(1);
+    let minimum = u32::try_from(minimum).map_err(|_| invalid())?;
+    let maximum = u32::try_from(maximum).map_err(|_| invalid())?;
+    let step = u32::try_from(step).map_err(|_| invalid())?;
+    if step == 0 || maximum < minimum {
+        return Err(invalid());
+    }
+    let attempts = (u64::from(maximum) - u64::from(minimum)) / u64::from(step) + 1;
+    if attempts > MAX_MENU_QUERY_ATTEMPTS as u64 {
+        return Err(invalid());
+    }
+    Ok((minimum..=maximum).step_by(step as usize).collect())
+}
 
-    for index in (minimum..=maximum).step_by(step as usize) {
+fn query_menu_items(
+    device: &Device,
+    description: &ControlDescription,
+) -> CameraResult<Vec<(u32, MenuItem)>> {
+    let mut items = Vec::new();
+    for index in menu_query_indices(description.minimum, description.maximum, description.step)? {
         // SAFETY: The all-zero value is a valid base for a V4L2 query-menu request.
         let mut query = unsafe { mem::zeroed::<v4l2_querymenu>() };
         query.id = description.id;
@@ -700,17 +899,26 @@ fn query_menu_items(device: &Device, description: &ControlDescription) -> Vec<(u
             && let Ok(item) = MenuItem::try_from((description.typ, query))
         {
             items.push((index, item));
+            if items.len() > MAX_MENU_ITEMS {
+                return Err(CameraError::new(
+                    CameraErrorKind::InvalidConfiguration,
+                    format!(
+                        "V4L2 menu {} contains more than {MAX_MENU_ITEMS} items",
+                        description.name
+                    ),
+                ));
+            }
         }
     }
 
-    items
+    Ok(items)
 }
 
-fn map_pixel_format(fourcc: FourCC) -> PixelFormat {
+pub(super) fn map_pixel_format(fourcc: FourCC) -> PixelFormat {
     match &fourcc.repr {
         b"MJPG" => PixelFormat::Mjpeg,
         b"YUYV" | b"YUY2" => PixelFormat::Yuyv,
-        b"NV12" => PixelFormat::Nv12,
+        b"NV12" | b"NM12" => PixelFormat::Nv12,
         b"BGRA" | b"BGR4" => PixelFormat::Bgra8,
         bytes => PixelFormat::Other(fourcc_label(*bytes)),
     }
@@ -1038,10 +1246,7 @@ fn inspect_node(node: &Node) -> CameraResult<Option<CameraDescriptor>> {
         .query_caps()
         .map_err(|error| camera_io_error("reading V4L2 capabilities", &error))?;
 
-    if !capabilities
-        .capabilities
-        .intersects(Flags::VIDEO_CAPTURE | Flags::VIDEO_CAPTURE_MPLANE)
-    {
+    if preferred_capture_type(node_capabilities(&device)?).is_none() {
         return Ok(None);
     }
 
@@ -1055,6 +1260,52 @@ fn inspect_node(node: &Node) -> CameraResult<Option<CameraDescriptor>> {
         backend: CameraBackendKind::V4l2,
         usb,
     }))
+}
+
+fn supports_single_plane_capture(flags: Flags) -> bool {
+    flags.contains(Flags::VIDEO_CAPTURE | Flags::STREAMING)
+}
+
+fn preferred_capture_type(flags: Flags) -> Option<BufferType> {
+    if flags.intersects(Flags::VIDEO_M2M | Flags::VIDEO_M2M_MPLANE) {
+        return None;
+    }
+    if supports_single_plane_capture(flags) {
+        Some(BufferType::VideoCapture)
+    } else if flags.contains(Flags::VIDEO_CAPTURE_MPLANE | Flags::STREAMING) {
+        Some(BufferType::VideoCaptureMplane)
+    } else {
+        None
+    }
+}
+
+fn node_capabilities(device: &Device) -> CameraResult<Flags> {
+    // v4l 0.14 exposes only `capabilities`, which describes the whole device.
+    // Nodes with DEVICE_CAPS can have a different buffer type (for example a
+    // metadata or multiplanar node), so inspect `device_caps` before offering
+    // the node to callers of a matching capture stream.
+    let mut raw: v4l2_capability = unsafe { mem::zeroed() };
+    unsafe {
+        v4l2::ioctl(
+            device.handle().fd(),
+            v4l2::vidioc::VIDIOC_QUERYCAP,
+            (&raw mut raw).cast(),
+        )
+    }
+    .map_err(|error| camera_io_error("reading V4L2 node capabilities", &error))?;
+    Ok(effective_node_capabilities(
+        raw.capabilities,
+        raw.device_caps,
+    ))
+}
+
+fn effective_node_capabilities(device_flags: u32, node_flags: u32) -> Flags {
+    let flags = Flags::from_bits_truncate(device_flags);
+    if flags.contains(Flags::DEVICE_CAPS) {
+        Flags::from_bits_truncate(node_flags)
+    } else {
+        flags
+    }
 }
 
 fn stable_device_id(
@@ -1157,6 +1408,7 @@ mod tests {
         },
     };
     use v4l::{
+        capability::Flags as CapabilityFlags,
         control::{Description as ControlDescription, Flags as ControlFlags, MenuItem, Type},
         fraction::Fraction,
         frameinterval::Stepwise as StepwiseFrameInterval,
@@ -1164,10 +1416,105 @@ mod tests {
     };
 
     use super::{
-        LinuxV4l2Backend, expand_stepwise_frame_intervals, expand_stepwise_frame_sizes,
-        format_bcd_revision, fourcc_candidates, frame_rate_from_interval, map_control_description,
-        map_pixel_format, native_sequence_increment, stable_device_id,
+        LinuxV4l2Backend, bounded_mmap_frame_length, effective_node_capabilities,
+        expand_stepwise_frame_intervals, expand_stepwise_frame_sizes, format_bcd_revision,
+        fourcc_candidates, frame_rate_from_interval, map_control_description, map_pixel_format,
+        menu_query_indices, native_sequence_increment, preferred_capture_type, stable_device_id,
+        supports_single_plane_capture,
     };
+
+    #[test]
+    fn menu_query_ranges_are_bounded_and_preserve_steps() {
+        assert_eq!(menu_query_indices(1, 5, 2).unwrap(), vec![1, 3, 5]);
+        assert_eq!(menu_query_indices(0, 255, 1).unwrap().len(), 256);
+        assert_eq!(menu_query_indices(5, 5, 1).unwrap(), vec![5]);
+        for (minimum, maximum, step) in [
+            (-1, 5, 1),
+            (0, -1, 1),
+            (5, 4, 1),
+            (0, 5, 0),
+            (0, 256, 1),
+            (0, i64::MAX, 1),
+            (0, 5, u64::MAX),
+        ] {
+            assert!(menu_query_indices(minimum, maximum, step).is_err());
+        }
+    }
+
+    #[test]
+    fn mmap_payload_is_checked_before_copying() {
+        let resolution = Resolution::new(1280, 1024);
+        assert_eq!(
+            bounded_mmap_frame_length(1024, 512, &PixelFormat::Mjpeg, resolution).unwrap(),
+            512
+        );
+        assert!(bounded_mmap_frame_length(1024, 1025, &PixelFormat::Mjpeg, resolution).is_err());
+        assert!(
+            bounded_mmap_frame_length(32 * 1024 * 1024 + 1, 1024, &PixelFormat::Mjpeg, resolution)
+                .is_err()
+        );
+        assert!(bounded_mmap_frame_length(1024, 0, &PixelFormat::Mjpeg, resolution).is_err());
+    }
+
+    #[test]
+    fn only_streaming_single_plane_video_nodes_are_enumerated() {
+        assert!(supports_single_plane_capture(
+            CapabilityFlags::VIDEO_CAPTURE | CapabilityFlags::STREAMING
+        ));
+        assert!(!supports_single_plane_capture(
+            CapabilityFlags::VIDEO_CAPTURE_MPLANE | CapabilityFlags::STREAMING
+        ));
+        assert!(!supports_single_plane_capture(
+            CapabilityFlags::META_CAPTURE | CapabilityFlags::STREAMING
+        ));
+        assert!(!supports_single_plane_capture(
+            CapabilityFlags::VIDEO_CAPTURE
+        ));
+    }
+
+    #[test]
+    fn capture_api_prefers_de400_single_plane_and_accepts_mplane_only_nodes() {
+        assert!(matches!(
+            preferred_capture_type(
+                CapabilityFlags::VIDEO_CAPTURE
+                    | CapabilityFlags::VIDEO_CAPTURE_MPLANE
+                    | CapabilityFlags::STREAMING
+            ),
+            Some(v4l::buffer::Type::VideoCapture)
+        ));
+        assert!(matches!(
+            preferred_capture_type(
+                CapabilityFlags::VIDEO_CAPTURE_MPLANE | CapabilityFlags::STREAMING
+            ),
+            Some(v4l::buffer::Type::VideoCaptureMplane)
+        ));
+        assert!(
+            preferred_capture_type(
+                CapabilityFlags::VIDEO_M2M_MPLANE
+                    | CapabilityFlags::VIDEO_CAPTURE_MPLANE
+                    | CapabilityFlags::STREAMING
+            )
+            .is_none()
+        );
+        assert!(preferred_capture_type(CapabilityFlags::VIDEO_CAPTURE_MPLANE).is_none());
+    }
+
+    #[test]
+    fn device_caps_override_global_caps_for_each_video_node() {
+        let global = (CapabilityFlags::DEVICE_CAPS
+            | CapabilityFlags::VIDEO_CAPTURE
+            | CapabilityFlags::STREAMING)
+            .bits();
+        let metadata_node = (CapabilityFlags::META_CAPTURE | CapabilityFlags::STREAMING).bits();
+        assert!(!supports_single_plane_capture(effective_node_capabilities(
+            global,
+            metadata_node
+        )));
+        assert!(supports_single_plane_capture(effective_node_capabilities(
+            (CapabilityFlags::VIDEO_CAPTURE | CapabilityFlags::STREAMING).bits(),
+            metadata_node
+        )));
+    }
 
     #[test]
     fn negotiated_v4l2_interval_sets_the_actual_frame_rate() {
@@ -1347,6 +1694,33 @@ mod tests {
         );
         assert!(native.validate_value(&CameraControlValue::Menu(1)).is_ok());
         assert!(native.validate_value(&CameraControlValue::Menu(3)).is_err());
+    }
+
+    #[test]
+    fn validates_full_range_integer_control_without_overflow() {
+        let description = ControlDescription {
+            id: 0x0098_0900,
+            typ: Type::Integer64,
+            name: "Wide integer".to_owned(),
+            minimum: i64::MIN,
+            maximum: i64::MAX,
+            step: 2,
+            default: 0,
+            flags: ControlFlags::empty(),
+            items: None,
+        };
+        let (_, native) = map_control_description(&description).expect("valid integer control");
+
+        assert!(
+            native
+                .validate_value(&CameraControlValue::Integer(i64::MAX - 1))
+                .is_ok()
+        );
+        assert!(
+            native
+                .validate_value(&CameraControlValue::Integer(i64::MAX))
+                .is_err()
+        );
     }
 
     #[test]

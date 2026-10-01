@@ -34,6 +34,30 @@ impl fmt::Display for ImagingError {
 
 impl Error for ImagingError {}
 
+const MAX_IMAGE_DIMENSION: u32 = 8_192;
+const MAX_IMAGE_PIXELS: u64 = 16_000_000;
+const MAX_ENCODED_IMAGE_BYTES: usize = 32 * 1024 * 1024;
+
+fn image_pixel_count(width: u32, height: u32) -> Result<usize, ImagingError> {
+    let pixels = u64::from(width) * u64::from(height);
+    if width == 0
+        || height == 0
+        || width > MAX_IMAGE_DIMENSION
+        || height > MAX_IMAGE_DIMENSION
+        || pixels > MAX_IMAGE_PIXELS
+    {
+        return Err(ImagingError::InvalidBufferSize);
+    }
+    usize::try_from(pixels).map_err(|_| ImagingError::InvalidBufferSize)
+}
+
+fn validate_rgb8(rgb: &[u8], width: u32, height: u32) -> Result<(), ImagingError> {
+    if image_pixel_count(width, height)?.checked_mul(3) != Some(rgb.len()) {
+        return Err(ImagingError::InvalidBufferSize);
+    }
+    Ok(())
+}
+
 // Standard JPEG Annex K default Huffman tables (Luminance DC, Chrominance DC, Luminance AC, Chrominance AC).
 // Many UVC cameras omit these tables in MJPEG mode to reduce frame payload size.
 const DEFAULT_DHT: &[u8] = &[
@@ -131,19 +155,30 @@ pub fn ensure_jpeg_has_dht(jpeg_data: &[u8]) -> std::borrow::Cow<'_, [u8]> {
 /// Returns an [`ImagingError::JpegDecode`] if the JPEG bitstream is invalid or corrupted.
 #[allow(clippy::match_same_arms)]
 pub fn decode_mjpeg_to_rgb8(jpeg_data: &[u8]) -> Result<(u32, u32, Vec<u8>), ImagingError> {
+    if jpeg_data.len() > MAX_ENCODED_IMAGE_BYTES {
+        return Err(ImagingError::JpegDecode(
+            "JPEG input exceeds the 32 MiB limit".to_string(),
+        ));
+    }
     let patched_data = ensure_jpeg_has_dht(jpeg_data);
 
     let mut decoder = JpegDecoder::new(ZCursor::new(patched_data.as_ref()));
-    let pixels = decoder
-        .decode()
+    decoder
+        .decode_headers()
         .map_err(|err| ImagingError::JpegDecode(format!("{err:?}")))?;
-
     let info = decoder
         .info()
         .ok_or_else(|| ImagingError::JpegDecode("missing JPEG header metadata".to_string()))?;
-
     let width = u32::from(info.width);
     let height = u32::from(info.height);
+    if image_pixel_count(width, height).is_err() {
+        return Err(ImagingError::JpegDecode(
+            "JPEG dimensions exceed the 8192-pixel or 16 megapixel limit".to_string(),
+        ));
+    }
+    let pixels = decoder
+        .decode()
+        .map_err(|err| ImagingError::JpegDecode(format!("{err:?}")))?;
 
     // Ensure output is RGB8
     let rgb_bytes = match decoder.output_colorspace() {
@@ -174,12 +209,48 @@ pub fn decode_mjpeg_to_rgb8(jpeg_data: &[u8]) -> Result<(u32, u32, Vec<u8>), Ima
 ///
 /// Returns `ImagingError::ImageDecode` when the input cannot be decoded.
 pub fn decode_image_to_rgb8(image_data: &[u8]) -> Result<(u32, u32, Vec<u8>), ImagingError> {
-    let decoded = image::load_from_memory(image_data)
+    decode_reference_image_to_rgb8(image_data)
+}
+
+/// Decodes a reference image while bounding its dimensions and decoder allocation.
+///
+/// # Errors
+///
+/// Returns `ImagingError::ImageDecode` for unsupported, damaged or oversized images.
+pub fn decode_reference_image_to_rgb8(
+    image_data: &[u8],
+) -> Result<(u32, u32, Vec<u8>), ImagingError> {
+    use std::io::Cursor;
+
+    if image_data.len() > MAX_ENCODED_IMAGE_BYTES {
+        return Err(ImagingError::ImageDecode(
+            "image input exceeds the 32 MiB limit".to_string(),
+        ));
+    }
+    let reader = image::ImageReader::new(Cursor::new(image_data))
+        .with_guessed_format()
         .map_err(|error| ImagingError::ImageDecode(error.to_string()))?;
-    let rgb = decoded.to_rgb8();
-    let width = rgb.width();
-    let height = rgb.height();
-    Ok((width, height, rgb.into_raw()))
+    let (width, height) = reader
+        .into_dimensions()
+        .map_err(|error| ImagingError::ImageDecode(error.to_string()))?;
+    if image_pixel_count(width, height).is_err() {
+        return Err(ImagingError::ImageDecode(
+            "image dimensions exceed the 8192-pixel or 16 megapixel limit".to_string(),
+        ));
+    }
+    let mut reader = image::ImageReader::new(Cursor::new(image_data))
+        .with_guessed_format()
+        .map_err(|error| ImagingError::ImageDecode(error.to_string()))?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_IMAGE_DIMENSION);
+    limits.max_image_height = Some(MAX_IMAGE_DIMENSION);
+    limits.max_alloc = Some(128 * 1024 * 1024);
+    reader.limits(limits);
+    let rgb = reader
+        .decode()
+        .map_err(|error| ImagingError::ImageDecode(error.to_string()))?
+        .to_rgb8();
+    Ok((rgb.width(), rgb.height(), rgb.into_raw()))
 }
 
 /// Resizes an RGB8 image to fit inside a square thumbnail while preserving aspect ratio.
@@ -194,13 +265,25 @@ pub fn resize_rgb8_to_fit(
     height: u32,
     max_dimension: u32,
 ) -> Result<(u32, u32, Vec<u8>), ImagingError> {
-    let image = image::RgbImage::from_raw(width, height, rgb.to_vec())
+    validate_rgb8(rgb, width, height)?;
+    if max_dimension == 0 || max_dimension > MAX_IMAGE_DIMENSION {
+        return Err(ImagingError::InvalidBufferSize);
+    }
+    let longest_side = u64::from(width.max(height));
+    let fitted_side = |side: u32| {
+        u32::try_from(
+            (u64::from(side) * u64::from(max_dimension) + longest_side / 2) / longest_side,
+        )
+        .unwrap_or(max_dimension)
+        .max(1)
+    };
+    let out_width = fitted_side(width);
+    let out_height = fitted_side(height);
+    image_pixel_count(out_width, out_height)?;
+    // Borrow the full-resolution source: only the resized result is allocated.
+    let image = image::ImageBuffer::<image::Rgb<u8>, &[u8]>::from_raw(width, height, rgb)
         .ok_or(ImagingError::InvalidBufferSize)?;
-    let resized = image::DynamicImage::ImageRgb8(image)
-        .resize(max_dimension, max_dimension, FilterType::Triangle)
-        .to_rgb8();
-    let out_width = resized.width();
-    let out_height = resized.height();
+    let resized = image::imageops::resize(&image, out_width, out_height, FilterType::Triangle);
     Ok((out_width, out_height, resized.into_raw()))
 }
 
@@ -215,8 +298,7 @@ pub fn convert_bgra8_to_rgb8(
     width: u32,
     height: u32,
 ) -> Result<Vec<u8>, ImagingError> {
-    let pixel_count = usize::try_from(u64::from(width) * u64::from(height))
-        .map_err(|_| ImagingError::InvalidBufferSize)?;
+    let pixel_count = image_pixel_count(width, height)?;
     let expected = pixel_count
         .checked_mul(4)
         .ok_or(ImagingError::InvalidBufferSize)?;
@@ -248,8 +330,7 @@ pub fn convert_nv12_to_rgb8(nv12: &[u8], width: u32, height: u32) -> Result<Vec<
         return Err(ImagingError::InvalidBufferSize);
     }
 
-    let pixel_count = usize::try_from(u64::from(width) * u64::from(height))
-        .map_err(|_| ImagingError::InvalidBufferSize)?;
+    let pixel_count = image_pixel_count(width, height)?;
     let expected = pixel_count
         .checked_add(pixel_count / 2)
         .ok_or(ImagingError::InvalidBufferSize)?;
@@ -299,11 +380,7 @@ pub fn encode_rgb8_jpeg(
     height: u32,
     quality: u8,
 ) -> Result<Vec<u8>, ImagingError> {
-    let expected = usize::try_from(u64::from(width) * u64::from(height) * 3)
-        .map_err(|_| ImagingError::InvalidBufferSize)?;
-    if rgb.len() != expected {
-        return Err(ImagingError::InvalidBufferSize);
-    }
+    validate_rgb8(rgb, width, height)?;
 
     let mut encoded = Vec::new();
     image::codecs::jpeg::JpegEncoder::new_with_quality(&mut encoded, quality.clamp(1, 100))
@@ -318,11 +395,7 @@ pub fn encode_rgb8_jpeg(
 ///
 /// Returns an imaging error when the RGB buffer size is invalid or encoding fails.
 pub fn encode_rgb8_png(rgb: &[u8], width: u32, height: u32) -> Result<Vec<u8>, ImagingError> {
-    let expected = usize::try_from(u64::from(width) * u64::from(height) * 3)
-        .map_err(|_| ImagingError::InvalidBufferSize)?;
-    if rgb.len() != expected {
-        return Err(ImagingError::InvalidBufferSize);
-    }
+    validate_rgb8(rgb, width, height)?;
 
     let mut encoded = Vec::new();
     image::codecs::png::PngEncoder::new(&mut encoded)
@@ -341,10 +414,9 @@ pub fn convert_yuyv_to_rgb8(yuyv: &[u8], width: u32, height: u32) -> Vec<u8> {
     if width == 0 || height == 0 || !width.is_multiple_of(2) {
         return Vec::new();
     }
-    let Some((source_length, output_length)) =
-        usize::try_from(u64::from(width) * u64::from(height))
-            .ok()
-            .and_then(|pixels| Some((pixels.checked_mul(2)?, pixels.checked_mul(3)?)))
+    let Some((source_length, output_length)) = image_pixel_count(width, height)
+        .ok()
+        .and_then(|pixels| Some((pixels.checked_mul(2)?, pixels.checked_mul(3)?)))
     else {
         return Vec::new();
     };
@@ -423,24 +495,8 @@ pub fn create_thumbnail_jpeg(
     height: u32,
     max_dimension: u32,
 ) -> Result<Vec<u8>, ImagingError> {
-    let img = image::RgbImage::from_raw(width, height, rgb.to_vec())
-        .ok_or(ImagingError::InvalidBufferSize)?;
-
-    let dynamic = image::DynamicImage::ImageRgb8(img);
-    let resized = dynamic.resize(max_dimension, max_dimension, FilterType::Triangle);
-
-    let mut jpeg_bytes = Vec::new();
-    let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg_bytes, 80);
-    encoder
-        .write_image(
-            resized.as_bytes(),
-            resized.width(),
-            resized.height(),
-            ColorType::Rgb8.into(),
-        )
-        .map_err(|err| ImagingError::ImageEncode(format!("{err:?}")))?;
-
-    Ok(jpeg_bytes)
+    let (width, height, resized) = resize_rgb8_to_fit(rgb, width, height, max_dimension)?;
+    encode_rgb8_jpeg(&resized, width, height, 80)
 }
 
 #[cfg(test)]
@@ -449,7 +505,8 @@ mod tests {
 
     use super::{
         ImagingError, apply_transforms, convert_bgra8_to_rgb8, convert_nv12_to_rgb8,
-        convert_yuyv_to_rgb8, decode_mjpeg_to_rgb8, encode_rgb8_jpeg, ensure_jpeg_has_dht,
+        convert_yuyv_to_rgb8, create_thumbnail_jpeg, decode_image_to_rgb8, decode_mjpeg_to_rgb8,
+        decode_reference_image_to_rgb8, encode_rgb8_jpeg, ensure_jpeg_has_dht, resize_rgb8_to_fit,
     };
 
     fn jpeg_without_dht(jpeg: &[u8]) -> Vec<u8> {
@@ -487,6 +544,60 @@ mod tests {
             decode_mjpeg_to_rgb8(&stripped).unwrap(),
             decode_mjpeg_to_rgb8(&jpeg).unwrap()
         );
+    }
+
+    #[test]
+    fn rejects_mjpeg_dimensions_before_allocating_pixels() {
+        let mut jpeg = encode_rgb8_jpeg(&[42; 12], 2, 2, 80).expect("encode JPEG");
+        let sof = jpeg
+            .windows(2)
+            .position(|bytes| bytes == [0xFF, 0xC0])
+            .expect("baseline JPEG frame header");
+        jpeg[sof + 5..sof + 9].copy_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF]);
+        assert!(decode_mjpeg_to_rgb8(&jpeg).is_err());
+    }
+
+    #[test]
+    fn every_image_decoder_rejects_excessive_header_dimensions() {
+        let original = encode_rgb8_jpeg(&[42; 12], 2, 2, 80).expect("encode JPEG");
+        let sof = original
+            .windows(2)
+            .position(|bytes| bytes == [0xFF, 0xC0])
+            .unwrap();
+        for (width, height) in [(8193_u16, 1_u16), (4001, 4000)] {
+            let mut jpeg = original.clone();
+            jpeg[sof + 5..sof + 7].copy_from_slice(&height.to_be_bytes());
+            jpeg[sof + 7..sof + 9].copy_from_slice(&width.to_be_bytes());
+            assert!(decode_mjpeg_to_rgb8(&jpeg).is_err());
+            assert!(decode_reference_image_to_rgb8(&jpeg).is_err());
+            assert!(decode_image_to_rgb8(&jpeg).is_err());
+        }
+    }
+
+    #[test]
+    fn thumbnail_preserves_aspect_ratio_and_has_decodable_pixels() {
+        let pixels = [80; 4 * 2 * 3];
+        let (width, height, resized) = resize_rgb8_to_fit(&pixels, 4, 2, 3).unwrap();
+        assert_eq!((width, height), (3, 2));
+        assert_eq!(resized, [80; 3 * 2 * 3]);
+        let thumbnail = create_thumbnail_jpeg(&pixels, 4, 2, 3).unwrap();
+        let (width, height, decoded) = decode_image_to_rgb8(&thumbnail).unwrap();
+        assert_eq!((width, height, decoded.len()), (3, 2, 18));
+        assert_eq!(resize_rgb8_to_fit(&[80; 3], 1, 1, 2).unwrap().0, 2);
+    }
+
+    #[test]
+    fn rejects_invalid_resize_and_raw_dimensions_without_allocating() {
+        for (width, height, limit) in [(0, 2, 4), (2, 2, 0), (2, 2, 8193), (8193, 1, 4)] {
+            assert!(resize_rgb8_to_fit(&[0; 12], width, height, limit).is_err());
+        }
+        assert!(resize_rgb8_to_fit(&[0; 13], 2, 2, 4).is_err());
+        for (width, height) in [(0, 0), (8193, 1), (4001, 4000), (u32::MAX, u32::MAX)] {
+            assert!(convert_bgra8_to_rgb8(&[], width, height).is_err());
+            assert!(convert_nv12_to_rgb8(&[], width, height).is_err());
+            assert!(convert_yuyv_to_rgb8(&[], width, height).is_empty());
+            assert!(encode_rgb8_jpeg(&[], width, height, 80).is_err());
+        }
     }
 
     #[test]

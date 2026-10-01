@@ -1,0 +1,190 @@
+import { AppButton, AppSlider } from "./controls.slint";
+import { VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { AppState } from "./state.slint";
+import { Design } from "./theme.slint";
+
+export component ViewerOverlay inherits Rectangle {
+    accessible-role: groupbox;
+    accessible-label: "Visionneuse de capture";
+    forward-focus: viewer-close-button;
+    init => { viewer-close-button.focus(); }
+    Rectangle {
+        x: 0px;
+        y: 0px;
+        width: 100%;
+        height: 100%;
+        background: Design.overlay-surface;
+
+        TouchArea {
+            width: 100%;
+            height: 100%;
+            clicked => {}
+
+            VerticalBox {
+                padding: 24px;
+                spacing: 12px;
+
+                HorizontalBox {
+                    height: 44px;
+                    vertical-stretch: 0;
+                    alignment: space-between;
+
+                    Text {
+                        text: AppState.viewer-loading ? "Ouverture de la capture" : AppState.viewer-is-video ? "Vidéo de l'iris" : "Photo de l'iris";
+                        color: Design.overlay-text;
+                        font-family: Design.font-display;
+                        font-size: 26px;
+                        font-weight: 400;
+                    }
+
+                    HorizontalBox {
+                        spacing: 6px;
+
+                        AppButton {
+                            height: 40px;
+                            text: "Ajuster";
+                            primary: AppState.viewer-zoom == 100;
+                            selected: AppState.viewer-zoom == 100;
+                            enabled: !AppState.viewer-loading;
+                            clicked => {
+                                AppState.viewer-zoom = 100;
+                                AppState.viewer-pan-x = 0px;
+                                AppState.viewer-pan-y = 0px;
+                            }
+                        }
+                        AppButton {
+                            height: 40px;
+                            text: "150%";
+                            primary: AppState.viewer-zoom == 150;
+                            selected: AppState.viewer-zoom == 150;
+                            enabled: !AppState.viewer-loading;
+                            clicked => {
+                                AppState.viewer-zoom = 150;
+                                AppState.viewer-pan-x = 0px;
+                                AppState.viewer-pan-y = 0px;
+                            }
+                        }
+                        AppButton {
+                            height: 40px;
+                            text: "200%";
+                            primary: AppState.viewer-zoom == 200;
+                            selected: AppState.viewer-zoom == 200;
+                            enabled: !AppState.viewer-loading;
+                            clicked => {
+                                AppState.viewer-zoom = 200;
+                                AppState.viewer-pan-x = 0px;
+                                AppState.viewer-pan-y = 0px;
+                            }
+                        }
+                        if AppState.viewer-is-video && !AppState.viewer-loading: AppButton {
+                            height: 40px;
+                            text: AppState.viewer-video-playing ? "Pause" : "Lecture";
+                            clicked => { AppState.toggle-viewer-video(); }
+                        }
+
+                        viewer-close-button := AppButton {
+                            height: 40px;
+                            text: "Fermer";
+                            clicked => { AppState.dismiss-viewer(); }
+                        }
+                    }
+                }
+
+                viewer-frame := Rectangle {
+                    clip: true;
+                    background: #000000;
+                    border-radius: Design.card-radius;
+
+                    if !AppState.viewer-loading: Image {
+                        source: AppState.viewer-image;
+                        x: (parent.width - self.width) / 2 + AppState.viewer-pan-x;
+                        y: (parent.height - self.height) / 2 + AppState.viewer-pan-y;
+                        width: AppState.viewer-zoom == 200
+                            ? parent.width * 2
+                            : AppState.viewer-zoom == 150
+                                ? parent.width * 1.5
+                                : parent.width;
+                        height: AppState.viewer-zoom == 200
+                            ? parent.height * 2
+                            : AppState.viewer-zoom == 150
+                                ? parent.height * 1.5
+                                : parent.height;
+                        image-fit: contain;
+                    }
+
+                    viewer-pan := TouchArea {
+                        enabled: !AppState.viewer-loading && AppState.viewer-zoom > 100;
+                        private property <length> pan-start-x;
+                        private property <length> pan-start-y;
+
+                        changed pressed => {
+                            if self.pressed {
+                                self.pan-start-x = AppState.viewer-pan-x;
+                                self.pan-start-y = AppState.viewer-pan-y;
+                            }
+                        }
+
+                        moved => {
+                            if self.pressed {
+                                AppState.viewer-pan-x =
+                                    self.pan-start-x + self.mouse-x - self.pressed-x;
+                                AppState.viewer-pan-y =
+                                    self.pan-start-y + self.mouse-y - self.pressed-y;
+                            }
+                        }
+                    }
+
+                    if AppState.viewer-loading: Text {
+                        width: 100%;
+                        height: 100%;
+                        text: "Chargement de la capture…";
+                        color: Design.overlay-text-secondary;
+                        font-size: 16px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+
+                if !AppState.viewer-loading: Text {
+                    text: AppState.viewer-zoom > 100 ? "Glisser l'image pour la déplacer" : "Zoomer pour examiner les détails";
+                    color: Design.overlay-text-muted;
+                    font-size: 12px;
+                    horizontal-alignment: center;
+                }
+
+                if AppState.viewer-is-video && !AppState.viewer-loading: HorizontalBox {
+                    height: 36px;
+                    vertical-stretch: 0;
+                    spacing: 12px;
+
+                    Text {
+                        width: 56px;
+                        text: AppState.viewer-video-position;
+                        color: Design.overlay-text-secondary;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                    }
+
+                    AppSlider {
+                        label: "Position dans la vidéo";
+                        minimum: 0;
+                        maximum: 1000;
+                        value: AppState.viewer-video-progress;
+                        released(value) => {
+                            AppState.seek-viewer-video(value);
+                        }
+                    }
+
+                    Text {
+                        width: 56px;
+                        text: AppState.viewer-video-duration;
+                        color: Design.overlay-text-muted;
+                        font-size: 12px;
+                        horizontal-alignment: right;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+}

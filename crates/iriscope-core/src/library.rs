@@ -2,21 +2,35 @@
 
 use std::{
     collections::HashMap,
-    fs, io,
-    path::{Path, PathBuf},
-    sync::Mutex,
+    path::PathBuf,
+    sync::{Mutex, atomic::AtomicU64},
     time::SystemTime,
 };
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    session::{CaptureSession, Eye},
-    storage::CaptureTimestamp,
+mod capture_transactions;
+mod index;
+mod patients;
+mod presentation;
+mod scan;
+pub use crate::file_validation::capture_file_version_fast_from_file as capture_file_version_from_file_fast;
+pub use crate::file_validation::{
+    CaptureFileVersion, capture_file_version, capture_file_version_cancellable,
+    capture_file_version_fast, capture_file_version_fast_from_file, capture_file_version_from_file,
+    capture_file_version_from_file_cancellable,
+};
+pub use capture_transactions::{
+    CaptureCommit, publish_indexed_capture, recover_pending_capture_metadata, save_indexed_capture,
 };
 
+use crate::session::Eye;
+
 const LIBRARY_INDEX_FILE: &str = ".iriscope-index.json";
+const LIBRARY_INDEX_BACKUP_FILE: &str = ".iriscope-index.json.bak";
+const LIBRARY_INDEX_LOCK_FILE: &str = ".iriscope-index.lock";
 static LIBRARY_INDEX_WRITE_LOCK: Mutex<()> = Mutex::new(());
+static NEXT_INDEX_WRITE_ID: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 struct LibraryIndex {
@@ -24,16 +38,65 @@ struct LibraryIndex {
     version: u32,
     #[serde(default)]
     entries: HashMap<String, StoredCaptureMetadata>,
+    #[serde(default)]
+    patients: HashMap<u64, StoredPatient>,
+    #[serde(default)]
+    next_patient_id: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct StoredPatient {
+    first_name: String,
+    last_name: String,
+    #[serde(default)]
+    last_capture: Option<String>,
+}
+
+/// A patient dossier. Names are searchable but never serve as a unique key.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PatientRecord {
+    /// Stable internal identity used by captures.
+    pub id: u64,
+    /// Short, human-readable dossier number.
+    pub dossier_number: String,
+    /// First name as entered by the operator.
+    pub first_name: String,
+    /// Last name as entered by the operator.
+    pub last_name: String,
+    /// Date and time of the last indexed capture, when available.
+    pub last_capture: Option<String>,
+}
+
+impl PatientRecord {
+    fn from_stored(id: u64, stored: &StoredPatient) -> Self {
+        Self {
+            id,
+            dossier_number: format!("D-{id:06}"),
+            first_name: stored.first_name.clone(),
+            last_name: stored.last_name.clone(),
+            last_capture: stored.last_capture.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct StoredCaptureMetadata {
+    #[serde(default)]
+    patient_id: Option<u64>,
     first_name: Option<String>,
     last_name: Option<String>,
     eye: Eye,
     kind: CaptureKind,
     date_str: String,
     time_str: String,
+    #[serde(default)]
+    file_size: Option<u64>,
+    #[serde(default)]
+    modified_nanos: Option<u128>,
+    #[serde(default)]
+    content_sha256: Option<[u8; 32]>,
+    #[serde(default)]
+    file_version: Option<CaptureFileVersion>,
 }
 
 /// The type of capture.
@@ -50,6 +113,14 @@ pub enum CaptureKind {
 pub struct LibraryEntry {
     /// Full path to the file on disk.
     pub file_path: PathBuf,
+    /// File size observed during the scan, used to invalidate cached entries.
+    #[serde(default)]
+    pub file_size: u64,
+    /// Version observed during the scan, for validating a later preview or action.
+    #[serde(default)]
+    pub file_version: Option<CaptureFileVersion>,
+    /// Stable dossier identity. Legacy captures stay unassigned until reviewed.
+    pub patient_id: Option<u64>,
     /// Type of capture.
     pub kind: CaptureKind,
     /// Patient first name (if parsed from filename).
@@ -62,8 +133,24 @@ pub struct LibraryEntry {
     pub date_str: String,
     /// Formatted time string (HH:MM:SS).
     pub time_str: String,
-    /// Modification timestamp for sorting.
+    /// Modification timestamp used only if no capture timestamp is available.
     pub modified_time: SystemTime,
+}
+
+/// Cheap library row used for sorting and paging before content verification.
+///
+/// `patient_id_hint` is unverified and must never be displayed as an association.
+/// Only `resolve_library_candidates_cancellable` may return a patient-linked entry.
+#[derive(Clone, Debug)]
+pub struct LibraryScanCandidate {
+    pub file_path: PathBuf,
+    pub kind: CaptureKind,
+    pub file_size: u64,
+    pub modified_time: SystemTime,
+    pub date_str: String,
+    pub time_str: String,
+    pub patient_id_hint: Option<u64>,
+    native_version: Option<CaptureFileVersion>,
 }
 
 /// An entry formatted for presentation in the user interface.
@@ -71,6 +158,8 @@ pub struct LibraryEntry {
 pub struct PresentedLibraryItem {
     /// Full path to the original file on disk.
     pub file_path: PathBuf,
+    /// Dossier number for indexed captures, including other patients.
+    pub dossier_number: Option<String>,
     /// Type of capture.
     pub kind: CaptureKind,
     /// Display title. If belonging to the selected patient, shows their name.
@@ -96,443 +185,28 @@ pub enum LibraryFilter {
     VideosOnly,
 }
 
-/// Records reliable metadata for a newly created capture.
-///
-/// The hidden index is used by the library instead of trying to infer identity from a
-/// customizable filename. Existing captures without an index entry continue to use
-/// filename parsing as a compatibility fallback.
-///
-/// # Errors
-///
-/// Returns an I/O error when the index cannot be created or written.
-pub fn record_capture_metadata(
-    directory: &Path,
-    file_path: &Path,
-    session: &CaptureSession,
-    kind: CaptureKind,
-    timestamp: CaptureTimestamp,
-) -> io::Result<()> {
-    // Photo capture and video recording can update the same index on different threads.
-    let _write_guard = LIBRARY_INDEX_WRITE_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    fs::create_dir_all(directory)?;
+pub use patients::{
+    assign_capture_to_patient, assign_capture_to_patient_if_unchanged, create_patient, get_patient,
+    search_patients,
+};
 
-    let Some(file_name) = file_path.file_name().and_then(|name| name.to_str()) else {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "capture path does not contain a valid UTF-8 filename",
-        ));
-    };
+use index::{
+    ensure_local_regular_capture, load_library_index, load_library_index_for_write,
+    lock_library_index, recover_library_index_locked, save_library_index, sync_directory,
+};
+pub use index::{
+    record_capture_metadata, recover_library_index, recover_library_index_cancellable,
+    upgrade_capture_fingerprints,
+};
 
-    let mut index = load_library_index(directory);
-    index.version = 1;
-    index.entries.insert(
-        file_name.to_owned(),
-        StoredCaptureMetadata {
-            first_name: (!session.first_name().is_empty()).then(|| session.first_name().to_owned()),
-            last_name: (!session.last_name().is_empty()).then(|| session.last_name().to_owned()),
-            eye: session.eye(),
-            kind,
-            date_str: format!(
-                "{:04}-{:02}-{:02}",
-                timestamp.year, timestamp.month, timestamp.day
-            ),
-            time_str: format!(
-                "{:02}:{:02}:{:02}",
-                timestamp.hour, timestamp.minute, timestamp.second
-            ),
-        },
-    );
+use scan::indexed_capture_matches;
+pub use scan::{
+    resolve_library_candidates_cancellable, scan_library_directory, try_scan_library_directory,
+    try_scan_library_directory_metadata, try_scan_library_directory_metadata_cancellable,
+};
 
-    save_library_index(directory, &index)
-}
-
-fn load_library_index(directory: &Path) -> LibraryIndex {
-    let path = directory.join(LIBRARY_INDEX_FILE);
-    fs::read(path)
-        .ok()
-        .and_then(|data| serde_json::from_slice(&data).ok())
-        .unwrap_or_default()
-}
-
-fn save_library_index(directory: &Path, index: &LibraryIndex) -> io::Result<()> {
-    let final_path = directory.join(LIBRARY_INDEX_FILE);
-    let temporary_path = directory.join(".iriscope-index.json.tmp");
-    let data = serde_json::to_vec_pretty(index)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-
-    fs::write(&temporary_path, data)?;
-    if let Err(error) = fs::rename(&temporary_path, &final_path) {
-        if final_path.exists() {
-            fs::remove_file(&final_path)?;
-            fs::rename(&temporary_path, &final_path)?;
-        } else {
-            let _ = fs::remove_file(&temporary_path);
-            return Err(error);
-        }
-    }
-    Ok(())
-}
-
-/// Scans a directory and returns indexed library entries sorted by newest first.
-#[must_use]
-pub fn scan_library_directory(directory: &Path) -> Vec<LibraryEntry> {
-    try_scan_library_directory(directory).unwrap_or_default()
-}
-
-/// Scans a directory and reports read errors to the caller. A missing directory is empty.
-///
-/// # Errors
-///
-/// Returns an I/O error if the directory cannot be read.
-pub fn try_scan_library_directory(directory: &Path) -> io::Result<Vec<LibraryEntry>> {
-    let mut entries = Vec::new();
-    let index = load_library_index(directory);
-    let read_dir = match fs::read_dir(directory) {
-        Ok(read_dir) => read_dir,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(entries),
-        Err(error) => return Err(error),
-    };
-
-    for entry in read_dir {
-        let entry = entry?;
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-
-        let Some(extension) = path.extension().and_then(|ext| ext.to_str()) else {
-            continue;
-        };
-
-        let kind = match extension.to_ascii_lowercase().as_str() {
-            "jpg" | "jpeg" | "png" => CaptureKind::Photo,
-            "avi" | "mp4" | "mkv" => CaptureKind::Video,
-            _ => continue,
-        };
-
-        let modified_time = entry
-            .metadata()
-            .and_then(|meta| meta.modified())
-            .unwrap_or(SystemTime::UNIX_EPOCH);
-
-        let indexed_metadata = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .and_then(|name| index.entries.get(name));
-
-        let (first_name, last_name, eye, date_str, time_str, indexed_kind) =
-            if let Some(metadata) = indexed_metadata {
-                (
-                    metadata.first_name.clone(),
-                    metadata.last_name.clone(),
-                    metadata.eye,
-                    metadata.date_str.clone(),
-                    metadata.time_str.clone(),
-                    Some(metadata.kind),
-                )
-            } else {
-                let file_stem = path
-                    .file_stem()
-                    .and_then(|stem| stem.to_str())
-                    .unwrap_or("");
-                let (first_name, last_name, eye, date_str, time_str) = parse_filename(file_stem);
-                (first_name, last_name, eye, date_str, time_str, None)
-            };
-
-        entries.push(LibraryEntry {
-            file_path: path,
-            kind: indexed_kind.unwrap_or(kind),
-            first_name,
-            last_name,
-            eye,
-            date_str,
-            time_str,
-            modified_time,
-        });
-    }
-
-    // Sort newest first
-    entries.sort_by(|a, b| b.modified_time.cmp(&a.modified_time));
-    Ok(entries)
-}
-
-/// Formats indexed entries according to medical confidentiality rules.
-///
-/// If `active_session` has patient identity and matches the entry's patient,
-/// the identity is displayed. All other records are strictly anonymized.
-#[must_use]
-pub fn present_library_items(
-    entries: &[LibraryEntry],
-    active_session: &CaptureSession,
-    filter: LibraryFilter,
-) -> Vec<PresentedLibraryItem> {
-    entries
-        .iter()
-        .filter(|entry| match filter {
-            LibraryFilter::All => true,
-            LibraryFilter::PhotosOnly => entry.kind == CaptureKind::Photo,
-            LibraryFilter::VideosOnly => entry.kind == CaptureKind::Video,
-        })
-        .map(|entry| {
-            let matches_patient = active_session.has_identity()
-                && entry
-                    .first_name
-                    .as_deref()
-                    .is_some_and(|f| f.eq_ignore_ascii_case(active_session.first_name()))
-                && entry
-                    .last_name
-                    .as_deref()
-                    .is_some_and(|l| l.eq_ignore_ascii_case(active_session.last_name()));
-
-            let eye_text = match entry.eye {
-                Eye::Left => "Œil Gauche",
-                Eye::Right => "Œil Droit",
-                Eye::Unspecified => "Œil non renseigné",
-            };
-
-            let kind_text = match entry.kind {
-                CaptureKind::Photo => "Photo",
-                CaptureKind::Video => "Vidéo",
-            };
-
-            let display_title = if matches_patient {
-                let name = format!(
-                    "{} {}",
-                    active_session.first_name(),
-                    active_session.last_name()
-                );
-                format!("{name} ({eye_text})")
-            } else {
-                format!("{kind_text} {eye_text}")
-            };
-
-            let date_time = format!("{} {}", entry.date_str, entry.time_str);
-
-            PresentedLibraryItem {
-                file_path: entry.file_path.clone(),
-                kind: entry.kind,
-                display_title,
-                date_time,
-                eye_label: eye_text.to_string(),
-                is_current_patient: matches_patient,
-            }
-        })
-        .collect()
-}
-
-fn parse_filename(stem: &str) -> (Option<String>, Option<String>, Eye, String, String) {
-    let parts: Vec<&str> = stem.split('_').collect();
-
-    // Standard pattern: {prenom}_{nom}_{oeil}_{date}_{heure} (5 parts)
-    // Anonymous pattern: Iris_{oeil}_{date}_{heure} (4 parts)
-    if parts.len() >= 5 {
-        let first_name = parts[0];
-        let last_name = parts[1];
-        let eye = parse_eye(parts[2]);
-        let date_str = parts[3].to_string();
-        let time_str = parts[4].replace('-', ":");
-
-        let (fn_opt, ln_opt) = if first_name == "Iris" {
-            (None, None)
-        } else {
-            (Some(first_name.to_string()), Some(last_name.to_string()))
-        };
-
-        (fn_opt, ln_opt, eye, date_str, time_str)
-    } else if parts.len() == 4 && parts[0] == "Iris" {
-        let eye = parse_eye(parts[1]);
-        let date_str = parts[2].to_string();
-        let time_str = parts[3].replace('-', ":");
-        (None, None, eye, date_str, time_str)
-    } else {
-        (None, None, Eye::Unspecified, String::new(), String::new())
-    }
-}
-
-fn parse_eye(label: &str) -> Eye {
-    match label.to_lowercase().as_str() {
-        "gauche" | "left" => Eye::Left,
-        "droit" | "right" => Eye::Right,
-        _ => Eye::Unspecified,
-    }
-}
+pub use presentation::present_library_items;
+use presentation::{normalized_patient_name, parse_filename};
 
 #[cfg(test)]
-mod tests {
-    use std::{
-        path::PathBuf,
-        sync::{Arc, Barrier},
-        thread,
-        time::SystemTime,
-    };
-
-    use crate::{
-        session::{CaptureSession, Eye},
-        storage::CaptureTimestamp,
-    };
-
-    use super::{
-        CaptureKind, LibraryEntry, LibraryFilter, present_library_items, record_capture_metadata,
-        scan_library_directory, try_scan_library_directory,
-    };
-
-    #[test]
-    fn library_scan_reports_unreadable_path_and_allows_missing_directory() {
-        let unique = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!("iris_test_invalid_library_{unique}"));
-        std::fs::write(&path, b"not a directory").expect("create regular file");
-        assert!(try_scan_library_directory(&path).is_err());
-        std::fs::remove_file(&path).expect("remove regular file");
-        assert!(
-            try_scan_library_directory(&path)
-                .expect("missing directory")
-                .is_empty()
-        );
-    }
-
-    #[test]
-    fn privacy_anonymizes_other_patients() {
-        let current_session = CaptureSession::new("Jean", "Dupont", Eye::Right);
-
-        let entries = vec![
-            LibraryEntry {
-                file_path: PathBuf::from("/captures/Jean_Dupont_Droit_2026-09-20_14-30-00.jpg"),
-                kind: CaptureKind::Photo,
-                first_name: Some("Jean".to_string()),
-                last_name: Some("Dupont".to_string()),
-                eye: Eye::Right,
-                date_str: "2026-09-20".to_string(),
-                time_str: "14:30:00".to_string(),
-                modified_time: SystemTime::UNIX_EPOCH,
-            },
-            LibraryEntry {
-                file_path: PathBuf::from("/captures/Marie_Curie_Gauche_2026-09-19_10-15-00.jpg"),
-                kind: CaptureKind::Photo,
-                first_name: Some("Marie".to_string()),
-                last_name: Some("Curie".to_string()),
-                eye: Eye::Left,
-                date_str: "2026-09-19".to_string(),
-                time_str: "10:15:00".to_string(),
-                modified_time: SystemTime::UNIX_EPOCH,
-            },
-        ];
-
-        let presented = present_library_items(&entries, &current_session, LibraryFilter::All);
-
-        assert_eq!(presented.len(), 2);
-        // Current session item displays patient name
-        assert!(presented[0].display_title.contains("Jean Dupont"));
-        assert!(presented[0].is_current_patient);
-
-        // Previous patient capture is anonymized
-        assert_eq!(presented[1].display_title, "Photo Œil Gauche");
-        assert!(!presented[1].display_title.contains("Marie"));
-        assert!(!presented[1].display_title.contains("Curie"));
-        assert!(!presented[1].is_current_patient);
-    }
-
-    #[test]
-    fn scan_directory_finds_and_sorts_files() {
-        let unique = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .expect("clock is valid")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("iris_test_lib_{unique}"));
-        std::fs::create_dir_all(&dir).expect("create test dir");
-
-        let file1 = dir.join("Jean_Dupont_Droit_2026-09-20_14-30-00.jpg");
-        std::fs::write(&file1, b"test").expect("write test file");
-
-        let entries = scan_library_directory(&dir);
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].first_name.as_deref(), Some("Jean"));
-        assert_eq!(entries[0].last_name.as_deref(), Some("Dupont"));
-        assert_eq!(entries[0].eye, Eye::Right);
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-    #[test]
-    fn index_preserves_identity_with_custom_filename() {
-        let unique = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .expect("clock is valid")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("iris_test_index_{unique}"));
-        std::fs::create_dir_all(&dir).expect("create test dir");
-
-        let file = dir.join("capture-personnalisee-001.jpg");
-        std::fs::write(&file, b"test").expect("write test file");
-        let session = CaptureSession::new("Jean Pierre", "Du Pont", Eye::Left);
-        let timestamp = CaptureTimestamp {
-            year: 2026,
-            month: 9,
-            day: 20,
-            hour: 18,
-            minute: 45,
-            second: 12,
-        };
-
-        record_capture_metadata(&dir, &file, &session, CaptureKind::Photo, timestamp)
-            .expect("record capture metadata");
-
-        let entries = scan_library_directory(&dir);
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].first_name.as_deref(), Some("Jean Pierre"));
-        assert_eq!(entries[0].last_name.as_deref(), Some("Du Pont"));
-        assert_eq!(entries[0].eye, Eye::Left);
-        assert_eq!(entries[0].date_str, "2026-09-20");
-        assert_eq!(entries[0].time_str, "18:45:12");
-
-        std::fs::remove_dir_all(dir).expect("remove test directory");
-    }
-
-    #[test]
-    fn concurrent_capture_metadata_updates_keep_every_entry() {
-        let unique = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .expect("clock is valid")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("iris_test_index_concurrent_{unique}"));
-        std::fs::create_dir_all(&dir).expect("create test directory");
-        let barrier = Arc::new(Barrier::new(8));
-        let handles = (0..8)
-            .map(|number| {
-                let dir = dir.clone();
-                let barrier = Arc::clone(&barrier);
-                thread::spawn(move || {
-                    let file = dir.join(format!("capture-{number}.jpg"));
-                    std::fs::write(&file, b"test").expect("write capture");
-                    let session =
-                        CaptureSession::new(format!("Patient{number}"), "Test", Eye::Left);
-                    barrier.wait();
-                    record_capture_metadata(
-                        &dir,
-                        &file,
-                        &session,
-                        CaptureKind::Photo,
-                        CaptureTimestamp::now(),
-                    )
-                    .expect("record metadata");
-                })
-            })
-            .collect::<Vec<_>>();
-
-        for handle in handles {
-            handle.join().expect("capture thread completes");
-        }
-        let entries = scan_library_directory(&dir);
-        assert_eq!(entries.len(), 8);
-        for number in 0..8 {
-            assert!(entries.iter().any(|entry| {
-                entry.file_path.ends_with(format!("capture-{number}.jpg"))
-                    && entry.first_name.as_deref() == Some(format!("Patient{number}").as_str())
-            }));
-        }
-        std::fs::remove_dir_all(dir).expect("remove test directory");
-    }
-}
+mod tests;

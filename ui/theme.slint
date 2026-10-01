@@ -1,0 +1,56 @@
+// Graphite, warm ivory and satin brass keep the live image visually dominant.
+// Shared values make every screen and overlay follow the same design language.
+import { Palette } from "std-widgets.slint";
+export global Design {
+    private property <color> palette-background: Palette.background;
+    out property <bool> is-dark: palette-background.to-oklch().lightness < 0.5;
+    out property <string> font-ui: "Manrope";
+    out property <string> font-display: "Instrument Serif";
+
+    out property <color> canvas: is-dark ? #101613 : #f7f8f4;
+    out property <color> header: is-dark ? #17201b : #ffffff;
+    out property <color> surface: is-dark ? #1e2923 : #ffffff;
+    out property <color> surface-raised: is-dark ? #28352d : #eef3eb;
+    out property <color> surface-sunken: is-dark ? #141d18 : #f0f4ee;
+    out property <color> border: is-dark ? #39473e : #c8d2c8;
+    out property <color> border-strong: is-dark ? #607162 : #899b8d;
+    out property <color> preview: is-dark ? #050a07 : #dce7de;
+    out property <color> text: is-dark ? #f5f0e5 : #1c2b21;
+    out property <color> text-secondary: is-dark ? #d0d4c7 : #46574a;
+    out property <color> text-muted: is-dark ? #a2b0a2 : #596d5d;
+
+    out property <color> accent: is-dark ? #d8bb87 : #805e28;
+    out property <color> accent-hover: is-dark ? #ead0a1 : #6d4d1d;
+    out property <color> accent-pressed: is-dark ? #bfa06d : #533a17;
+    out property <color> accent-ink: is-dark ? #242016 : #ffffff;
+    out property <color> accent-soft: is-dark ? #403a2b : #f1e8d7;
+    out property <color> focus: is-dark ? #efdab4 : #8a5b1c;
+    out property <color> success: is-dark ? #a9d2ab : #276e43;
+    out property <color> warning: is-dark ? #e2be78 : #8b5e10;
+    out property <color> danger: is-dark ? #e8a39b : #a83931;
+
+    out property <color> control: is-dark ? #2a352e : #f3f5f0;
+    out property <color> control-hover: is-dark ? #36453a : #e7eee5;
+    out property <color> control-pressed: is-dark ? #222d26 : #dae5d9;
+    out property <color> control-disabled: is-dark ? #252c27 : #e9ece8;
+    out property <color> info-surface: is-dark ? #273c3b : #e7f0ef;
+    out property <color> success-surface: is-dark ? #244535 : #e8f3e9;
+    out property <color> error-surface: is-dark ? #56302d : #fae9e7;
+    out property <color> video-surface: is-dark ? #2c4345 : #e1edef;
+
+    // Reference and viewer overlays remain dark in every application theme.
+    out property <color> overlay-surface: #080e0bf2;
+    out property <color> overlay-panel: #202a26ee;
+    out property <color> overlay-text: #f5f0e5;
+    out property <color> overlay-text-secondary: #d0d4c7;
+    out property <color> overlay-text-muted: #a2b0a2;
+    out property <color> overlay-border: #607162;
+
+    out property <length> gap-small: 7px;
+    out property <length> gap: 12px;
+    out property <length> inset: 18px;
+    out property <length> control-height: 40px;
+    out property <length> control-radius: 9px;
+    out property <length> card-radius: 12px;
+    out property <length> panel-radius: 16px;
+}

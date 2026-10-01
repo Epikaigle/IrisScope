@@ -1,0 +1,20 @@
+import { HorizontalBox } from "std-widgets.slint";
+import { AppState } from "./state.slint";
+import { Design } from "./theme.slint";
+import { PatientPanel } from "./patient-panel.slint";
+import { CameraPreview } from "./camera-preview.slint";
+
+export component CameraPage inherits Rectangle {
+    HorizontalBox {
+        min-height: 0px;
+        min-width: 0px;
+        padding: AppState.iris-fullscreen ? 0px : Design.gap;
+        spacing: AppState.iris-fullscreen ? 0px : Design.gap;
+
+        // Patient preparation and capture stay visible beside the image.
+        if AppState.sidebar-visible && !AppState.iris-fullscreen: PatientPanel {
+            width: root.width < 1120px ? 300px : 324px;
+        }
+        CameraPreview { horizontal-stretch: 1; min-width: 0px; min-height: 0px; }
+    }
+}

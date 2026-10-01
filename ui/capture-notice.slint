@@ -1,0 +1,37 @@
+import { AppButton } from "./controls.slint";
+import { HorizontalBox } from "std-widgets.slint";
+import { AppState } from "./state.slint";
+import { Design } from "./theme.slint";
+
+export component CaptureNotice inherits Rectangle {
+    Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: 64px;
+        width: root.width < 1120px ? 460px : 520px;
+        height: 58px;
+        border-radius: Design.card-radius;
+        background: AppState.capture-notice-tone == 2 ? Design.error-surface : AppState.capture-notice-tone == 1 ? Design.success-surface : Design.info-surface;
+        border-width: 1px;
+        border-color: AppState.capture-notice-tone == 2 ? Design.danger : AppState.capture-notice-tone == 1 ? Design.success : Design.accent;
+
+        HorizontalBox {
+            padding-left: 14px;
+            padding-right: 14px;
+            spacing: 10px;
+            Text {
+                horizontal-stretch: 1;
+                text: AppState.last-capture-message;
+                color: Design.text;
+                font-size: 13px;
+                font-weight: 600;
+                vertical-alignment: center;
+                wrap: word-wrap;
+            }
+            if AppState.has-last-capture && AppState.capture-notice-tone == 1: AppButton {
+                height: 40px;
+                text: "Voir";
+                clicked => { AppState.open-capture-file(AppState.last-capture-path, AppState.last-capture-file-version); }
+            }
+        }
+    }
+}

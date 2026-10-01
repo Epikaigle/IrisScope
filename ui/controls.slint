@@ -1,0 +1,206 @@
+import { Design } from "./theme.slint";
+
+// A single button treatment keeps the native UI consistent across platforms.
+export component AppButton inherits Rectangle {
+    in property <string> text;
+    in property <string> accessibility-label: text;
+    in property <bool> selected: false;
+    in property <bool> primary: false;
+    in property <bool> quiet: false;
+    in property <bool> enabled: true;
+    out property <bool> has-focus: keyboard-focus.has-focus;
+    callback clicked;
+
+    min-width: max(36px, content.min-width);
+    min-height: max(38px, content.min-height);
+    horizontal-stretch: 0;
+    vertical-stretch: 0;
+    forward-focus: keyboard-focus;
+    border-radius: Design.control-radius;
+    border-width: 1px;
+    border-color: !root.enabled ? Design.border
+        : root.primary ? Design.accent
+        : root.quiet ? (pointer.has-hover ? Design.border : transparent)
+        : Design.border;
+    background: !root.enabled ? Design.control-disabled
+        : root.primary ? (pointer.pressed ? Design.accent-pressed : pointer.has-hover ? Design.accent-hover : Design.accent)
+        : root.quiet ? (pointer.has-hover ? Design.control-hover : transparent)
+        : pointer.pressed ? Design.control-pressed : pointer.has-hover ? Design.control-hover : Design.control;
+    animate background, border-color { duration: 120ms; }
+
+    accessible-role: button;
+    accessible-enabled: root.enabled;
+    accessible-label: root.accessibility-label;
+    accessible-description: root.selected ? "Sélectionné" : "";
+    accessible-action-default => { if root.enabled { root.clicked(); } }
+
+    content := HorizontalLayout {
+        padding-left: 13px;
+        padding-right: 13px;
+        padding-top: 5px;
+        padding-bottom: 5px;
+        alignment: center;
+
+        Text {
+            text: root.text;
+            color: !root.enabled ? Design.text-muted : root.primary ? Design.accent-ink : Design.text;
+            font-family: Design.font-ui;
+            font-size: 12px;
+            font-weight: root.primary ? 700 : 600;
+            letter-spacing: 0.1px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    pointer := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+
+    keyboard-focus := FocusScope {
+        x: 0px;
+        width: 0px;
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if (event.text == " " || event.text == "\n") {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
+
+    if root.has-focus && root.enabled: Rectangle {
+        x: -3px;
+        y: -3px;
+        width: parent.width + 6px;
+        height: parent.height + 6px;
+        border-radius: Design.control-radius + 3px;
+        border-width: 2px;
+        border-color: Design.focus;
+        background: transparent;
+    }
+}
+
+export component AppSlider inherits Rectangle {
+    in property <string> label: "";
+    in property <float> minimum: 0;
+    in property <float> maximum: 100;
+    in property <float> step: 1;
+    in property <bool> enabled: true;
+    in-out property <float> value: minimum;
+    out property <bool> has-focus: keyboard-focus.has-focus;
+    callback changed;
+    callback released(float);
+
+    private property <float> range: max(1, root.maximum - root.minimum);
+    private property <float> fraction: clamp((root.value - root.minimum) / root.range, 0, 1);
+
+    min-width: 60px;
+    min-height: 22px;
+    horizontal-stretch: 1;
+    vertical-stretch: 0;
+    background: transparent;
+    forward-focus: keyboard-focus;
+
+    accessible-role: slider;
+    accessible-label: root.label;
+    accessible-enabled: root.enabled;
+    accessible-value: root.value;
+    accessible-value-minimum: root.minimum;
+    accessible-value-maximum: root.maximum;
+    accessible-value-step: root.step;
+    accessible-action-set-value(v) => {
+        if root.enabled && v.is-float() { root.set-value(v.to-float()); }
+    }
+    accessible-action-increment => { if root.enabled { root.set-value(root.value + root.step); } }
+    accessible-action-decrement => { if root.enabled { root.set-value(root.value - root.step); } }
+
+    public function set-value(next: float) {
+        let adjusted = clamp(next, root.minimum, root.maximum);
+        if root.value != adjusted {
+            root.value = adjusted;
+            root.changed();
+        }
+    }
+
+    rail := Rectangle {
+        x: 9px;
+        y: (parent.height - self.height) / 2;
+        width: parent.width - 18px;
+        height: 4px;
+        border-radius: 2px;
+        background: Design.border;
+    }
+
+    Rectangle {
+        x: rail.x;
+        y: rail.y;
+        width: rail.width * root.fraction;
+        height: rail.height;
+        border-radius: rail.border-radius;
+        background: root.enabled ? Design.accent : Design.text-muted;
+    }
+
+    Rectangle {
+        x: rail.x + rail.width * root.fraction - 9px;
+        y: (parent.height - self.height) / 2;
+        width: 18px;
+        height: 18px;
+        border-radius: 9px;
+        border-width: root.has-focus ? 3px : 2px;
+        border-color: root.has-focus ? Design.focus : Design.surface;
+        background: root.enabled ? (pointer.pressed ? Design.accent-hover : Design.accent) : Design.text-muted;
+    }
+
+    pointer := TouchArea {
+        enabled: root.enabled;
+        pointer-event(event) => {
+            if event.button != PointerEventButton.left { return; }
+            if event.kind == PointerEventKind.down {
+                keyboard-focus.focus();
+                root.set-value(root.minimum + root.range * clamp((self.mouse-x - rail.x) / rail.width, 0, 1));
+            }
+            if event.kind == PointerEventKind.up { root.released(root.value); }
+        }
+        moved => {
+            if self.pressed {
+                root.set-value(root.minimum + root.range * clamp((self.mouse-x - rail.x) / rail.width, 0, 1));
+            }
+        }
+    }
+
+    keyboard-focus := FocusScope {
+        x: 0px;
+        width: 0px;
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if event.text == Key.RightArrow {
+                root.set-value(root.value + root.step);
+                return accept;
+            }
+            if event.text == Key.LeftArrow {
+                root.set-value(root.value - root.step);
+                return accept;
+            }
+            if event.text == Key.Home {
+                root.set-value(root.minimum);
+                return accept;
+            }
+            if event.text == Key.End {
+                root.set-value(root.maximum);
+                return accept;
+            }
+            return reject;
+        }
+        key-released(event) => {
+            if event.text == Key.RightArrow || event.text == Key.LeftArrow
+                || event.text == Key.Home || event.text == Key.End {
+                root.released(root.value);
+                return accept;
+            }
+            return reject;
+        }
+    }
+}

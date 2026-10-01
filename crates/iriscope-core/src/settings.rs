@@ -1,12 +1,16 @@
 //! Persistent application settings.
 
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::{
     collections::BTreeMap,
-    fs,
+    fs::{self, File, OpenOptions},
     io::{self, Write},
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
 };
+
+use crate::storage::create_private_directory;
 
 static NEXT_SETTINGS_WRITE_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -106,15 +110,71 @@ impl Default for AppSettings {
 }
 
 impl AppSettings {
-    /// Loads settings from a JSON file, or returns the default if the file is missing or invalid.
+    /// Loads settings, using defaults only when the file does not exist.
+    ///
+    /// # Errors
+    ///
+    /// Reports unreadable or invalid JSON instead of allowing the caller to overwrite it.
+    pub fn try_load_from_file(path: &Path) -> io::Result<Self> {
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        match fs::metadata(parent) {
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Self::default()),
+            Err(error) => return Err(error),
+        }
+        // Atomic replacement makes readers safe without creating a lock file.
+        // This also lets settings load from a read-only configuration directory.
+        let data = match fs::read(path) {
+            Ok(data) => data,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                match fs::read(settings_backup_path(path)) {
+                    Ok(data) => data,
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                        return Ok(Self::default());
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            Err(error) => return Err(error),
+        };
+        serde_json::from_slice(&data).map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid settings file {}: {error}", path.display()),
+            )
+        })
+    }
+
+    fn load_unlocked(path: &Path) -> io::Result<Self> {
+        let backup_path = settings_backup_path(path);
+        let data = match fs::read(path) {
+            Ok(data) => data,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                match fs::rename(&backup_path, path) {
+                    Ok(()) => fs::read(path)?,
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                        return Ok(Self::default());
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            Err(error) => return Err(error),
+        };
+        serde_json::from_slice(&data).map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid settings file {}: {error}", path.display()),
+            )
+        })
+    }
+
+    /// Compatibility helper. Prefer `try_load_from_file` when settings may be saved again.
     #[must_use]
     pub fn load_from_file(path: &Path) -> Self {
-        if let Ok(data) = fs::read(path)
-            && let Ok(settings) = serde_json::from_slice::<Self>(&data)
-        {
-            return settings;
-        }
-        Self::default()
+        Self::try_load_from_file(path).unwrap_or_default()
     }
 
     /// Saves settings to a JSON file.
@@ -127,8 +187,12 @@ impl AppSettings {
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
         {
-            fs::create_dir_all(parent)?;
+            create_private_directory(parent)?;
         }
+        // Serialize the read/replace sequence across application processes. Refuse
+        // to overwrite unreadable or malformed settings.
+        let _lock = lock_settings_file(path)?;
+        let _ = Self::load_unlocked(path)?;
         let json = serde_json::to_vec_pretty(self)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         let mut temporary_name = path.as_os_str().to_os_string();
@@ -138,21 +202,68 @@ impl AppSettings {
             NEXT_SETTINGS_WRITE_ID.fetch_add(1, Ordering::Relaxed)
         ));
         let temporary_path = PathBuf::from(temporary_name);
+        let backup_path = settings_backup_path(path);
         let result = (|| {
-            let mut temporary_file = fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&temporary_path)?;
+            let mut options = fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            options.mode(0o600);
+            let mut temporary_file = options.open(&temporary_path)?;
             temporary_file.write_all(&json)?;
             temporary_file.sync_all()?;
             drop(temporary_file);
-            fs::rename(&temporary_path, path)
+            #[cfg(not(windows))]
+            fs::rename(&temporary_path, path)?;
+            #[cfg(windows)]
+            {
+                if path.exists() {
+                    if backup_path.exists() {
+                        fs::remove_file(&backup_path)?;
+                    }
+                    fs::rename(path, &backup_path)?;
+                }
+                if let Err(error) = fs::rename(&temporary_path, path) {
+                    if backup_path.exists() {
+                        let _ = fs::rename(&backup_path, path);
+                    }
+                    return Err(error);
+                }
+            }
+            #[cfg(unix)]
+            fs::File::open(
+                path.parent()
+                    .filter(|parent| !parent.as_os_str().is_empty())
+                    .unwrap_or(Path::new(".")),
+            )?
+            .sync_all()?;
+            if backup_path.exists() {
+                fs::remove_file(&backup_path)?;
+            }
+            Ok(())
         })();
         if result.is_err() {
             let _ = fs::remove_file(&temporary_path);
         }
         result
     }
+}
+
+fn lock_settings_file(path: &Path) -> io::Result<File> {
+    let mut lock_name = path.as_os_str().to_os_string();
+    lock_name.push(".lock");
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let lock = options.open(PathBuf::from(lock_name))?;
+    lock.lock()?;
+    Ok(lock)
+}
+
+fn settings_backup_path(path: &Path) -> PathBuf {
+    let mut name = path.as_os_str().to_os_string();
+    name.push(".bak");
+    PathBuf::from(name)
 }
 
 #[cfg(test)]
@@ -208,5 +319,44 @@ mod tests {
         let loaded: AppSettings = serde_json::from_value(legacy).expect("load legacy settings");
         assert!(loaded.camera_control_values.is_empty());
         assert_eq!(loaded.video_quality, VideoQualityPreference::Best);
+    }
+
+    #[test]
+    fn invalid_settings_are_reported_and_preserved() {
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("iriscope_bad_settings_{unique}.json"));
+        let invalid = b"{ this is not JSON";
+        fs::write(&path, invalid).expect("write invalid settings");
+        let error = AppSettings::try_load_from_file(&path).expect_err("invalid file must fail");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(
+            AppSettings::default()
+                .save_to_file(&path)
+                .expect_err("must not overwrite invalid settings")
+                .kind(),
+            std::io::ErrorKind::InvalidData
+        );
+        assert_eq!(fs::read(&path).expect("read original"), invalid);
+        fs::remove_file(path).expect("remove test file");
+    }
+
+    #[test]
+    fn interrupted_settings_replacement_reads_backup_without_writing() {
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("iriscope_backup_settings_{unique}.json"));
+        let settings = AppSettings::default();
+        settings.save_to_file(&path).expect("save settings");
+        let backup = super::settings_backup_path(&path);
+        fs::rename(&path, &backup).expect("simulate interrupted replacement");
+        let recovered = AppSettings::try_load_from_file(&path).expect("recover settings");
+        assert_eq!(recovered.filename_template, settings.filename_template);
+        assert!(!path.exists());
+        fs::remove_file(backup).expect("remove test file");
     }
 }

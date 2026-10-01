@@ -4,7 +4,7 @@ use std::{
     ptr, slice,
     sync::{
         Arc, Condvar, Mutex,
-        mpsc::{self, Receiver, SyncSender, TryRecvError},
+        mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError},
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
@@ -14,7 +14,8 @@ use iriscope_core::{
     camera::{
         CameraBackend, CameraBackendKind, CameraDescriptor, CameraDevice, CameraDeviceEvent,
         CameraDeviceId, CameraError, CameraErrorKind, CameraEvent, CameraResult, CapturedFrame,
-        StreamConfiguration, UsbDeviceIdentity,
+        StreamConfiguration, UsbDeviceIdentity, camera_frame_byte_limit,
+        validate_camera_frame_bytes,
     },
     capabilities::{
         CameraCapabilities, CameraControlId, CameraControlValue, CameraMode, FrameRate,
@@ -43,6 +44,8 @@ use windows::{
     },
     core::{GUID, PWSTR},
 };
+
+use crate::controls::NativeControls;
 
 /// Native Windows camera backend using Media Foundation.
 #[derive(Debug, Default)]
@@ -112,8 +115,24 @@ struct WindowsCameraDevice {
 enum WorkerCommand {
     Start(StreamConfiguration, SyncSender<CameraResult<()>>),
     Stop(SyncSender<CameraResult<()>>),
+    ReadControl(
+        CameraControlId,
+        Instant,
+        SyncSender<CameraResult<CameraControlValue>>,
+    ),
+    SetControl(
+        CameraControlId,
+        CameraControlValue,
+        Instant,
+        SyncSender<CameraResult<()>>,
+    ),
+    ResetControls(Instant, SyncSender<CameraResult<()>>),
     Shutdown,
 }
+
+// A synchronous IMFSourceReader::ReadSample call can remain inside a faulty
+// camera driver. Do not block the application indefinitely waiting for it.
+const WORKER_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
 
 impl CameraDevice for WindowsCameraDevice {
     fn descriptor(&self) -> &CameraDescriptor {
@@ -125,6 +144,7 @@ impl CameraDevice for WindowsCameraDevice {
     }
 
     fn start_stream(&mut self, configuration: &StreamConfiguration) -> CameraResult<()> {
+        camera_frame_byte_limit(&configuration.pixel_format, configuration.resolution)?;
         if self
             .capabilities
             .find_mode(&configuration.pixel_format, configuration.resolution)
@@ -138,67 +158,115 @@ impl CameraDevice for WindowsCameraDevice {
 
         let (response_sender, response_receiver) = mpsc::sync_channel(1);
         self.command_sender
-            .send(WorkerCommand::Start(configuration.clone(), response_sender))
-            .map_err(|error| worker_channel_error("starting the Media Foundation stream", error))?;
-        response_receiver.recv().map_err(|error| {
-            CameraError::new(
-                CameraErrorKind::Backend,
-                format!("Media Foundation worker stopped while starting the stream: {error}"),
-            )
-        })?
+            .try_send(WorkerCommand::Start(configuration.clone(), response_sender))
+            .map_err(|error| {
+                worker_command_error("starting the Media Foundation stream", &error)
+            })?;
+        response_receiver
+            .recv_timeout(WORKER_COMMAND_TIMEOUT)
+            .map_err(|error| worker_response_error("starting the stream", error))?
     }
 
     fn stop_stream(&mut self) -> CameraResult<()> {
         let (response_sender, response_receiver) = mpsc::sync_channel(1);
         self.command_sender
-            .send(WorkerCommand::Stop(response_sender))
-            .map_err(|error| worker_channel_error("stopping the Media Foundation stream", error))?;
-        response_receiver.recv().map_err(|error| {
-            CameraError::new(
-                CameraErrorKind::Backend,
-                format!("Media Foundation worker stopped while stopping the stream: {error}"),
-            )
-        })?
+            .try_send(WorkerCommand::Stop(response_sender))
+            .map_err(|error| {
+                worker_command_error("stopping the Media Foundation stream", &error)
+            })?;
+        response_receiver
+            .recv_timeout(WORKER_COMMAND_TIMEOUT)
+            .map_err(|error| worker_response_error("stopping the stream", error))?
     }
 
     fn next_event(&mut self, timeout: Duration) -> CameraResult<CameraEvent> {
         self.events.next_event(timeout)
     }
 
-    fn control_value(&self, _control_id: &CameraControlId) -> CameraResult<CameraControlValue> {
-        Err(controls_unavailable())
+    fn control_value(&self, control_id: &CameraControlId) -> CameraResult<CameraControlValue> {
+        let (response_sender, response_receiver) = mpsc::sync_channel(1);
+        self.command_sender
+            .try_send(WorkerCommand::ReadControl(
+                control_id.clone(),
+                Instant::now() + WORKER_COMMAND_TIMEOUT,
+                response_sender,
+            ))
+            .map_err(|error| worker_command_error("reading a camera control", &error))?;
+        response_receiver
+            .recv_timeout(WORKER_COMMAND_TIMEOUT)
+            .map_err(|error| worker_response_error("reading a camera control", error))?
     }
 
     fn set_control_value(
         &mut self,
-        _control_id: &CameraControlId,
-        _value: &CameraControlValue,
+        control_id: &CameraControlId,
+        value: &CameraControlValue,
     ) -> CameraResult<()> {
-        Err(controls_unavailable())
+        let (response_sender, response_receiver) = mpsc::sync_channel(1);
+        self.command_sender
+            .try_send(WorkerCommand::SetControl(
+                control_id.clone(),
+                value.clone(),
+                Instant::now() + WORKER_COMMAND_TIMEOUT,
+                response_sender,
+            ))
+            .map_err(|error| worker_command_error("setting a camera control", &error))?;
+        response_receiver
+            .recv_timeout(WORKER_COMMAND_TIMEOUT)
+            .map_err(|error| worker_response_error("setting a camera control", error))?
     }
 
     fn reset_controls(&mut self) -> CameraResult<()> {
-        Ok(())
+        let (response_sender, response_receiver) = mpsc::sync_channel(1);
+        self.command_sender
+            .try_send(WorkerCommand::ResetControls(
+                Instant::now() + WORKER_COMMAND_TIMEOUT,
+                response_sender,
+            ))
+            .map_err(|error| worker_command_error("resetting camera controls", &error))?;
+        response_receiver
+            .recv_timeout(WORKER_COMMAND_TIMEOUT)
+            .map_err(|error| worker_response_error("resetting camera controls", error))?
     }
 }
 
 impl Drop for WindowsCameraDevice {
     fn drop(&mut self) {
-        let _ = self.command_sender.send(WorkerCommand::Shutdown);
-        if let Some(worker) = self.worker.take() {
+        // Dropping the sender below ends the worker once pending commands drain.
+        let _ = self.command_sender.try_send(WorkerCommand::Shutdown);
+        if let Some(worker) = self.worker.take()
+            && worker.is_finished()
+        {
             let _ = worker.join();
         }
+        // A worker blocked inside a driver cannot be joined without risking
+        // an application shutdown hang.
     }
 }
 
-fn worker_channel_error<T: std::fmt::Display>(context: &str, error: T) -> CameraError {
-    CameraError::new(CameraErrorKind::Backend, format!("{context}: {error}"))
+fn worker_command_error(context: &str, error: &TrySendError<WorkerCommand>) -> CameraError {
+    let kind = match error {
+        TrySendError::Full(_) => CameraErrorKind::TimedOut,
+        TrySendError::Disconnected(_) => CameraErrorKind::Backend,
+    };
+    CameraError::new(kind, format!("{context}: camera worker unavailable"))
 }
 
-fn controls_unavailable() -> CameraError {
+fn worker_response_error(context: &str, error: mpsc::RecvTimeoutError) -> CameraError {
+    let kind = match error {
+        mpsc::RecvTimeoutError::Timeout => CameraErrorKind::TimedOut,
+        mpsc::RecvTimeoutError::Disconnected => CameraErrorKind::Backend,
+    };
     CameraError::new(
-        CameraErrorKind::Unsupported,
-        "Media Foundation camera controls are not implemented yet",
+        kind,
+        format!("Media Foundation worker did not respond while {context}: {error}"),
+    )
+}
+
+fn expired_control_command() -> CameraError {
+    CameraError::new(
+        CameraErrorKind::TimedOut,
+        "camera control command expired before the Media Foundation worker could process it",
     )
 }
 
@@ -212,6 +280,7 @@ struct WorkerDevice {
     source_reader: IMFSourceReader,
     descriptor: CameraDescriptor,
     capabilities: CameraCapabilities,
+    controls: NativeControls,
 }
 
 #[derive(Default)]
@@ -341,7 +410,7 @@ fn open_video_device(device_id: &CameraDeviceId) -> CameraResult<WindowsCameraDe
             )
         })?;
 
-    match ready_receiver.recv() {
+    match ready_receiver.recv_timeout(WORKER_COMMAND_TIMEOUT) {
         Ok(Ok(opened)) => Ok(WindowsCameraDevice {
             descriptor: opened.descriptor,
             capabilities: opened.capabilities,
@@ -354,10 +423,18 @@ fn open_video_device(device_id: &CameraDeviceId) -> CameraResult<WindowsCameraDe
             Err(error)
         }
         Err(error) => {
-            let _ = worker.join();
+            // The worker owns the camera and cleans it up if readiness can no
+            // longer be delivered. A stalled driver must not freeze opening.
+            if worker.is_finished() {
+                let _ = worker.join();
+            }
+            let kind = match error {
+                mpsc::RecvTimeoutError::Timeout => CameraErrorKind::TimedOut,
+                mpsc::RecvTimeoutError::Disconnected => CameraErrorKind::Backend,
+            };
             Err(CameraError::new(
-                CameraErrorKind::Backend,
-                format!("Media Foundation device thread stopped while opening: {error}"),
+                kind,
+                format!("Media Foundation device thread did not finish opening: {error}"),
             ))
         }
     }
@@ -449,6 +526,30 @@ fn run_worker_loop(
                     configuration = None;
                     initial_timestamp_100ns = None;
                     events.clear();
+                    let _ = response_sender.send(result);
+                }
+                WorkerCommand::ReadControl(id, deadline, response_sender) => {
+                    let result = if Instant::now() < deadline {
+                        worker_device.controls.get(&id)
+                    } else {
+                        Err(expired_control_command())
+                    };
+                    let _ = response_sender.send(result);
+                }
+                WorkerCommand::SetControl(id, value, deadline, response_sender) => {
+                    let result = if Instant::now() < deadline {
+                        worker_device.controls.set(&id, &value)
+                    } else {
+                        Err(expired_control_command())
+                    };
+                    let _ = response_sender.send(result);
+                }
+                WorkerCommand::ResetControls(deadline, response_sender) => {
+                    let result = if Instant::now() < deadline {
+                        worker_device.controls.reset()
+                    } else {
+                        Err(expired_control_command())
+                    };
                     let _ = response_sender.send(result);
                 }
                 WorkerCommand::Shutdown => return,
@@ -662,6 +763,19 @@ fn read_next_frame(
         return Ok(None);
     };
 
+    // ConvertToContiguousBuffer may itself allocate a copy. Bound the native
+    // sample before asking Media Foundation to coalesce its buffers.
+    let total_length = unsafe { sample.GetTotalLength() }
+        .map_err(|error| windows_device_error("reading a camera sample size", &error))?;
+    if total_length == 0 {
+        return Ok(None);
+    }
+    validate_camera_frame_bytes(
+        &configuration.pixel_format,
+        configuration.resolution,
+        total_length as usize,
+    )?;
+
     // SAFETY: The sample is valid for this call and Media Foundation returns a contiguous buffer
     // retaining the sample data until the COM buffer is released.
     let buffer = unsafe { sample.ConvertToContiguousBuffer() }
@@ -672,6 +786,18 @@ fn read_next_frame(
     // SAFETY: The output pointers are valid and the buffer is unlocked below before it is dropped.
     unsafe { buffer.Lock(&raw mut data_pointer, None, Some(&raw mut current_length)) }
         .map_err(|error| windows_device_error("locking a camera frame buffer", &error))?;
+
+    if current_length != 0
+        && let Err(error) = validate_camera_frame_bytes(
+            &configuration.pixel_format,
+            configuration.resolution,
+            current_length as usize,
+        )
+    {
+        // SAFETY: The successful Lock must be balanced even for an oversized sample.
+        let _ = unsafe { buffer.Unlock() };
+        return Err(error);
+    }
 
     let bytes = if data_pointer.is_null() {
         Vec::new()
@@ -695,6 +821,12 @@ fn read_next_frame(
             CameraErrorKind::Backend,
             "Media Foundation returned a non-empty frame with a null buffer pointer",
         ));
+    }
+
+    // Media Foundation may deliver a sample without image bytes while a stream
+    // starts or changes state. It must not reach the decoder as a valid frame.
+    if bytes.is_empty() {
+        return Ok(None);
     }
 
     let timestamp = elapsed_timestamp(timestamp_100ns, initial_timestamp_100ns);
@@ -755,7 +887,7 @@ fn open_on_worker(requested_id: &str) -> CameraResult<WorkerDevice> {
             return Err(error);
         }
     };
-    let capabilities = match enumerate_capabilities(&source_reader) {
+    let mut capabilities = match enumerate_capabilities(&source_reader) {
         Ok(capabilities) => capabilities,
         Err(error) => {
             drop(source_reader);
@@ -764,11 +896,15 @@ fn open_on_worker(requested_id: &str) -> CameraResult<WorkerDevice> {
         }
     };
 
+    let controls = NativeControls::discover(&source);
+    capabilities.controls = controls.descriptors();
+
     Ok(WorkerDevice {
         source,
         source_reader,
         descriptor,
         capabilities,
+        controls,
     })
 }
 
@@ -872,6 +1008,9 @@ fn enumerate_capabilities(source_reader: &IMFSourceReader) -> CameraResult<Camer
         })?;
 
         let pixel_format = pixel_format_from_subtype(subtype);
+        if camera_frame_byte_limit(&pixel_format, resolution).is_err() {
+            continue;
+        }
         // Only advertise YUV modes that the current full-range BT.601 RGB decoders can
         // render correctly. MJPEG and BGRA do not depend on these YUV attributes.
         if !media_type_has_supported_color(&media_type, &pixel_format) {
@@ -1114,7 +1253,7 @@ fn windows_error(context: &str, error: &windows::core::Error) -> CameraError {
         .with_platform_code(i64::from(error.code().0))
 }
 
-fn windows_device_error(context: &str, error: &windows::core::Error) -> CameraError {
+pub(super) fn windows_device_error(context: &str, error: &windows::core::Error) -> CameraError {
     const ACCESS_DENIED: windows::core::HRESULT = windows::core::HRESULT(-2_147_024_891);
     const SHARING_VIOLATION: windows::core::HRESULT = windows::core::HRESULT(-2_147_024_864);
     const BUSY: windows::core::HRESULT = windows::core::HRESULT(-2_147_024_726);

@@ -282,19 +282,18 @@ impl CameraCapabilities {
     /// Returns advertised modes from strongest to weakest before runtime measurements exist.
     ///
     /// Resolution is ranked first, followed by advertised frame rate and a deterministic
-    /// format preference. Each format/resolution pair appears once with its highest advertised
-    /// frame rate.
+    /// format preference. Every advertised frame rate is retained so a backend
+    /// can retry a lower rate at the same resolution after a start failure.
     #[must_use]
     pub fn ranked_modes(&self) -> Vec<(&CameraMode, FrameRate)> {
         let mut modes = self
             .modes
             .iter()
-            .filter_map(|mode| {
+            .flat_map(|mode| {
                 mode.frame_rates
                     .iter()
                     .copied()
-                    .max()
-                    .map(|frame_rate| (mode, frame_rate))
+                    .map(move |frame_rate| (mode, frame_rate))
             })
             .collect::<Vec<_>>();
 

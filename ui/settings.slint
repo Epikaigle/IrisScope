@@ -1,0 +1,291 @@
+import { AppButton } from "./controls.slint";
+import { Design } from "./theme.slint";
+import { VerticalBox, HorizontalBox, LineEdit, ComboBox, ScrollView } from "std-widgets.slint";
+import { AppState } from "./state.slint";
+
+component DiagnosticRow inherits VerticalBox {
+    in property <string> label;
+    in property <string> value;
+    in property <bool> highlight: false;
+    min-height: 50px;
+    vertical-stretch: 0;
+    spacing: 2px;
+    Text {
+        height: 17px;
+        vertical-stretch: 0;
+        text: root.label;
+        color: Design.text-muted;
+        font-size: 11px;
+    }
+    Text {
+        min-height: 30px;
+        vertical-stretch: 0;
+        text: root.value;
+        color: root.highlight ? Design.success : Design.text;
+        font-size: 12px;
+        font-weight: root.highlight ? 700 : 400;
+        wrap: word-wrap;
+    }
+}
+
+export component SettingsPage inherits Rectangle {
+    ScrollView {
+        VerticalBox {
+            padding: 20px;
+            spacing: 12px;
+            alignment: start;
+
+            Text {
+                text: "Paramètres et diagnostic";
+                font-family: Design.font-display;
+                font-size: 29px;
+                font-weight: 400;
+                color: Design.text;
+            }
+
+            Text {
+                text: "Modifiez un champ, puis utilisez Entrée ou Enregistrer.";
+                color: Design.text-muted;
+                font-size: 12px;
+            }
+
+            if AppState.settings-feedback != "": Text {
+                text: AppState.settings-feedback;
+                color: AppState.settings-feedback-is-error ? Design.danger : Design.success;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+
+            GridLayout {
+                spacing: 16px;
+
+                // Diagnostic Technique
+                Rectangle {
+                    row: 0;
+                    col: 0;
+                    border-radius: Design.card-radius;
+                    background: Design.surface;
+                    border-width: 1px;
+                    border-color: Design.border;
+                    width: root.width < 1050px ? root.width - 40px : (root.width - 56px) / 2;
+                    height: diagnostic-content.preferred-height;
+                    vertical-stretch: 0;
+
+                    diagnostic-content := VerticalBox {
+                        spacing: 10px;
+                        padding: 16px;
+                        alignment: start;
+
+                        Text {
+                            text: "État de la caméra";
+                            font-size: 15px;
+                            font-weight: 700;
+                            color: Design.accent;
+                        }
+                        Text {
+                            text: AppState.status-text == "" ? "Iridoscope déconnecté" : AppState.status-text;
+                            color: AppState.camera-connected ? Design.success : Design.danger;
+                            font-size: 12px;
+                            wrap: word-wrap;
+                        }
+
+                        if !AppState.camera-connected: Text {
+                            text: "Les données du flux apparaîtront après la connexion.";
+                            color: Design.text-muted;
+                            font-size: 12px;
+                            wrap: word-wrap;
+                        }
+
+                        if AppState.camera-connected: VerticalBox {
+                            spacing: 10px;
+                            DiagnosticRow { label: "Périphérique"; value: AppState.diagnostics.device-name; }
+                            DiagnosticRow { label: "Identifiant"; value: AppState.diagnostics.device-id; }
+                            DiagnosticRow { label: "Système caméra"; value: AppState.diagnostics.backend-name; }
+                            DiagnosticRow { label: "Identité USB"; value: AppState.diagnostics.usb-info; }
+                            DiagnosticRow { label: "Format actif"; value: AppState.diagnostics.active-format; }
+                            DiagnosticRow { label: "Résolution"; value: AppState.diagnostics.active-resolution; }
+                            DiagnosticRow { label: "FPS du mode"; value: AppState.diagnostics.active-fps; }
+                            DiagnosticRow { label: "FPS mesurés"; value: AppState.is-streaming ? AppState.diagnostics.measured-fps : "—"; highlight: AppState.is-streaming; }
+                            DiagnosticRow { label: "Décodage"; value: AppState.diagnostics.decode-time-ms; }
+                            DiagnosticRow { label: "Images reçues"; value: "" + AppState.diagnostics.frame-count; }
+                            DiagnosticRow { label: "Images ignorées"; value: "" + AppState.diagnostics.dropped-frames; }
+                        }
+                    }
+                }
+
+                // Paramètres Généraux
+                Rectangle {
+                    row: root.width < 1050px ? 1 : 0;
+                    col: root.width < 1050px ? 0 : 1;
+                    border-radius: Design.card-radius;
+                    background: Design.surface;
+                    border-width: 1px;
+                    border-color: Design.border;
+                    width: root.width < 1050px ? root.width - 40px : (root.width - 56px) / 2;
+
+                    VerticalBox {
+                        spacing: 12px;
+                        padding: 16px;
+
+                        Text {
+                            text: "Enregistrement et références";
+                            font-size: 15px;
+                            font-weight: 700;
+                            color: Design.accent;
+                        }
+
+                        Text { text: "Dossier des captures :"; color: Design.text-muted; }
+                        HorizontalBox {
+                            height: 44px;
+                            vertical-stretch: 0;
+                            spacing: 8px;
+                            capture-directory-field := LineEdit {
+                                min-width: 0px;
+                                height: 40px;
+                                horizontal-stretch: 1;
+                                enabled: !AppState.recording-busy;
+                                text: AppState.settings-capture-directory;
+                                changed has-focus => {
+                                    AppState.focused-text-fields = Math.max(0, AppState.focused-text-fields + (self.has-focus ? 1 : -1));
+                                }
+                                placeholder-text: "Chemin du dossier";
+                                accepted(value) => { AppState.update-capture-directory(value); }
+                            }
+                            AppButton {
+                                height: 40px;
+                                text: "Enregistrer";
+                                enabled: !AppState.recording-busy;
+                                clicked => { AppState.update-capture-directory(capture-directory-field.text); }
+                            }
+                        }
+
+                        Text { text: "Modèle de nommage :"; color: Design.text-muted; }
+                        HorizontalBox {
+                            height: 44px;
+                            vertical-stretch: 0;
+                            spacing: 8px;
+                            filename-template-field := LineEdit {
+                                min-width: 0px;
+                                height: 40px;
+                                horizontal-stretch: 1;
+                                text: AppState.settings-filename-template;
+                                changed has-focus => {
+                                    AppState.focused-text-fields = Math.max(0, AppState.focused-text-fields + (self.has-focus ? 1 : -1));
+                                }
+                                placeholder-text: "{prenom}_{nom}_{oeil}_{date}_{heure}";
+                                accepted(value) => { AppState.update-filename-template(value); }
+                            }
+                            AppButton {
+                                height: 40px;
+                                text: "Enregistrer";
+                                clicked => { AppState.update-filename-template(filename-template-field.text); }
+                            }
+                        }
+                        Text {
+                            text: "Jetons requis dans le modèle : {prenom}, {nom}, {oeil}. Facultatifs : {date}, {heure}. Les champs patient peuvent rester vides lors d'une capture.";
+                            color: Design.text-muted;
+                            font-size: 11px;
+                            wrap: word-wrap;
+                        }
+
+                        Text {
+                            text: "Confidentialité : les noms de fichiers, les captures et l'index local ne sont pas chiffrés. Limitez l'accès au dossier des captures sur cet ordinateur.";
+                            color: Design.text-muted;
+                            font-size: 11px;
+                            wrap: word-wrap;
+                        }
+
+                        Text {
+                            text: "Bouton Snapshot du DE400 : détection non disponible pour le moment. Utilisez les boutons de capture ou les raccourcis clavier.";
+                            color: Design.text-muted;
+                            font-size: 11px;
+                            wrap: word-wrap;
+                        }
+
+                        Text { text: "Thème de l'interface :"; color: Design.text-muted; }
+                        AppButton {
+                            height: 40px;
+                            text: AppState.settings-theme == 1 ? "Clair"
+                                : AppState.settings-theme == 2 ? "Sombre" : "Système";
+                            clicked => { AppState.cycle-theme(); }
+                        }
+
+                        Text { text: "Qualité vidéo et fluidité du direct :"; color: Design.text-muted; }
+                        ComboBox {
+                            height: 40px;
+                            model: ["Maximale — résolution", "Équilibrée", "Fluide — images par seconde"];
+                            current-index: AppState.settings-video-quality;
+                            enabled: !AppState.recording-busy;
+                            selected(value) => {
+                                AppState.update-video-quality(value == "Équilibrée" ? 1
+                                    : value == "Fluide — images par seconde" ? 2 : 0);
+                            }
+                        }
+                        Text {
+                            text: "Changer de qualité redémarre brièvement le flux. Le mode actif figure dans État de la caméra.";
+                            color: Design.text-muted;
+                            font-size: 11px;
+                            wrap: word-wrap;
+                        }
+
+                        Text { text: "Carte d'iridologie (image) :"; color: Design.text-muted; }
+                        HorizontalBox {
+                            height: 44px;
+                            vertical-stretch: 0;
+                            spacing: 8px;
+                            map-path-field := LineEdit {
+                                min-width: 0px;
+                                height: 40px;
+                                horizontal-stretch: 1;
+                                text: AppState.settings-iridology-map-path;
+                                changed has-focus => {
+                                    AppState.focused-text-fields = Math.max(0, AppState.focused-text-fields + (self.has-focus ? 1 : -1));
+                                }
+                                placeholder-text: "Chemin vers une image JPEG/PNG";
+                                accepted(value) => { AppState.update-iridology-map-path(value); }
+                            }
+                            AppButton {
+                                height: 40px;
+                                text: "Enregistrer";
+                                clicked => { AppState.update-iridology-map-path(map-path-field.text); }
+                            }
+                        }
+
+                        Text { text: "Planche de signes et symboles :"; color: Design.text-muted; }
+                        HorizontalBox {
+                            height: 44px;
+                            vertical-stretch: 0;
+                            spacing: 8px;
+                            symbols-path-field := LineEdit {
+                                min-width: 0px;
+                                height: 40px;
+                                horizontal-stretch: 1;
+                                text: AppState.settings-iridology-symbols-path;
+                                changed has-focus => {
+                                    AppState.focused-text-fields = Math.max(0, AppState.focused-text-fields + (self.has-focus ? 1 : -1));
+                                }
+                                placeholder-text: "Chemin vers une image JPEG/PNG";
+                                accepted(value) => { AppState.update-iridology-symbols-path(value); }
+                            }
+                            AppButton {
+                                height: 40px;
+                                text: "Enregistrer";
+                                clicked => { AppState.update-iridology-symbols-path(symbols-path-field.text); }
+                            }
+                        }
+
+                        HorizontalBox {
+                            height: 44px;
+                            alignment: start;
+                            AppButton {
+                                height: 40px;
+                                text: "Ouvrir le dossier des captures";
+                                clicked => { AppState.open-capture-directory(); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

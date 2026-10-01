@@ -5,7 +5,7 @@ use slint::{
     platform::{Key, PointerEventButton, WindowEvent},
 };
 
-slint::include_modules!();
+use iriscope_app::ui::{AppState, LibraryItemData, MainWindow};
 
 fn control_key(window: &MainWindow, key: &str) {
     window.window().dispatch_event(WindowEvent::KeyPressed {
@@ -23,7 +23,7 @@ fn control_key(window: &MainWindow, key: &str) {
 }
 
 fn camera_panel_and_image_popup_have_clickable_controls(window: &MainWindow) {
-    click(window, 246.0, 26.0);
+    click(window, 290.0, 26.0);
     assert!(window.get_image_controls_open());
     window.set_is_streaming(true);
     window.set_zoom_level(150);
@@ -62,27 +62,32 @@ fn library_modes_open_capture_and_close_map() {
     window.set_library_items(ModelRc::new(VecModel::from(vec![LibraryItemData {
         id: "sample".into(),
         file_path: "/tmp/sample.jpg".into(),
+        file_version: "card-version".into(),
         title: "Patient (Œil gauche)".into(),
         date_time: "24/09/2026 10:00".into(),
+        dossier_number: "D-000001".into(),
         eye_label: "Gauche".into(),
         thumbnail: slint::Image::default(),
         has_thumbnail: false,
         is_video: false,
+        can_open_in_app: true,
         is_current_patient: true,
     }])));
     let opens = Rc::new(Cell::new(0));
-    window.on_open_capture_file({
+    window.global::<AppState>().on_open_capture_file({
         let opens = opens.clone();
-        move |path| {
+        move |path, version| {
             assert_eq!(path.as_str(), "/tmp/sample.jpg");
+            assert_eq!(version.as_str(), "card-version");
             opens.set(opens.get() + 1);
         }
     });
     let external_opens = Rc::new(Cell::new(0));
-    window.on_open_capture_externally({
+    window.global::<AppState>().on_open_capture_externally({
         let external_opens = external_opens.clone();
-        move |path| {
+        move |path, version| {
             assert_eq!(path.as_str(), "/tmp/sample.jpg");
+            assert_eq!(version.as_str(), "card-version");
             external_opens.set(external_opens.get() + 1);
         }
     });
@@ -125,19 +130,19 @@ fn shortcuts_follow_active_page_capture_guards_and_viewer() {
     let recordings = Rc::new(Cell::new(0));
     let freezes = Rc::new(Cell::new(0));
     let viewer_closes = Rc::new(Cell::new(0));
-    window.on_trigger_capture({
+    window.global::<AppState>().on_trigger_capture({
         let calls = photos.clone();
         move || calls.set(calls.get() + 1)
     });
-    window.on_toggle_recording({
+    window.global::<AppState>().on_toggle_recording({
         let calls = recordings.clone();
         move || calls.set(calls.get() + 1)
     });
-    window.on_toggle_freeze({
+    window.global::<AppState>().on_toggle_freeze({
         let calls = freezes.clone();
         move || calls.set(calls.get() + 1)
     });
-    window.on_close_viewer({
+    window.global::<AppState>().on_close_viewer({
         let calls = viewer_closes.clone();
         move || calls.set(calls.get() + 1)
     });
@@ -160,10 +165,10 @@ fn shortcuts_follow_active_page_capture_guards_and_viewer() {
     assert_eq!((photos.get(), recordings.get()), (1, 1));
     window.set_recording_finalizing(false);
 
-    click(&window, 160.0, 375.0);
+    click(&window, 160.0, 425.0);
     assert_eq!(photos.get(), 2);
     window.set_viewer_open(true);
-    click(&window, 160.0, 375.0);
+    click(&window, 160.0, 425.0);
     assert_eq!(photos.get(), 2);
     window.set_viewer_open(false);
 

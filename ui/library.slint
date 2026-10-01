@@ -1,0 +1,678 @@
+import { AppButton } from "./controls.slint";
+import { Design } from "./theme.slint";
+import { VerticalBox, HorizontalBox, ScrollView, ListView } from "std-widgets.slint";
+import { AppState } from "./state.slint";
+
+export component LibraryPage inherits Rectangle {
+    private property <int> library-grid-columns: root.width < 700px ? 1 : root.width < 1050px ? 2 : root.width < 1450px ? 3 : 4;
+    private property <string> confirmation-patient-id: "";
+    private property <string> observed-patient-id: AppState.patient-id;
+    private property <bool> confirming-assignment: root.confirmation-patient-id != ""
+        && root.confirmation-patient-id == AppState.patient-id;
+    changed observed-patient-id => { root.confirmation-patient-id = ""; }
+
+    public function select-capture(path: string, dossier-number: string, file-version: string) {
+        AppState.selected-library-path = path;
+        AppState.selected-library-file-version = file-version;
+        AppState.selected-library-dossier-number = dossier-number;
+        root.confirmation-patient-id = "";
+    }
+    VerticalBox {
+        padding: 20px;
+        spacing: 12px;
+
+        HorizontalBox {
+            height: 64px;
+            vertical-stretch: 0;
+            alignment: space-between;
+            VerticalBox {
+                spacing: 4px;
+                Text {
+                    text: "Bibliothèque";
+                    font-family: Design.font-display;
+                    font-size: 28px;
+                    font-weight: 400;
+                    color: Design.text;
+                }
+                Text {
+                    text: AppState.library-error != ""
+                        ? "Dossier des captures inaccessible"
+                        : AppState.library-loading
+                        ? "Chargement des captures…"
+                        : AppState.library-total-count == 1
+                            ? "1 capture dans ce filtre"
+                            : AppState.library-total-count + " captures dans ce filtre";
+                    font-size: 12px;
+                    color: Design.text-muted;
+                }
+            }
+            HorizontalBox {
+                height: 44px;
+                vertical-stretch: 0;
+                spacing: 8px;
+                AppButton {
+                    height: 40px;
+                    text: "Carte d'iridologie";
+                    clicked => { AppState.iridology-reference-mode = 0; AppState.library-map-open = true; }
+                }
+                AppButton {
+                    height: 40px;
+                    text: "Actualiser";
+                    clicked => { root.select-capture("", "", ""); AppState.refresh-library(); }
+                }
+                AppButton {
+                    height: 40px;
+                    text: "Ouvrir le dossier";
+                    clicked => { AppState.open-capture-directory(); }
+                }
+            }
+        }
+
+        if AppState.pending-recordings-count > 0: Rectangle {
+            height: 86px;
+            vertical-stretch: 0;
+            border-radius: Design.card-radius;
+            background: Design.info-surface;
+            border-width: 1px;
+            border-color: Design.border;
+            VerticalBox {
+                padding-left: 12px;
+                padding-right: 12px;
+                padding-top: 7px;
+                padding-bottom: 7px;
+                spacing: 4px;
+                Text {
+                    text: AppState.pending-recordings-count == 1
+                        ? "Une vidéo interrompue peut être récupérée."
+                        : AppState.pending-recordings-count + " vidéos interrompues peuvent être récupérées.";
+                    color: Design.text;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+                AppButton {
+                    height: 40px;
+                    text: "Récupérer les vidéos interrompues";
+                    clicked => { AppState.recover-pending-recordings(); }
+                }
+            }
+        }
+
+        if AppState.selected-library-path != "" && AppState.selected-library-dossier-number == "" && AppState.patient-id != "": Rectangle {
+            height: 96px;
+            vertical-stretch: 0;
+            border-radius: Design.card-radius;
+            background: Design.accent-soft;
+            border-width: 1px;
+            border-color: Design.accent;
+            VerticalBox {
+                padding-left: 12px;
+                padding-right: 12px;
+                padding-top: 8px;
+                padding-bottom: 8px;
+                spacing: 5px;
+                Text {
+                    text: root.confirming-assignment
+                        ? "Confirmez que cette capture appartient bien au dossier n° " + AppState.patient-dossier-number + "."
+                        : "Cette capture n'a pas de dossier patient vérifié. Vous pouvez la rattacher au dossier n° " + AppState.patient-dossier-number + ".";
+                    color: Design.text;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+                HorizontalBox {
+                    height: 40px;
+                    vertical-stretch: 0;
+                    spacing: 8px;
+                    AppButton {
+                        height: 40px;
+                        text: root.confirming-assignment ? "Confirmer le rattachement" : "Rattacher au dossier n° " + AppState.patient-dossier-number;
+                        clicked => {
+                            if root.confirming-assignment {
+                                AppState.assign-selected-capture-to-patient(AppState.selected-library-path, AppState.selected-library-file-version);
+                                root.confirmation-patient-id = "";
+                            } else {
+                                root.confirmation-patient-id = AppState.patient-id;
+                            }
+                        }
+                    }
+                    if root.confirming-assignment: AppButton {
+                        height: 40px;
+                        text: "Annuler";
+                        clicked => { root.confirmation-patient-id = ""; }
+                    }
+                }
+            }
+        }
+
+        HorizontalBox {
+            height: 44px;
+            vertical-stretch: 0;
+            spacing: Design.gap-small;
+            alignment: start;
+            Text {
+                text: "FILTRES";
+                color: Design.text-muted;
+                font-size: 11px;
+                vertical-alignment: center;
+                font-weight: 700;
+            }
+            AppButton {
+                height: 40px;
+                text: "Tous";
+                primary: AppState.library-filter == 0;
+                selected: AppState.library-filter == 0;
+                clicked => {
+                    root.select-capture("", "", "");
+                    AppState.library-filter = 0;
+                    AppState.library-filter-changed(0);
+                }
+            }
+            AppButton {
+                height: 40px;
+                text: "Photos";
+                primary: AppState.library-filter == 1;
+                selected: AppState.library-filter == 1;
+                clicked => {
+                    root.select-capture("", "", "");
+                    AppState.library-filter = 1;
+                    AppState.library-filter-changed(1);
+                }
+            }
+            AppButton {
+                height: 40px;
+                text: "Vidéos";
+                primary: AppState.library-filter == 2;
+                selected: AppState.library-filter == 2;
+                clicked => {
+                    root.select-capture("", "", "");
+                    AppState.library-filter = 2;
+                    AppState.library-filter-changed(2);
+                }
+            }
+            AppButton {
+                height: 40px;
+                text: AppState.patient-dossier-number == "" ? "Dossier actuel" : "Dossier n° " + AppState.patient-dossier-number;
+                primary: AppState.library-filter == 3;
+                selected: AppState.library-filter == 3;
+                enabled: AppState.patient-id != "";
+                clicked => {
+                    root.select-capture("", "", "");
+                    AppState.library-filter = 3;
+                    AppState.library-filter-changed(3);
+                }
+            }
+            Text {
+                horizontal-stretch: 1;
+                text: AppState.patient-id == ""
+                    ? "Choisissez un dossier patient dans Caméra pour filtrer"
+                    : "Captures de " + AppState.patient-first-name + " " + AppState.patient-last-name;
+                color: Design.text-muted;
+                font-size: 11px;
+                horizontal-alignment: right;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+
+        HorizontalBox {
+            height: 44px;
+            vertical-stretch: 0;
+            alignment: space-between;
+            Text {
+                text: "Choisir une capture, puis Ouvrir pour l'examiner.";
+                color: Design.text-muted;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+            HorizontalBox {
+                height: 44px;
+                vertical-stretch: 0;
+                spacing: 6px;
+                AppButton {
+                    height: 40px;
+                    text: "Grille";
+                    primary: AppState.library-view == 0;
+                    selected: AppState.library-view == 0;
+                    clicked => { AppState.library-view = 0; }
+                }
+                AppButton {
+                    height: 40px;
+                    text: "Liste";
+                    primary: AppState.library-view == 1;
+                    selected: AppState.library-view == 1;
+                    clicked => { AppState.library-view = 1; }
+                }
+            }
+        }
+
+        if AppState.library-total-count > 100: HorizontalBox {
+            height: 44px;
+            vertical-stretch: 0;
+            spacing: 8px;
+            alignment: start;
+            AppButton {
+                height: 40px;
+                text: "Précédent";
+                enabled: AppState.library-page > 0 && !AppState.library-loading;
+                clicked => { root.select-capture("", "", ""); AppState.library-page-changed(AppState.library-page - 1); }
+            }
+            Text {
+                text: AppState.library-page-summary;
+                color: Design.text-secondary;
+                font-size: 13px;
+                vertical-alignment: center;
+            }
+            AppButton {
+                height: 40px;
+                text: "Suivant";
+                enabled: (AppState.library-page + 1) * 100 < AppState.library-total-count && !AppState.library-loading;
+                clicked => { root.select-capture("", "", ""); AppState.library-page-changed(AppState.library-page + 1); }
+            }
+        }
+
+        HorizontalBox {
+            height: 30px;
+            vertical-stretch: 0;
+            spacing: 8px;
+            alignment: start;
+            Rectangle {
+                border-radius: 4px;
+                background: Design.success-surface;
+                height: 30px;
+                HorizontalBox {
+                    padding-left: 8px;
+                    padding-right: 8px;
+                    Text {
+                        text: "Titres masqués hors patient sélectionné";
+                        color: Design.success;
+                        font-size: 11px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+            Text {
+                text: "Miniatures et noms de fichiers visibles. Les vidéos non AVI s'ouvrent avec l'application du PC.";
+                color: Design.text-muted;
+                font-size: 11px;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+
+        if AppState.library-loading: Rectangle {
+            background: Design.surface;
+            border-radius: Design.card-radius;
+            min-height: 350px;
+            Text {
+                text: "Chargement des captures...";
+                color: Design.text-secondary;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        if !AppState.library-loading && AppState.library-error != "": Rectangle {
+            background: Design.surface;
+            border-radius: Design.card-radius;
+            border-width: 1px;
+            border-color: Design.error-surface;
+            min-height: 220px;
+
+            VerticalBox {
+                alignment: center;
+                spacing: 10px;
+                Text {
+                    text: AppState.library-error;
+                    color: Design.danger;
+                    font-size: 14px;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                }
+                HorizontalBox {
+                    alignment: center;
+                    spacing: 8px;
+                    AppButton {
+                        height: 40px;
+                        text: "Réessayer";
+                        clicked => { AppState.refresh-library(); }
+                    }
+                    AppButton {
+                        height: 40px;
+                        text: "Vérifier le dossier";
+                        clicked => { AppState.navigate-to(4); }
+                    }
+                }
+            }
+        }
+
+        if !AppState.library-loading && AppState.library-error == "" && AppState.library-items.length == 0: Rectangle {
+            background: Design.surface;
+            border-radius: Design.card-radius;
+            border-width: 1px;
+            border-color: Design.border;
+            min-height: 350px;
+
+            VerticalBox {
+                alignment: center;
+                spacing: 8px;
+                Text {
+                    text: AppState.library-filter == 3
+                        ? "Aucune capture pour ce patient."
+                        : AppState.library-filter == 1
+                            ? "Aucune photo dans la bibliothèque."
+                            : AppState.library-filter == 2
+                                ? "Aucune vidéo dans la bibliothèque."
+                                : "Aucun cliché dans la bibliothèque pour le moment.";
+                    color: Design.text;
+                    font-size: 16px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: AppState.library-filter == 0
+                        ? "Prenez une photo ou une vidéo depuis la caméra pour commencer."
+                        : "Essayez un autre filtre pour retrouver vos captures.";
+                    color: Design.text-muted;
+                    font-size: 13px;
+                    horizontal-alignment: center;
+                }
+                HorizontalBox {
+                    alignment: center;
+                    AppButton {
+                        height: 40px;
+                        text: AppState.library-filter == 0 ? "Aller à la caméra" : "Voir toutes les captures";
+                        clicked => {
+                            if AppState.library-filter == 0 {
+                                AppState.navigate-to(0);
+                            } else {
+                                root.select-capture("", "", "");
+                                AppState.library-filter = 0;
+                                AppState.library-filter-changed(0);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if !AppState.library-loading && AppState.library-error == "" && AppState.library-items.length > 0 && AppState.library-view == 1: library-list := ListView {
+            min-height: 0px;
+            vertical-stretch: 1;
+            for item in AppState.library-items: Rectangle {
+                width: library-list.visible-width;
+                height: 100px;
+
+                Rectangle {
+                    width: 100%;
+                    height: 92px;
+                    border-radius: Design.card-radius;
+                    background: AppState.selected-library-path == item.file-path ? Design.accent-soft : item.is-current-patient ? Design.surface-raised : Design.surface;
+                    border-width: 1px;
+                    border-color: AppState.selected-library-path == item.file-path ? Design.accent : item.is-current-patient ? Design.accent : Design.border;
+
+                    TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        clicked => { root.select-capture(item.file-path, item.dossier-number, item.file-version); }
+                    }
+
+                    HorizontalBox {
+                        padding-left: 16px;
+                        padding-right: 16px;
+                        spacing: 16px;
+                        alignment: space-between;
+
+                        HorizontalBox {
+                            min-width: 0px;
+                            horizontal-stretch: 1;
+                            spacing: 12px;
+                            alignment: start;
+
+                            if item.has-thumbnail: Rectangle {
+                                width: 96px;
+                                height: 72px;
+                                border-radius: 6px;
+                                clip: true;
+                                background: #000000;
+
+                                Image {
+                                    source: item.thumbnail;
+                                    width: 100%;
+                                    height: 100%;
+                                    image-fit: cover;
+                                }
+                            }
+
+                            if !item.has-thumbnail: Rectangle {
+                                width: 96px;
+                                height: 72px;
+                                border-radius: 6px;
+                                background: Design.surface-sunken;
+
+                                Text {
+                                    text: item.is-video ? "VIDÉO" : "IRIS";
+                                    color: Design.text-muted;
+                                    font-size: 11px;
+                                    font-weight: 700;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            Rectangle {
+                                width: 72px;
+                                height: 28px;
+                                border-radius: 6px;
+                                background: item.is-video ? Design.video-surface : Design.success-surface;
+
+                                HorizontalBox {
+                                    alignment: center;
+                                    Text {
+                                        text: item.is-video ? "VIDÉO" : "PHOTO";
+                                        color: item.is-video ? Design.accent : Design.success;
+                                        font-size: 11px;
+                                        font-weight: 700;
+                                    }
+                                }
+                            }
+
+                            VerticalBox {
+                                min-width: 0px;
+                                horizontal-stretch: 1;
+                                alignment: center;
+                                spacing: 2px;
+
+                                HorizontalBox {
+                                    min-width: 0px;
+                                    spacing: 8px;
+                                    alignment: start;
+                                    Text {
+                                        min-width: 0px;
+                                        horizontal-stretch: 1;
+                                        text: item.title;
+                                        color: Design.text;
+                                        font-size: 14px;
+                                        font-weight: 600;
+                                        overflow: elide;
+                                    }
+                                    if item.is-current-patient: Rectangle {
+                                        width: 116px;
+                                        height: 22px;
+                                        border-radius: 4px;
+                                        background: Design.accent-soft;
+                                        Text {
+                                            width: 100%;
+                                            height: 100%;
+                                            text: "Patient sélectionné";
+                                            color: Design.accent-hover;
+                                            font-size: 10px;
+                                            font-weight: 700;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                    if !item.is-current-patient: Rectangle {
+                                        width: 82px;
+                                        height: 22px;
+                                        border-radius: 4px;
+                                        background: Design.control;
+                                        Text {
+                                            width: 100%;
+                                            height: 100%;
+                                            text: "Nom masqué";
+                                            color: Design.text-secondary;
+                                            font-size: 10px;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
+
+                                Text {
+                                    text: item.dossier-number == "" ? item.date-time : "Dossier n° " + item.dossier-number + " · " + item.date-time;
+                                    color: Design.text-muted;
+                                    font-size: 12px;
+                                    overflow: elide;
+                                }
+                            }
+                        }
+
+                        HorizontalBox {
+                            height: 40px;
+                            vertical-stretch: 0;
+                            spacing: 6px;
+                            AppButton {
+                                height: 40px;
+                                text: item.can-open-in-app ? "Ouvrir ici" : "Format externe";
+                                enabled: item.can-open-in-app;
+                                primary: AppState.selected-library-path == item.file-path;
+                                clicked => { AppState.library-map-open = false; AppState.open-capture-file(item.file-path, item.file-version); }
+                            }
+                            AppButton {
+                                height: 40px;
+                                text: "Application du PC";
+                                clicked => { AppState.open-capture-externally(item.file-path, item.file-version); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if !AppState.library-loading && AppState.library-error == "" && AppState.library-items.length > 0 && AppState.library-view == 0: ScrollView {
+            min-height: 0px;
+            vertical-stretch: 1;
+
+            GridLayout {
+                width: parent.width;
+                spacing: 12px;
+
+                for item[index] in AppState.library-items: Rectangle {
+                    row: index / root.library-grid-columns;
+                    col: Math.mod(index, root.library-grid-columns);
+                    width: (root.width - 40px - (root.library-grid-columns - 1) * 12px) / root.library-grid-columns;
+                    horizontal-stretch: 0;
+                    height: 274px;
+                    border-radius: Design.card-radius;
+                    clip: true;
+                    background: AppState.selected-library-path == item.file-path ? Design.accent-soft : Design.surface;
+                    border-width: 1px;
+                    border-color: AppState.selected-library-path == item.file-path ? Design.accent : item.is-current-patient ? Design.accent : Design.border;
+
+                    TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        clicked => { root.select-capture(item.file-path, item.dossier-number, item.file-version); }
+                    }
+
+                    VerticalBox {
+                        padding: 10px;
+                        spacing: 6px;
+                        alignment: start;
+
+                        Rectangle {
+                            height: 128px;
+                            border-radius: 6px;
+                            clip: true;
+                            background: Design.preview;
+
+                            if item.has-thumbnail: Image {
+                                source: item.thumbnail;
+                                width: 100%;
+                                height: 100%;
+                                image-fit: cover;
+                            }
+
+                            if !item.has-thumbnail: Text {
+                                width: 100%;
+                                height: 100%;
+                                text: item.is-video ? "VIDÉO" : "IRIS";
+                                color: Design.text-muted;
+                                font-size: 12px;
+                                font-weight: 700;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        HorizontalBox {
+                            spacing: 6px;
+                            Rectangle {
+                                width: 54px;
+                                height: 18px;
+                                border-radius: 4px;
+                                background: item.is-video ? Design.video-surface : Design.success-surface;
+                                Text {
+                                    text: item.is-video ? "VIDÉO" : "PHOTO";
+                                    color: item.is-video ? Design.accent : Design.success;
+                                    font-size: 10px;
+                                    font-weight: 700;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            Text {
+                                min-width: 0px;
+                                horizontal-stretch: 1;
+                                text: item.title;
+                                color: Design.text;
+                                font-size: 13px;
+                                font-weight: 600;
+                                overflow: elide;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        Text {
+                            height: 20px;
+                            text: item.dossier-number == "" ? item.date-time : "Dossier n° " + item.dossier-number + " · " + item.date-time;
+                            color: Design.text-muted;
+                            font-size: 11px;
+                            overflow: elide;
+                        }
+
+                        HorizontalBox {
+                            height: 40px;
+                            vertical-stretch: 0;
+                            spacing: 6px;
+                            AppButton {
+                                height: 40px;
+                                horizontal-stretch: 1;
+                                text: item.can-open-in-app ? "Ouvrir ici" : "Format externe";
+                                enabled: item.can-open-in-app;
+                                primary: AppState.selected-library-path == item.file-path;
+                                clicked => { AppState.library-map-open = false; AppState.open-capture-file(item.file-path, item.file-version); }
+                            }
+                            AppButton {
+                                height: 40px;
+                                horizontal-stretch: 1;
+                                text: "App. du PC";
+                                clicked => { AppState.open-capture-externally(item.file-path, item.file-version); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -1,213 +1,128 @@
-import { Button, VerticalBox, HorizontalBox, LineEdit, Slider, ComboBox, ScrollView, ListView } from "std-widgets.slint";
-
-export struct DiagnosticData {
-    device-name: string,
-    device-id: string,
-    backend-name: string,
-    usb-info: string,
-    active-format: string,
-    active-resolution: string,
-    active-fps: string,
-    measured-fps: string,
-    decode-time-ms: string,
-    frame-count: int,
-    dropped-frames: int,
-}
-
-export struct LibraryItemData {
-    id: string,
-    file-path: string,
-    title: string,
-    date-time: string,
-    eye-label: string,
-    thumbnail: image,
-    has-thumbnail: bool,
-    is-video: bool,
-    is-current-patient: bool,
-}
-
-export struct CameraControlUiData {
-    key: string,
-    name: string,
-    kind: int, // 0: integer, 1: boolean, 2: menu
-    minimum: float,
-    maximum: float,
-    value: float,
-    boolean-value: bool,
-    menu-label: string,
-    read-only: bool,
-}
+import { AppButton } from "./controls.slint";
+import { Design } from "./theme.slint";
+import { HorizontalBox, Palette } from "std-widgets.slint";
+import { AppState } from "./state.slint";
+import { DiagnosticData, LibraryItemData, CameraControlUiData, PatientCandidateData } from "./models.slint";
+import { CameraPage } from "./camera.slint";
+import { LibraryPage } from "./library.slint";
+import { SettingsPage } from "./settings.slint";
+import { MapOverlay } from "./map-overlay.slint";
+import { ViewerOverlay } from "./viewer-overlay.slint";
+import { CaptureNotice } from "./capture-notice.slint";
+import "./fonts/Manrope.ttf";
+import "./fonts/InstrumentSerif-Regular.ttf";
+export { DiagnosticData, LibraryItemData, CameraControlUiData, PatientCandidateData } from "./models.slint";
+export { AppState } from "./state.slint";
 
 export component MainWindow inherits Window {
     title: "IrisScope - Digital Microscope";
     full-screen: root.iris-fullscreen;
-    min-width: 1024px;
-    min-height: 720px;
+    min-width: 800px;
+    min-height: 600px;
     preferred-width: 1280px;
     preferred-height: 800px;
-    background: #14171a;
+    background: Design.canvas;
+    default-font-family: Design.font-ui;
+    default-font-size: 13px;
     forward-focus: app-shortcuts;
-
-    in-out property <image> live-frame;
-    in-out property <string> status-text: "Recherche de l'iridoscope...";
-    in-out property <bool> camera-connected: false;
-    in-out property <bool> is-streaming: false;
-
-    // Session patient
-    in-out property <string> patient-first-name: "";
-    in-out property <string> patient-last-name: "";
-    in-out property <int> selected-eye: 0; // 0: Non renseigné, 1: Gauche, 2: Droit
-    in-out property <bool> is-video-mode: false;
-    in-out property <bool> is-recording: false;
-    in-out property <bool> recording-finalizing: false;
-    in-out property <string> recording-duration: "00:00";
-
-    // Transformations d'affichage live
-    in-out property <bool> is-frozen: false;
-    in-out property <int> zoom-level: 100; // 100 à 200 %
-    in-out property <length> zoom-pan-x: 0px;
-    in-out property <length> zoom-pan-y: 0px;
-    in-out property <int> rotation-angle: 0; // 0, 90, 180, 270
-    in-out property <bool> mirror-horizontal: false;
-    in-out property <bool> mirror-vertical: false;
-
-    // Navigation (0: caméra, 2: bibliothèque, 4: paramètres)
-    in-out property <int> current-tab: 0;
-    in-out property <bool> sidebar-visible: true;
-    in-out property <bool> iris-fullscreen: false;
-    in-out property <bool> image-controls-open: false;
-    private property <bool> viewport-controls-visible: true;
-
-    // Diagnostic
-    in-out property <DiagnosticData> diagnostics;
-
-    // Dernier enregistrement & Flash
-    in-out property <string> last-capture-message: "";
-    in-out property <bool> show-last-capture: false;
-    in-out property <int> capture-notice-tone: 0; // 0 information, 1 réussite, 2 erreur
-    in-out property <int> capture-notice-revision: 0;
-    in-out property <float> shutter-flash-opacity: 0.0;
-    in-out property <image> last-capture-thumbnail;
-    in-out property <bool> has-last-capture: false;
-    in-out property <bool> has-last-capture-thumbnail: false;
-    in-out property <string> last-capture-file-name: "";
-    in-out property <string> last-capture-path: "";
-    in-out property <int> session-photo-count: 0;
-
-    // Réglages caméra détectés au runtime
-    in-out property <[CameraControlUiData]> camera-controls: [];
-
-    // Préférences persistantes
-    in-out property <string> settings-capture-directory: "";
-    in-out property <string> settings-filename-template: "";
-    in-out property <int> settings-button-mode: 0; // 0 suit le mode, 1 photo, 2 vidéo
-    in-out property <int> settings-video-quality: 0; // 0 maximale, 1 équilibrée, 2 fluide
-    in-out property <string> settings-iridology-map-path: "";
-    in-out property <string> settings-iridology-symbols-path: "";
-    in-out property <string> settings-feedback: "";
-    in-out property <bool> settings-feedback-is-error: false;
-
-    // Références visuelles d'iridologie
-    in-out property <image> iridology-map-image;
-    in-out property <image> iridology-symbols-image;
-    in-out property <bool> has-iridology-map: false;
-    in-out property <bool> has-iridology-symbols: false;
-    in-out property <int> iridology-reference-mode: 0; // 0 carte, 1 signes
-    in-out property <int> iridology-reference-zoom: 100;
-    in-out property <length> iridology-reference-pan-x: 0px;
-    in-out property <length> iridology-reference-pan-y: 0px;
-
-    // Bibliothèque
-    in-out property <[LibraryItemData]> library-items: [];
-    in-out property <int> library-filter: 0; // 0 tous, 1 photos, 2 vidéos, 3 session
-    in-out property <int> library-page: 0;
-    in-out property <int> library-total-count: 0;
-    in-out property <string> library-page-summary: "";
-    in-out property <bool> library-loading: false;
-    in-out property <string> library-error: "";
-    in-out property <int> library-view: 0; // 0 grille, 1 liste
-    in-out property <bool> library-map-open: false;
-    private property <string> selected-library-path: "";
-    private property <int> library-grid-columns: root.width < 1250px ? 3 : 4;
-    callback open-capture-file(string);
-    callback open-capture-externally(string);
-    callback library-filter-changed(int);
-    callback library-page-changed(int);
-    callback session-changed();
-
-    // Grille iridologique
-    in-out property <bool> show-iridology-grid: false;
-
-    // Visionneuse privée intégrée
-    in-out property <bool> viewer-open: false;
-    in-out property <bool> viewer-loading: false;
-    in-out property <image> viewer-image;
-    in-out property <int> viewer-zoom: 100;
-    in-out property <length> viewer-pan-x: 0px;
-    in-out property <length> viewer-pan-y: 0px;
-    in-out property <bool> viewer-is-video: false;
-    in-out property <bool> viewer-video-playing: false;
-    in-out property <float> viewer-video-progress: 0;
-    in-out property <string> viewer-video-position: "00:00";
-    in-out property <string> viewer-video-duration: "00:00";
-
-    // Callbacks
-    callback trigger-capture();
-    callback toggle-recording();
-    callback clear-session();
-    callback toggle-freeze();
-    callback preview-tab-changed(bool);
-    callback reset-camera-controls();
-    callback set-camera-control-value(string, float);
-    callback set-camera-control-bool(string, bool);
-    callback cycle-camera-control-menu(string);
-    callback refresh-library();
-    callback open-capture-directory();
-    callback update-capture-directory(string);
-    callback update-filename-template(string);
-    callback cycle-physical-button-mode();
-    callback update-video-quality(int);
-    callback update-iridology-map-path(string);
-    callback update-iridology-symbols-path(string);
-    callback close-viewer();
-    callback toggle-viewer-video();
-    callback seek-viewer-video(float);
-
-    private property <int> focused-text-fields: 0;
-    private property <bool> text-field-focused: root.focused-text-fields > 0;
-    private property <bool> recording-busy: root.is-recording || root.recording-finalizing;
-
-    function navigate-to(tab: int) {
-        if (tab == 0 || tab == 2 || tab == 4) && root.current-tab != tab {
-            root.iris-fullscreen = false;
-            root.focused-text-fields = 0;
-            root.image-controls-open = false;
-            root.library-map-open = false;
-            root.current-tab = tab;
-            root.preview-tab-changed(tab == 0);
-        }
+    changed settings-theme => {
+        Palette.color-scheme = root.settings-theme == 1 ? ColorScheme.light
+            : root.settings-theme == 2 ? ColorScheme.dark : ColorScheme.unknown;
     }
-
-    function dismiss-viewer() {
-        if root.viewer-open {
-            root.viewer-open = false;
-            root.viewer-loading = false;
-            root.viewer-zoom = 100;
-            root.viewer-pan-x = 0px;
-            root.viewer-pan-y = 0px;
-            root.close-viewer();
-        }
+    changed viewer-open => {
+        if (!root.viewer-open) { app-shortcuts.focus(); }
     }
+    in-out property <image> live-frame <=> AppState.live-frame;
+    in-out property <string> status-text <=> AppState.status-text;
+    in-out property <bool> camera-connected <=> AppState.camera-connected;
+    in-out property <bool> is-streaming <=> AppState.is-streaming;
+    in-out property <string> patient-first-name <=> AppState.patient-first-name;
+    in-out property <string> patient-last-name <=> AppState.patient-last-name;
+    in-out property <string> patient-id <=> AppState.patient-id;
+    in-out property <string> patient-dossier-number <=> AppState.patient-dossier-number;
+    in-out property <[PatientCandidateData]> patient-candidates <=> AppState.patient-candidates;
+    in-out property <bool> patient-search-pending <=> AppState.patient-search-pending;
+    in-out property <bool> patient-action-pending <=> AppState.patient-action-pending;
+    in-out property <int> selected-eye <=> AppState.selected-eye;
+    in-out property <bool> is-video-mode <=> AppState.is-video-mode;
+    in-out property <bool> is-recording <=> AppState.is-recording;
+    in-out property <bool> recording-finalizing <=> AppState.recording-finalizing;
+    in-out property <string> recording-duration <=> AppState.recording-duration;
+    in-out property <bool> is-frozen <=> AppState.is-frozen;
+    in-out property <int> zoom-level <=> AppState.zoom-level;
+    in-out property <length> zoom-pan-x <=> AppState.zoom-pan-x;
+    in-out property <length> zoom-pan-y <=> AppState.zoom-pan-y;
+    in-out property <int> rotation-angle <=> AppState.rotation-angle;
+    in-out property <bool> mirror-horizontal <=> AppState.mirror-horizontal;
+    in-out property <bool> mirror-vertical <=> AppState.mirror-vertical;
+    in-out property <int> current-tab <=> AppState.current-tab;
+    in-out property <bool> sidebar-visible <=> AppState.sidebar-visible;
+    in-out property <bool> iris-fullscreen <=> AppState.iris-fullscreen;
+    in-out property <bool> image-controls-open <=> AppState.image-controls-open;
+    in-out property <DiagnosticData> diagnostics <=> AppState.diagnostics;
+    in-out property <string> last-capture-message <=> AppState.last-capture-message;
+    in-out property <bool> show-last-capture <=> AppState.show-last-capture;
+    in-out property <int> capture-notice-tone <=> AppState.capture-notice-tone;
+    in-out property <int> capture-notice-revision <=> AppState.capture-notice-revision;
+    in-out property <float> shutter-flash-opacity <=> AppState.shutter-flash-opacity;
+    in-out property <image> last-capture-thumbnail <=> AppState.last-capture-thumbnail;
+    in-out property <bool> has-last-capture <=> AppState.has-last-capture;
+    in-out property <bool> has-last-capture-thumbnail <=> AppState.has-last-capture-thumbnail;
+    in-out property <string> last-capture-file-name <=> AppState.last-capture-file-name;
+    in-out property <string> last-capture-path <=> AppState.last-capture-path;
+    in-out property <string> last-capture-file-version <=> AppState.last-capture-file-version;
+    in-out property <int> session-photo-count <=> AppState.session-photo-count;
+    in-out property <[CameraControlUiData]> camera-controls <=> AppState.camera-controls;
+    in-out property <string> settings-capture-directory <=> AppState.settings-capture-directory;
+    in-out property <string> settings-filename-template <=> AppState.settings-filename-template;
+    in-out property <int> settings-button-mode <=> AppState.settings-button-mode;
+    in-out property <int> settings-video-quality <=> AppState.settings-video-quality;
+    in-out property <int> settings-theme <=> AppState.settings-theme;
+    in-out property <string> settings-iridology-map-path <=> AppState.settings-iridology-map-path;
+    in-out property <string> settings-iridology-symbols-path <=> AppState.settings-iridology-symbols-path;
+    in-out property <string> settings-feedback <=> AppState.settings-feedback;
+    in-out property <bool> settings-feedback-is-error <=> AppState.settings-feedback-is-error;
+    in-out property <image> iridology-map-image <=> AppState.iridology-map-image;
+    in-out property <image> iridology-symbols-image <=> AppState.iridology-symbols-image;
+    in-out property <bool> has-iridology-map <=> AppState.has-iridology-map;
+    in-out property <bool> has-iridology-symbols <=> AppState.has-iridology-symbols;
+    in-out property <int> iridology-reference-mode <=> AppState.iridology-reference-mode;
+    in-out property <int> iridology-reference-zoom <=> AppState.iridology-reference-zoom;
+    in-out property <length> iridology-reference-pan-x <=> AppState.iridology-reference-pan-x;
+    in-out property <length> iridology-reference-pan-y <=> AppState.iridology-reference-pan-y;
+    in-out property <[LibraryItemData]> library-items <=> AppState.library-items;
+    in-out property <int> library-filter <=> AppState.library-filter;
+    in-out property <int> library-page <=> AppState.library-page;
+    in-out property <int> library-total-count <=> AppState.library-total-count;
+    in-out property <int> pending-recordings-count <=> AppState.pending-recordings-count;
+    in-out property <string> library-page-summary <=> AppState.library-page-summary;
+    in-out property <bool> library-loading <=> AppState.library-loading;
+    in-out property <string> library-error <=> AppState.library-error;
+    in-out property <int> library-view <=> AppState.library-view;
+    in-out property <bool> library-map-open <=> AppState.library-map-open;
+    in-out property <string> selected-library-path <=> AppState.selected-library-path;
+    in-out property <string> selected-library-file-version <=> AppState.selected-library-file-version;
+    in-out property <string> selected-library-dossier-number <=> AppState.selected-library-dossier-number;
+    in-out property <bool> show-iridology-grid <=> AppState.show-iridology-grid;
+    in-out property <bool> viewer-open <=> AppState.viewer-open;
+    in-out property <bool> viewer-loading <=> AppState.viewer-loading;
+    in-out property <image> viewer-image <=> AppState.viewer-image;
+    in-out property <int> viewer-zoom <=> AppState.viewer-zoom;
+    in-out property <length> viewer-pan-x <=> AppState.viewer-pan-x;
+    in-out property <length> viewer-pan-y <=> AppState.viewer-pan-y;
+    in-out property <bool> viewer-is-video <=> AppState.viewer-is-video;
+    in-out property <bool> viewer-video-playing <=> AppState.viewer-video-playing;
+    in-out property <float> viewer-video-progress <=> AppState.viewer-video-progress;
+    in-out property <string> viewer-video-position <=> AppState.viewer-video-position;
+    in-out property <string> viewer-video-duration <=> AppState.viewer-video-duration;
 
-    function show-viewport-controls() {
-        root.viewport-controls-visible = true;
-        viewport-controls-timer.restart();
-    }
+    private property <int> viewport-controls-revision <=> AppState.viewport-controls-revision;
+    changed viewport-controls-revision => { viewport-controls-timer.restart(); }
 
     viewport-controls-timer := Timer {
         interval: 1s;
-        running: root.viewport-controls-visible;
-        triggered => { root.viewport-controls-visible = false; }
+        running: AppState.viewport-controls-visible;
+        triggered => { AppState.viewport-controls-visible = false; }
     }
 
     app-shortcuts := FocusScope {
@@ -216,2132 +131,198 @@ export component MainWindow inherits Window {
         focus-on-tab-navigation: false;
 
         // One shortcut scope covers the active page and the private viewer.
-        KeyBinding { keys: @keys(Control + "1"); enabled: !root.text-field-focused && !root.viewer-open; activated => { root.navigate-to(0); root.image-controls-open = false; } }
-        KeyBinding { keys: @keys(Control + "2"); enabled: !root.text-field-focused && !root.viewer-open; activated => { root.navigate-to(0); root.image-controls-open = !root.image-controls-open; } }
-        KeyBinding { keys: @keys(Control + "3"); enabled: !root.text-field-focused && !root.viewer-open; activated => { root.navigate-to(2); } }
-        KeyBinding { keys: @keys(Control + "4"); enabled: !root.text-field-focused && !root.viewer-open; activated => { root.navigate-to(2); root.iridology-reference-mode = 0; root.library-map-open = true; } }
-        KeyBinding { keys: @keys(Control + "5"); enabled: !root.text-field-focused && !root.viewer-open; activated => { root.navigate-to(4); } }
+        KeyBinding { keys: @keys(Control + "1"); enabled: !AppState.text-field-focused && !AppState.viewer-open && !AppState.library-map-open; activated => { AppState.navigate-to(0); AppState.image-controls-open = false; } }
+        KeyBinding { keys: @keys(Control + "2"); enabled: !AppState.text-field-focused && !AppState.viewer-open && !AppState.library-map-open; activated => { AppState.navigate-to(0); AppState.image-controls-open = !AppState.image-controls-open; } }
+        KeyBinding { keys: @keys(Control + "3"); enabled: !AppState.text-field-focused && !AppState.viewer-open && !AppState.library-map-open; activated => { AppState.navigate-to(2); } }
+        KeyBinding { keys: @keys(Control + "4"); enabled: !AppState.text-field-focused && !AppState.viewer-open && !AppState.library-map-open; activated => { AppState.navigate-to(2); AppState.iridology-reference-mode = 0; AppState.library-map-open = true; } }
+        KeyBinding { keys: @keys(Control + "5"); enabled: !AppState.text-field-focused && !AppState.viewer-open && !AppState.library-map-open; activated => { AppState.navigate-to(4); } }
 
         KeyBinding {
             keys: @keys(Control + P);
-            enabled: !root.text-field-focused && !root.viewer-open && root.current-tab == 0
-                && root.is-streaming && !root.recording-busy && root.selected-eye != 0;
-            activated => { root.trigger-capture(); }
+            enabled: !AppState.text-field-focused && !AppState.viewer-open && !AppState.library-map-open && AppState.current-tab == 0
+                && AppState.is-streaming && !AppState.recording-busy && AppState.selected-eye != 0
+                && (AppState.patient-id != "" || (AppState.patient-first-name == "" && AppState.patient-last-name == ""));
+            activated => { AppState.trigger-capture(); }
         }
         KeyBinding {
             keys: @keys(Control + R);
-            enabled: !root.text-field-focused && !root.viewer-open && root.current-tab == 0
-                && !root.recording-finalizing && (root.is-recording || (root.is-streaming && root.selected-eye != 0));
-            activated => { root.toggle-recording(); }
+            enabled: !AppState.text-field-focused && !AppState.viewer-open && !AppState.library-map-open && AppState.current-tab == 0
+                && !AppState.recording-finalizing && (AppState.is-recording || (AppState.is-streaming && AppState.selected-eye != 0
+                    && (AppState.patient-id != "" || (AppState.patient-first-name == "" && AppState.patient-last-name == ""))));
+            activated => { AppState.toggle-recording(); }
         }
         KeyBinding {
             keys: @keys(Control + F);
-            enabled: !root.text-field-focused && !root.viewer-open && root.current-tab == 0
-                && (root.is-streaming || root.is-frozen);
-            activated => { root.toggle-freeze(); }
+            enabled: !AppState.text-field-focused && !AppState.viewer-open && !AppState.library-map-open && AppState.current-tab == 0
+                && (AppState.is-streaming || AppState.is-frozen);
+            activated => { AppState.toggle-freeze(); }
         }
         KeyBinding {
             keys: @keys(Escape);
-            enabled: root.viewer-open || root.image-controls-open || root.library-map-open || root.iris-fullscreen;
+            enabled: AppState.viewer-open || AppState.image-controls-open || AppState.library-map-open || AppState.iris-fullscreen;
             activated => {
-                if root.viewer-open { root.dismiss-viewer(); }
-                else if root.library-map-open { root.library-map-open = false; }
-                else if root.image-controls-open { root.image-controls-open = false; }
-                else { root.iris-fullscreen = false; }
+                if AppState.viewer-open { AppState.dismiss-viewer(); }
+                else if AppState.library-map-open { AppState.library-map-open = false; }
+                else if AppState.image-controls-open { AppState.image-controls-open = false; }
+                else { AppState.iris-fullscreen = false; }
             }
         }
 
-    Rectangle {
-        width: 100%;
-        height: 100%;
-
-        // Top Navigation Bar
         Rectangle {
-            x: 0px;
-            y: 0px;
             width: 100%;
-            height: 64px;
-            visible: !root.iris-fullscreen;
-            background: #1c2127;
+            height: 100%;
 
-            HorizontalBox {
+            // The capture surface remains quiet; navigation and camera status live here.
+            Rectangle {
+                x: 0px;
                 y: 0px;
                 width: 100%;
-                height: 40px;
-                padding-left: 16px;
-                padding-right: 16px;
-                alignment: space-between;
-
-                HorizontalBox {
-                    spacing: 12px;
-                    alignment: start;
-                    height: 40px;
-
-                    Text {
-                        text: "IrisScope";
-                        color: #4da3ff;
-                        font-size: 18px;
-                        font-weight: 700;
-                        vertical-alignment: center;
-                    }
-
-                    Rectangle {
-                        width: 1px;
-                        height: 24px;
-                        background: #2f3842;
-                    }
-
-                    Button {
-                        height: 40px;
-                        text: "Caméra";
-                        primary: root.current-tab == 0;
-                        clicked => { root.navigate-to(0); root.image-controls-open = false; }
-                    }
-
-                    Button {
-                        height: 40px;
-                        text: root.width < 1120px ? "Image" : "Réglages image";
-                        primary: root.current-tab == 0 && root.image-controls-open;
-                        clicked => {
-                            root.navigate-to(0);
-                            root.image-controls-open = !root.image-controls-open;
-                        }
-                    }
-
-                    Button {
-                        height: 40px;
-                        text: "Bibliothèque";
-                        primary: root.current-tab == 2;
-                        clicked => { root.navigate-to(2); }
-                    }
-
-                    Button {
-                        height: 40px;
-                        text: root.width < 1120px ? "Paramètres" : "Paramètres et diagnostic";
-                        primary: root.current-tab == 4;
-                        clicked => { root.navigate-to(4); }
-                    }
-
-                }
-
-                HorizontalBox {
-                    spacing: 10px;
-                    alignment: end;
-
-                    Rectangle {
-                        width: root.width < 1120px ? 160px : 220px;
-                        border-radius: 12px;
-                        background: root.camera-connected ? #173822 : #381a1a;
-                        height: 28px;
-
-                        Rectangle {
-                            x: 8px;
-                            y: 10px;
-                            width: 8px;
-                            height: 8px;
-                            border-radius: 4px;
-                            background: root.camera-connected ? #34d399 : #f87171;
-                        }
-
-                        Text {
-                            x: 22px;
-                            y: 0px;
-                            width: parent.width - 30px;
-                            height: 100%;
-                            text: root.status-text;
-                            overflow: elide;
-                            color: root.camera-connected ? #6ee7b7 : #fca5a5;
-                            font-size: 12px;
-                            vertical-alignment: center;
-                        }
-                    }
-                }
-            }
-        }
-
-        // Main Viewport Container
-        Rectangle {
-            x: 0px;
-            y: root.iris-fullscreen ? 0px : 64px;
-            width: 100%;
-            height: parent.height - self.y;
-            background: #0f1215;
-
-            // Tab 0: Camera Live View
-            if root.current-tab == 0: HorizontalBox {
-                min-height: 0px;
-                min-width: 0px;
-                padding: root.iris-fullscreen ? 0px : 12px;
-                spacing: root.iris-fullscreen ? 0px : 12px;
-
-                // Patient preparation and capture stay visible beside the image.
-                if root.sidebar-visible && !root.iris-fullscreen: Rectangle {
-                    width: root.width < 1120px ? 300px : 324px;
-                    border-radius: 10px;
-                    background: #1c2127;
-                    border-width: 1px;
-                    border-color: #303a44;
-
-                    VerticalBox {
-                        padding: 14px;
-                        spacing: 7px;
-
-                        HorizontalBox {
-                            height: 42px;
-                            vertical-stretch: 0;
-                            alignment: space-between;
-                            Text {
-                                text: "PATIENT";
-                                color: #9eabb8;
-                                font-size: 11px;
-                                font-weight: 700;
-                                vertical-alignment: center;
-                            }
-                            Button {
-                                height: 40px;
-                                text: "Terminer";
-                                enabled: !root.recording-busy;
-                                clicked => { root.clear-session(); }
-                            }
-                            Button {
-                                height: 40px;
-                                text: "◀ Masquer";
-                                clicked => { root.sidebar-visible = false; }
-                            }
-                        }
-
-                        HorizontalBox {
-                            height: 70px;
-                            vertical-stretch: 0;
-                            spacing: 8px;
-                            VerticalBox {
-                                min-width: 0px;
-                                horizontal-stretch: 1;
-                                spacing: 3px;
-                                Text { height: 18px; text: "Prénom"; color: #b8c4cf; font-size: 11px; }
-                                patient-first-name-field := LineEdit {
-                                    min-width: 0px;
-                                    height: 40px;
-                                    vertical-stretch: 0;
-                                    text <=> root.patient-first-name;
-                                    changed has-focus => {
-                                        root.focused-text-fields = Math.max(0, root.focused-text-fields + (self.has-focus ? 1 : -1));
-                                    }
-                                    placeholder-text: "Prénom";
-                                    enabled: !root.recording-busy;
-                                    edited => { root.session-changed(); }
-                                }
-                            }
-                            VerticalBox {
-                                min-width: 0px;
-                                horizontal-stretch: 1;
-                                spacing: 3px;
-                                Text { height: 18px; text: "Nom"; color: #b8c4cf; font-size: 11px; }
-                                patient-last-name-field := LineEdit {
-                                    min-width: 0px;
-                                    height: 40px;
-                                    vertical-stretch: 0;
-                                    text <=> root.patient-last-name;
-                                    changed has-focus => {
-                                        root.focused-text-fields = Math.max(0, root.focused-text-fields + (self.has-focus ? 1 : -1));
-                                    }
-                                    placeholder-text: "Nom";
-                                    enabled: !root.recording-busy;
-                                    edited => { root.session-changed(); }
-                                }
-                            }
-                        }
-
-                        VerticalBox {
-                            height: 74px;
-                            vertical-stretch: 0;
-                            spacing: 4px;
-                            alignment: start;
-                            Rectangle {
-                                height: 18px;
-                                vertical-stretch: 0;
-                                Text {
-                                    y: 5px;
-                                    height: 18px;
-                                    text: "ŒIL EXAMINÉ";
-                                    color: #9eabb8;
-                                    font-size: 11px;
-                                    font-weight: 700;
-                                    vertical-alignment: center;
-                                }
-                            }
-                            HorizontalBox {
-                                height: 40px;
-                                vertical-stretch: 0;
-                                spacing: 6px;
-                                Button {
-                                    height: 40px;
-                                    horizontal-stretch: 1;
-                                    text: "Gauche";
-                                    primary: root.selected-eye == 1;
-                                    enabled: !root.recording-busy;
-                                    clicked => {
-                                        if root.selected-eye != 1 {
-                                            root.selected-eye = 1;
-                                            root.session-changed();
-                                        }
-                                    }
-                                }
-                                Button {
-                                    height: 40px;
-                                    horizontal-stretch: 1;
-                                    text: "Droit";
-                                    primary: root.selected-eye == 2;
-                                    enabled: !root.recording-busy;
-                                    clicked => {
-                                        if root.selected-eye != 2 {
-                                            root.selected-eye = 2;
-                                            root.session-changed();
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        HorizontalBox {
-                            height: 46px;
-                            vertical-stretch: 0;
-                            spacing: 6px;
-                            Button {
-                                height: 40px;
-                                horizontal-stretch: 1;
-                                text: "Photo";
-                                primary: !root.is-video-mode;
-                                enabled: !root.recording-busy;
-                                clicked => { root.is-video-mode = false; }
-                            }
-                            Button {
-                                height: 40px;
-                                horizontal-stretch: 1;
-                                text: "Vidéo";
-                                primary: root.is-video-mode;
-                                enabled: !root.recording-busy;
-                                clicked => { root.is-video-mode = true; }
-                            }
-                        }
-
-                        Button {
-                            height: 50px;
-                            vertical-stretch: 0;
-                            text: root.recording-finalizing
-                                ? "Finalisation de la vidéo…"
-                                : root.is-recording
-                                ? "■ Arrêter l'enregistrement"
-                                : root.is-video-mode
-                                    ? "● Démarrer la vidéo"
-                                    : "Capturer une photo";
-                            primary: true;
-                            enabled: !root.recording-finalizing && (root.is-recording
-                                || (root.is-streaming && root.selected-eye != 0));
-                            clicked => {
-                                if root.is-recording || root.is-video-mode {
-                                    root.toggle-recording();
-                                } else {
-                                    root.trigger-capture();
-                                }
-                            }
-                        }
-
-                        Text {
-                            height: 34px;
-                            vertical-stretch: 0;
-                            text: !root.is-streaming
-                                ? "En attente du flux caméra"
-                                : root.selected-eye == 0
-                                    ? "Sélectionnez l'œil gauche ou droit"
-                                    : root.recording-finalizing
-                                        ? "Finalisation de la vidéo en cours"
-                                        : root.is-recording
-                                        ? "Enregistrement en cours · " + root.recording-duration
-                                        : "Prêt pour la capture";
-                            color: !root.is-streaming ? #9eabb8
-                                : root.selected-eye == 0
-                                    ? #fbbf65 : #84d7aa;
-                            font-size: 11px;
-                            vertical-alignment: center;
-                            wrap: word-wrap;
-                        }
-
-                        Rectangle {
-                            height: 1px;
-                            vertical-stretch: 0;
-                            background: #303a44;
-                        }
-
-                        ScrollView {
-                            min-height: 0px;
-                            vertical-stretch: 1;
-                            VerticalBox {
-                                spacing: 8px;
-                                Text {
-                                    height: 20px;
-                                    text: "AFFICHAGE";
-                                    color: #9eabb8;
-                                    font-size: 11px;
-                                    font-weight: 700;
-                                    vertical-alignment: center;
-                                }
-                                HorizontalBox {
-                                    height: 40px;
-                                    spacing: 6px;
-                                    Button {
-                                        height: 40px;
-                                        horizontal-stretch: 1;
-                                        text: root.is-frozen ? "Reprendre" : "Figer";
-                                        primary: root.is-frozen;
-                                        enabled: root.is-streaming;
-                                        clicked => { root.toggle-freeze(); }
-                                    }
-                                    Button {
-                                        height: 40px;
-                                        horizontal-stretch: 1;
-                                        text: root.show-iridology-grid ? "Grille active" : "Grille iris";
-                                        primary: root.show-iridology-grid;
-                                        clicked => { root.show-iridology-grid = !root.show-iridology-grid; }
-                                    }
-                                }
-                                HorizontalBox {
-                                    height: 40px;
-                                    spacing: 8px;
-                                    Text {
-                                        text: "Zoom";
-                                        color: #b8c4cf;
-                                        vertical-alignment: center;
-                                    }
-                                    Slider {
-                                        horizontal-stretch: 1;
-                                        minimum: 100;
-                                        maximum: 200;
-                                        value: root.zoom-level;
-                                        changed => {
-                                            root.zoom-level = round(self.value);
-                                            root.zoom-pan-x = 0px;
-                                            root.zoom-pan-y = 0px;
-                                        }
-                                    }
-                                    Text {
-                                        width: 48px;
-                                        text: root.zoom-level + " %";
-                                        color: #e5e7eb;
-                                        horizontal-alignment: right;
-                                        vertical-alignment: center;
-                                    }
-                                }
-                                HorizontalBox {
-                                    height: 40px;
-                                    spacing: 6px;
-                                    Button {
-                                        height: 40px;
-                                        horizontal-stretch: 1;
-                                        text: "100 %";
-                                        primary: root.zoom-level == 100;
-                                        clicked => {
-                                            root.zoom-level = 100;
-                                            root.zoom-pan-x = 0px;
-                                            root.zoom-pan-y = 0px;
-                                        }
-                                    }
-                                    Button {
-                                        height: 40px;
-                                        horizontal-stretch: 1;
-                                        text: "150 %";
-                                        primary: root.zoom-level == 150;
-                                        clicked => {
-                                            root.zoom-level = 150;
-                                            root.zoom-pan-x = 0px;
-                                            root.zoom-pan-y = 0px;
-                                        }
-                                    }
-                                    Button {
-                                        height: 40px;
-                                        horizontal-stretch: 1;
-                                        text: "200 %";
-                                        primary: root.zoom-level == 200;
-                                        clicked => {
-                                            root.zoom-level = 200;
-                                            root.zoom-pan-x = 0px;
-                                            root.zoom-pan-y = 0px;
-                                        }
-                                    }
-                                }
-                                HorizontalBox {
-                                    height: 40px;
-                                    spacing: 6px;
-                                    Button {
-                                        height: 40px;
-                                        horizontal-stretch: 1;
-                                        text: "↻ " + root.rotation-angle + "°";
-                                        clicked => {
-                                            root.rotation-angle = Math.mod(root.rotation-angle + 90, 360);
-                                        }
-                                    }
-                                    Button {
-                                        height: 40px;
-                                        horizontal-stretch: 1;
-                                        text: "Miroir H";
-                                        primary: root.mirror-horizontal;
-                                        clicked => { root.mirror-horizontal = !root.mirror-horizontal; }
-                                    }
-                                    Button {
-                                        height: 40px;
-                                        horizontal-stretch: 1;
-                                        text: "Miroir V";
-                                        primary: root.mirror-vertical;
-                                        clicked => { root.mirror-vertical = !root.mirror-vertical; }
-                                    }
-                                }
-                            }
-                        }
-
-                        if root.has-last-capture: Rectangle {
-                            height: 96px;
-                            vertical-stretch: 0;
-                            border-radius: 8px;
-                            background: #121a20;
-                            border-width: 1px;
-                            border-color: #3d6174;
-                            HorizontalBox {
-                                padding: 7px;
-                                spacing: 8px;
-                                Rectangle {
-                                    width: 72px;
-                                    height: 72px;
-                                    border-radius: 5px;
-                                    clip: true;
-                                    background: #000000;
-                                    if root.has-last-capture-thumbnail: Image {
-                                        source: root.last-capture-thumbnail;
-                                        width: 100%;
-                                        height: 100%;
-                                        image-fit: cover;
-                                    }
-                                    if !root.has-last-capture-thumbnail: Text {
-                                        text: "CAPTURE";
-                                        color: #93c5fd;
-                                        font-size: 11px;
-                                        font-weight: 700;
-                                        width: 100%;
-                                        height: 100%;
-                                        horizontal-alignment: center;
-                                        vertical-alignment: center;
-                                    }
-                                }
-                                VerticalBox {
-                                    horizontal-stretch: 1;
-                                    spacing: 2px;
-                                    Text {
-                                        height: 16px;
-                                        text: "DERNIÈRE CAPTURE";
-                                        color: #7dc8e9;
-                                        font-size: 10px;
-                                        font-weight: 700;
-                                    }
-                                    Text {
-                                        height: 16px;
-                                        text: root.last-capture-file-name;
-                                        color: #cbd5e1;
-                                        font-size: 10px;
-                                        overflow: elide;
-                                    }
-                                    HorizontalBox {
-                                        height: 40px;
-                                        vertical-stretch: 0;
-                                        spacing: 4px;
-                                        Button {
-                                            height: 40px;
-                                            horizontal-stretch: 1;
-                                            text: "Voir";
-                                            clicked => { root.open-capture-file(root.last-capture-path); }
-                                        }
-                                        Button {
-                                            height: 40px;
-                                            text: "Dossier";
-                                            clicked => { root.open-capture-directory(); }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }                // Live Camera viewport
-                live-viewport := Rectangle {
-                    min-height: 0px;
-                    min-width: 0px;
-                    horizontal-stretch: 1;
-                    clip: true;
-                    border-radius: root.iris-fullscreen ? 0px : 10px;
-                    background: #000000;
-
-                    if root.is-streaming: Image {
-                        source: root.live-frame;
-                        private property <bool> quarter-turn:
-                            root.rotation-angle == 90 || root.rotation-angle == 270;
-                        private property <float> zoom-factor: root.zoom-level / 100.0;
-
-                        width: (self.quarter-turn ? parent.height : parent.width)
-                            * self.zoom-factor;
-                        height: (self.quarter-turn ? parent.width : parent.height)
-                            * self.zoom-factor;
-                        x: (parent.width - self.width) / 2 + root.zoom-pan-x;
-                        y: (parent.height - self.height) / 2 + root.zoom-pan-y;
-                        image-fit: contain;
-
-                        transform-origin: { x: self.width / 2, y: self.height / 2 };
-                        transform-rotation: root.rotation-angle * 1deg;
-                        transform-scale-x: root.mirror-horizontal ? -100% : 100%;
-                        transform-scale-y: root.mirror-vertical ? -100% : 100%;
-                    }
-
-                    pan-area := TouchArea {
-                        enabled: root.is-streaming;
-                        private property <length> pan-start-x;
-                        private property <length> pan-start-y;
-
-                        pointer-event(event) => {
-                            if event.kind == PointerEventKind.move {
-                                root.show-viewport-controls();
-                            }
-                        }
-
-                        changed pressed => {
-                            if self.pressed {
-                                self.pan-start-x = root.zoom-pan-x;
-                                self.pan-start-y = root.zoom-pan-y;
-                            }
-                        }
-
-                        moved => {
-                            if self.pressed && root.zoom-level > 100 {
-                                root.zoom-pan-x = self.pan-start-x + self.mouse-x - self.pressed-x;
-                                root.zoom-pan-y = self.pan-start-y + self.mouse-y - self.pressed-y;
-                            }
-                        }
-
-                        scroll-event(event) => {
-                            if event.delta-y == 0 { return reject; }
-                            root.zoom-level = Math.max(100, Math.min(200,
-                                root.zoom-level + (event.delta-y > 0 ? 10 : -10)));
-                            root.zoom-pan-x = 0px;
-                            root.zoom-pan-y = 0px;
-                            return accept;
-                        }
-                    }
-
-                    Button {
-                        x: parent.width - self.width - 16px;
-                        y: root.is-frozen ? 56px : 16px;
-                        height: 40px;
-                        visible: root.viewport-controls-visible;
-                        text: root.iris-fullscreen ? "Quitter le plein écran" : "Plein écran";
-                        clicked => {
-                            root.image-controls-open = false;
-                            root.iris-fullscreen = !root.iris-fullscreen;
-                            root.show-viewport-controls();
-                        }
-                    }
-
-                    if !root.sidebar-visible && !root.iris-fullscreen: Button {
-                        x: 12px;
-                        y: root.is-recording || root.session-photo-count > 0 ? 56px : 16px;
-                        height: 40px;
-                        text: "▶ Panneau";
-                        clicked => { root.sidebar-visible = true; }
-                    }
-
-                    if root.iris-fullscreen: Button {
-                        x: (parent.width - self.width) / 2;
-                        y: parent.height - self.height - 20px;
-                        height: 48px;
-                        visible: root.viewport-controls-visible;
-                        text: root.recording-finalizing ? "Finalisation de la vidéo…"
-                            : root.is-recording ? "■ Arrêter la vidéo"
-                            : root.is-video-mode ? "● Démarrer la vidéo"
-                            : "Capturer une photo";
-                        primary: true;
-                        enabled: !root.recording-finalizing && (root.is-recording
-                            || (root.is-streaming && root.selected-eye != 0));
-                        clicked => {
-                            if root.is-recording || root.is-video-mode {
-                                root.toggle-recording();
-                            } else {
-                                root.trigger-capture();
-                            }
-                        }
-                    }
-
-                    if root.is-streaming && root.show-iridology-grid: Rectangle {
-                        width: Math.min(parent.height - 32px, 480px);
-                        height: self.width;
-                        x: (parent.width - self.width) / 2;
-                        y: (parent.height - self.height) / 2;
-                        border-radius: self.width / 2;
-                        border-width: 1.5px;
-                        border-color: #38bdf8bb;
-                    }
-
-                    if !root.is-streaming: VerticalBox {
-                        alignment: center;
-                        spacing: 8px;
-
-                        Text {
-                            text: root.camera-connected ? "Démarrage du flux en cours..." : "DE400 non détecté";
-                            color: #8b98a5;
-                            font-size: 18px;
-                            horizontal-alignment: center;
-                        }
-                        Text {
-                            text: root.camera-connected ? "Veuillez patienter" : "Branchez l'iridoscope pour démarrer l'affichage en direct";
-                            color: #9ca3af;
-                            font-size: 13px;
-                            horizontal-alignment: center;
-                        }
-                    }
-
-                    // Shutter flash effect
-                    Rectangle {
-                        width: 100%;
-                        height: 100%;
-                        background: #ffffff;
-                        opacity: root.shutter-flash-opacity;
-                        animate opacity { duration: 180ms; easing: ease-out; }
-                    }
-
-                    // Recording overlay indicator
-                    if root.is-recording: Rectangle {
-                        x: 16px;
-                        y: 16px;
-                        width: 120px;
-                        height: 32px;
-                        border-radius: 16px;
-                        background: #b91c1cb0;
-
-                        HorizontalBox {
-                            alignment: center;
-                            spacing: 6px;
-
-                            Rectangle {
-                                width: 10px;
-                                height: 10px;
-                                border-radius: 5px;
-                                background: #ef4444;
-                            }
-
-                            Text {
-                                text: "REC " + root.recording-duration;
-                                color: #ffffff;
-                                font-size: 14px;
-                                font-weight: 700;
-                            }
-                        }
-                    }
-
-                    // Session photo count badge
-                    if root.session-photo-count > 0: Rectangle {
-                        x: root.is-recording ? 148px : 16px;
-                        y: 16px;
-                        width: 130px;
-                        height: 32px;
-                        border-radius: 16px;
-                        background: #0f172ae6;
-                        border-width: 1.5px;
-                        border-color: #38bdf8;
-
-                        HorizontalBox {
-                            padding-left: 12px;
-                            padding-right: 12px;
-                            alignment: center;
-                            spacing: 6px;
-
-                            Text {
-                                text: "📸 " + root.session-photo-count + (root.session-photo-count > 1 ? " photos" : " photo");
-                                color: #38bdf8;
-                                font-size: 13px;
-                                font-weight: 700;
-                            }
-                        }
-                    }
-
-                    // Frozen image indicator
-                    if root.is-frozen: Rectangle {
-                        x: parent.width - 216px;
-                        y: 16px;
-                        width: 200px;
-                        height: 32px;
-                        border-radius: 16px;
-                        background: #0284c7d0;
-                        border-width: 1px;
-                        border-color: #38bdf8;
-
-                        HorizontalBox {
-                            alignment: center;
-                            Text {
-                                text: "❄ Image Figée";
-                                color: #ffffff;
-                                font-size: 13px;
-                                font-weight: 700;
-                            }
-                        }
-                    }
-
-                    if root.image-controls-open: Rectangle {
-                        x: 16px;
-                        y: root.is-recording || root.session-photo-count > 0 ? 56px : 16px;
-                        width: 324px;
-                        height: root.camera-controls.length == 0 ? 176px
-                            : parent.height - self.y - 16px < 360px
-                                ? parent.height - self.y - 16px : 360px;
-                        border-radius: 10px;
-                        border-width: 1px;
-                        border-color: #51718a;
-                        background: #1c252eee;
-                        drop-shadow-blur: 18px;
-                        drop-shadow-color: #00000088;
-
-                        TouchArea {
-                            width: 100%;
-                            height: 100%;
-                            clicked => {}
-                        }
-
-                        VerticalBox {
-                            padding: 12px;
-                            spacing: 8px;
-                            HorizontalBox {
-                                height: 40px;
-                                vertical-stretch: 0;
-                                alignment: space-between;
-                                Text {
-                                    text: "Réglages image";
-                                    color: #f0f6fa;
-                                    font-size: 16px;
-                                    font-weight: 700;
-                                    vertical-alignment: center;
-                                }
-                                Button {
-                                    height: 40px;
-                                    text: "Fermer";
-                                    clicked => { root.image-controls-open = false; }
-                                }
-                            }
-                            Text {
-                                height: 36px;
-                                vertical-stretch: 0;
-                                text: "L'image change en direct. Vos choix sont conservés.";
-                                color: #aebfc9;
-                                font-size: 11px;
-                                wrap: word-wrap;
-                            }
-                            Rectangle { height: 1px; vertical-stretch: 0; background: #42515c; }
-
-                            if root.camera-controls.length == 0: Text {
-                                text: root.camera-connected
-                                    ? "Cette caméra ne propose aucun réglage d'image accessible."
-                                    : "Branchez l'iridoscope pour régler l'image.";
-                                color: #c2cbd3;
-                                wrap: word-wrap;
-                            }
-
-                            if root.camera-controls.length > 0: ScrollView {
-                                min-height: 0px;
-                                vertical-stretch: 1;
-                                VerticalBox {
-                                    spacing: 6px;
-                                    for control in root.camera-controls: Rectangle {
-                                        height: 100px;
-                                        border-radius: 6px;
-                                        background: #26323c;
-                                        VerticalBox {
-                                            padding: 8px;
-                                            spacing: 5px;
-                                            HorizontalBox {
-                                                height: 28px;
-                                                vertical-stretch: 0;
-                                                alignment: space-between;
-                                                Text {
-                                                    height: 28px;
-                                                    text: control.name;
-                                                    color: #e7eef3;
-                                                    font-size: 12px;
-                                                    font-weight: 600;
-                                                    vertical-alignment: center;
-                                                }
-                                                if control.read-only: Text {
-                                                    height: 28px;
-                                                    text: "Lecture seule";
-                                                    color: #aebfc9;
-                                                    font-size: 10px;
-                                                    vertical-alignment: center;
-                                                }
-                                            }
-                                            if control.kind == 0: HorizontalBox {
-                                                height: 40px;
-                                                vertical-stretch: 0;
-                                                spacing: 6px;
-                                                Slider {
-                                                    horizontal-stretch: 1;
-                                                    minimum: control.minimum;
-                                                    maximum: control.maximum;
-                                                    value: control.value;
-                                                    enabled: !control.read-only;
-                                                    changed => { root.set-camera-control-value(control.key, self.value); }
-                                                }
-                                                Text {
-                                                    width: 42px;
-                                                    text: round(control.value * 100) / 100;
-                                                    color: #ffffff;
-                                                    horizontal-alignment: right;
-                                                    vertical-alignment: center;
-                                                }
-                                            }
-                                            if control.kind == 1: Button {
-                                                height: 40px;
-                                                vertical-stretch: 0;
-                                                text: control.boolean-value ? "Activé" : "Désactivé";
-                                                enabled: !control.read-only;
-                                                clicked => { root.set-camera-control-bool(control.key, !control.boolean-value); }
-                                            }
-                                            if control.kind == 2: Button {
-                                                height: 40px;
-                                                vertical-stretch: 0;
-                                                text: control.menu-label;
-                                                enabled: !control.read-only;
-                                                clicked => { root.cycle-camera-control-menu(control.key); }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            if root.camera-controls.length > 0: Button {
-                                height: 40px;
-                                vertical-stretch: 0;
-                                text: "Rétablir les valeurs d'origine";
-                                enabled: root.camera-controls.length > 0;
-                                clicked => { root.reset-camera-controls(); }
-                            }
-                        }
-                    }
-
-                }
-
-
-            }
-
-            // Tab 2: Library
-            if root.current-tab == 2: VerticalBox {
-                padding: 20px;
-                spacing: 12px;
-
-                HorizontalBox {
-                    height: 52px;
-                    vertical-stretch: 0;
-                    alignment: space-between;
-                    VerticalBox {
-                        spacing: 4px;
-                        Text {
-                            text: "Bibliothèque";
-                            font-size: 20px;
-                            font-weight: 700;
-                            color: #ffffff;
-                        }
-                        Text {
-                            text: root.library-error != ""
-                                ? "Dossier des captures inaccessible"
-                                : root.library-loading
-                                ? "Chargement des captures…"
-                                : root.library-total-count == 1
-                                    ? "1 capture dans ce filtre"
-                                    : root.library-total-count + " captures dans ce filtre";
-                            font-size: 12px;
-                            color: #9ca3af;
-                        }
-                    }
-                    HorizontalBox {
-                        height: 44px;
-                        vertical-stretch: 0;
-                        spacing: 8px;
-                        Button {
-                            height: 40px;
-                            text: "Carte d'iridologie";
-                            clicked => { root.iridology-reference-mode = 0; root.library-map-open = true; }
-                        }
-                        Button {
-                            height: 40px;
-                            text: "Actualiser";
-                            clicked => { root.selected-library-path = ""; root.refresh-library(); }
-                        }
-                        Button {
-                            height: 40px;
-                            text: "Ouvrir le dossier";
-                            clicked => { root.open-capture-directory(); }
-                        }
-                    }
-                }
-
-                HorizontalBox {
-                    height: 44px;
-                    vertical-stretch: 0;
-                    spacing: 8px;
-                    alignment: start;
-
-                    Button {
-                        height: 40px;
-                        text: "Patient actuel";
-                        primary: root.library-filter == 3;
-                        enabled: root.patient-first-name != "" && root.patient-last-name != "";
-                        clicked => {
-                            root.selected-library-path = "";
-                            root.library-filter = 3;
-                            root.library-filter-changed(3);
-                        }
-                    }
-                    Text {
-                        text: root.patient-first-name == "" || root.patient-last-name == ""
-                            ? "Prénom et nom à saisir dans la caméra pour filtrer"
-                            : "Captures de " + root.patient-first-name + " " + root.patient-last-name;
-                        color: #9ca3af;
-                        font-size: 11px;
-                        vertical-alignment: center;
-                        overflow: elide;
-                    }
-                    Button {
-                        height: 40px;
-                        text: "Tous";
-                        primary: root.library-filter == 0;
-                        clicked => {
-                            root.selected-library-path = "";
-                            root.library-filter = 0;
-                            root.library-filter-changed(0);
-                        }
-                    }
-                    Button {
-                        height: 40px;
-                        text: "Photos";
-                        primary: root.library-filter == 1;
-                        clicked => {
-                            root.selected-library-path = "";
-                            root.library-filter = 1;
-                            root.library-filter-changed(1);
-                        }
-                    }
-                    Button {
-                        height: 40px;
-                        text: "Vidéos";
-                        primary: root.library-filter == 2;
-                        clicked => {
-                            root.selected-library-path = "";
-                            root.library-filter = 2;
-                            root.library-filter-changed(2);
-                        }
-                    }
-                }
-
-                HorizontalBox {
-                    height: 44px;
-                    vertical-stretch: 0;
-                    alignment: space-between;
-                    Text {
-                        text: "Choisir une capture, puis Ouvrir pour l'examiner.";
-                        color: #9ca3af;
-                        font-size: 12px;
-                        vertical-alignment: center;
-                    }
-                    HorizontalBox {
-                        height: 44px;
-                        vertical-stretch: 0;
-                        spacing: 6px;
-                        Button {
-                            height: 40px;
-                            text: "Grille";
-                            primary: root.library-view == 0;
-                            clicked => { root.library-view = 0; }
-                        }
-                        Button {
-                            height: 40px;
-                            text: "Liste";
-                            primary: root.library-view == 1;
-                            clicked => { root.library-view = 1; }
-                        }
-                    }
-                }
-
-                if root.library-total-count > 100: HorizontalBox {
-                    height: 44px;
-                    vertical-stretch: 0;
-                    spacing: 8px;
-                    alignment: start;
-                    Button {
-                        height: 40px;
-                        text: "Précédent";
-                        enabled: root.library-page > 0 && !root.library-loading;
-                        clicked => { root.selected-library-path = ""; root.library-page-changed(root.library-page - 1); }
-                    }
-                    Text {
-                        text: root.library-page-summary;
-                        color: #d1d5db;
-                        font-size: 13px;
-                        vertical-alignment: center;
-                    }
-                    Button {
-                        height: 40px;
-                        text: "Suivant";
-                        enabled: (root.library-page + 1) * 100 < root.library-total-count && !root.library-loading;
-                        clicked => { root.selected-library-path = ""; root.library-page-changed(root.library-page + 1); }
-                    }
-                }
-
-                HorizontalBox {
-                    height: 24px;
-                    vertical-stretch: 0;
-                    spacing: 8px;
-                    alignment: start;
-                    Rectangle {
-                        border-radius: 4px;
-                        background: #065f46;
-                        height: 24px;
-                        HorizontalBox {
-                            padding-left: 8px;
-                            padding-right: 8px;
-                            Text {
-                                text: "Noms masqués pour les autres patients";
-                                color: #34d399;
-                                font-size: 11px;
-                                font-weight: 700;
-                                vertical-alignment: center;
-                            }
-                        }
-                    }
-                    Text {
-                        text: "Les miniatures restent visibles. Ouvrir une capture affiche son image.";
-                        color: #9ca3af;
-                        font-size: 13px;
-                        vertical-alignment: center;
-                    }
-                }
-
-                if root.library-loading: Rectangle {
-                    background: #181d23;
-                    border-radius: 8px;
-                    min-height: 350px;
-                    Text {
-                        text: "Chargement des captures...";
-                        color: #d1d5db;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-                }
-
-                if !root.library-loading && root.library-error != "": Rectangle {
-                    background: #181d23;
-                    border-radius: 8px;
-                    border-width: 1px;
-                    border-color: #7f1d1d;
-                    min-height: 220px;
-
-                    VerticalBox {
-                        alignment: center;
-                        spacing: 10px;
-                        Text {
-                            text: root.library-error;
-                            color: #fca5a5;
-                            font-size: 14px;
-                            horizontal-alignment: center;
-                            wrap: word-wrap;
-                        }
-                        HorizontalBox {
-                            alignment: center;
-                            spacing: 8px;
-                            Button {
-                                height: 40px;
-                                text: "Réessayer";
-                                clicked => { root.refresh-library(); }
-                            }
-                            Button {
-                                height: 40px;
-                                text: "Vérifier le dossier";
-                                clicked => { root.navigate-to(4); }
-                            }
-                        }
-                    }
-                }
-
-                if !root.library-loading && root.library-error == "" && root.library-items.length == 0: Rectangle {
-                    background: #181d23;
-                    border-radius: 8px;
-                    border-width: 1px;
-                    border-color: #2f3842;
-                    min-height: 350px;
-
-                    VerticalBox {
-                        alignment: center;
-                        spacing: 8px;
-                        Text {
-                            text: root.library-filter == 3
-                                ? "Aucune capture pour ce patient."
-                                : root.library-filter == 1
-                                    ? "Aucune photo dans la bibliothèque."
-                                    : root.library-filter == 2
-                                        ? "Aucune vidéo dans la bibliothèque."
-                                        : "Aucun cliché dans la bibliothèque pour le moment.";
-                            color: #ffffff;
-                            font-size: 16px;
-                            font-weight: 600;
-                            horizontal-alignment: center;
-                        }
-                        Text {
-                            text: root.library-filter == 0
-                                ? "Prenez une photo ou une vidéo depuis la caméra pour commencer."
-                                : "Essayez un autre filtre pour retrouver vos captures.";
-                            color: #9ca3af;
-                            font-size: 13px;
-                            horizontal-alignment: center;
-                        }
-                        HorizontalBox {
-                            alignment: center;
-                            Button {
-                                height: 40px;
-                                text: root.library-filter == 0 ? "Aller à la caméra" : "Voir toutes les captures";
-                                clicked => {
-                                    if root.library-filter == 0 {
-                                        root.navigate-to(0);
-                                    } else {
-                                        root.selected-library-path = "";
-                                        root.library-filter = 0;
-                                        root.library-filter-changed(0);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if !root.library-loading && root.library-error == "" && root.library-items.length > 0 && root.library-view == 1: library-list := ListView {
-                    min-height: 0px;
-                    vertical-stretch: 1;
-                    for item in root.library-items: Rectangle {
-                        width: library-list.visible-width;
-                        height: 100px;
-
-                        Rectangle {
-                            width: 100%;
-                            height: 92px;
-                            border-radius: 8px;
-                            background: root.selected-library-path == item.file-path ? #20334a : item.is-current-patient ? #1c2738 : #181d23;
-                            border-width: 1px;
-                            border-color: root.selected-library-path == item.file-path ? #60a5fa : item.is-current-patient ? #3b82f6 : #2f3842;
-
-                            TouchArea {
-                                width: 100%;
-                                height: 100%;
-                                clicked => { root.selected-library-path = item.file-path; }
-                            }
-
-                            HorizontalBox {
-                                padding-left: 16px;
-                                padding-right: 16px;
-                                spacing: 16px;
-                                alignment: space-between;
-
-                                HorizontalBox {
-                                    min-width: 0px;
-                                    horizontal-stretch: 1;
-                                    spacing: 12px;
-                                    alignment: start;
-
-                                    if item.has-thumbnail: Rectangle {
-                                        width: 96px;
-                                        height: 72px;
-                                        border-radius: 6px;
-                                        clip: true;
-                                        background: #000000;
-
-                                        Image {
-                                            source: item.thumbnail;
-                                            width: 100%;
-                                            height: 100%;
-                                            image-fit: cover;
-                                        }
-                                    }
-
-                                    if !item.has-thumbnail: Rectangle {
-                                        width: 96px;
-                                        height: 72px;
-                                        border-radius: 6px;
-                                        background: #111827;
-
-                                        Text {
-                                            text: item.is-video ? "VIDÉO" : "IRIS";
-                                            color: #9ca3af;
-                                            font-size: 11px;
-                                            font-weight: 700;
-                                            horizontal-alignment: center;
-                                            vertical-alignment: center;
-                                        }
-                                    }
-
-                                    Rectangle {
-                                        width: 72px;
-                                        height: 28px;
-                                        border-radius: 6px;
-                                        background: item.is-video ? #1e3a5f : #064e3b;
-
-                                        HorizontalBox {
-                                            alignment: center;
-                                            Text {
-                                                text: item.is-video ? "VIDÉO" : "PHOTO";
-                                                color: item.is-video ? #60a5fa : #34d399;
-                                                font-size: 11px;
-                                                font-weight: 700;
-                                            }
-                                        }
-                                    }
-
-                                    VerticalBox {
-                                        min-width: 0px;
-                                        horizontal-stretch: 1;
-                                        alignment: center;
-                                        spacing: 2px;
-
-                                        HorizontalBox {
-                                            min-width: 0px;
-                                            spacing: 8px;
-                                            alignment: start;
-                                            Text {
-                                                min-width: 0px;
-                                                horizontal-stretch: 1;
-                                                text: item.title;
-                                                color: #ffffff;
-                                                font-size: 14px;
-                                                font-weight: 600;
-                                                overflow: elide;
-                                            }
-                                            if item.is-current-patient: Rectangle {
-                                                width: 116px;
-                                                height: 22px;
-                                                border-radius: 4px;
-                                                background: #1d4ed8;
-                                                Text {
-                                                    width: 100%;
-                                                    height: 100%;
-                                                    text: "Patient sélectionné";
-                                                    color: #dbeafe;
-                                                    font-size: 10px;
-                                                    font-weight: 700;
-                                                    horizontal-alignment: center;
-                                                    vertical-alignment: center;
-                                                }
-                                            }
-                                            if !item.is-current-patient: Rectangle {
-                                                width: 82px;
-                                                height: 22px;
-                                                border-radius: 4px;
-                                                background: #374151;
-                                                Text {
-                                                    width: 100%;
-                                                    height: 100%;
-                                                    text: "Nom masqué";
-                                                    color: #d1d5db;
-                                                    font-size: 10px;
-                                                    horizontal-alignment: center;
-                                                    vertical-alignment: center;
-                                                }
-                                            }
-                                        }
-
-                                        Text {
-                                            text: item.date-time;
-                                            color: #9ca3af;
-                                            font-size: 12px;
-                                            overflow: elide;
-                                        }
-                                    }
-                                }
-
-                                HorizontalBox {
-                                    height: 40px;
-                                    vertical-stretch: 0;
-                                    spacing: 6px;
-                                    Button {
-                                        height: 40px;
-                                        text: "Ouvrir ici";
-                                        primary: root.selected-library-path == item.file-path;
-                                        clicked => { root.library-map-open = false; root.open-capture-file(item.file-path); }
-                                    }
-                                    Button {
-                                        height: 40px;
-                                        text: "Application du PC";
-                                        clicked => { root.open-capture-externally(item.file-path); }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if !root.library-loading && root.library-error == "" && root.library-items.length > 0 && root.library-view == 0: ScrollView {
-                    min-height: 0px;
-                    vertical-stretch: 1;
-
-                    GridLayout {
-                        width: parent.width;
-                        spacing: 12px;
-
-                        for item[index] in root.library-items: Rectangle {
-                            row: index / root.library-grid-columns;
-                            col: Math.mod(index, root.library-grid-columns);
-                            width: root.width < 1250px ? 300px : 280px;
-                            horizontal-stretch: 0;
-                            height: 274px;
-                            border-radius: 8px;
-                            clip: true;
-                            background: root.selected-library-path == item.file-path ? #20334a : #181d23;
-                            border-width: 1px;
-                            border-color: root.selected-library-path == item.file-path ? #60a5fa : item.is-current-patient ? #3b82f6 : #2f3842;
-
-                            TouchArea {
-                                width: 100%;
-                                height: 100%;
-                                clicked => { root.selected-library-path = item.file-path; }
-                            }
-
-                            VerticalBox {
-                                padding: 10px;
-                                spacing: 6px;
-                                alignment: start;
-
-                                Rectangle {
-                                    height: 128px;
-                                    border-radius: 6px;
-                                    clip: true;
-                                    background: #0b1016;
-
-                                    if item.has-thumbnail: Image {
-                                        source: item.thumbnail;
-                                        width: 100%;
-                                        height: 100%;
-                                        image-fit: cover;
-                                    }
-
-                                    if !item.has-thumbnail: Text {
-                                        width: 100%;
-                                        height: 100%;
-                                        text: item.is-video ? "VIDÉO" : "IRIS";
-                                        color: #9ca3af;
-                                        font-size: 12px;
-                                        font-weight: 700;
-                                        horizontal-alignment: center;
-                                        vertical-alignment: center;
-                                    }
-                                }
-
-                                HorizontalBox {
-                                    spacing: 6px;
-                                    Rectangle {
-                                        width: 54px;
-                                        height: 18px;
-                                        border-radius: 4px;
-                                        background: item.is-video ? #1e3a5f : #064e3b;
-                                        Text {
-                                            text: item.is-video ? "VIDÉO" : "PHOTO";
-                                            color: item.is-video ? #60a5fa : #34d399;
-                                            font-size: 10px;
-                                            font-weight: 700;
-                                            horizontal-alignment: center;
-                                            vertical-alignment: center;
-                                        }
-                                    }
-                                    Text {
-                                        min-width: 0px;
-                                        horizontal-stretch: 1;
-                                        text: item.title;
-                                        color: #ffffff;
-                                        font-size: 13px;
-                                        font-weight: 600;
-                                        overflow: elide;
-                                        vertical-alignment: center;
-                                    }
-                                }
-
-                                Text {
-                                    height: 20px;
-                                    text: item.date-time;
-                                    color: #9ca3af;
-                                    font-size: 11px;
-                                    overflow: elide;
-                                }
-
-                                HorizontalBox {
-                                    height: 40px;
-                                    vertical-stretch: 0;
-                                    spacing: 6px;
-                                    Button {
-                                        height: 40px;
-                                        horizontal-stretch: 1;
-                                        text: "Ouvrir ici";
-                                        primary: root.selected-library-path == item.file-path;
-                                        clicked => { root.library-map-open = false; root.open-capture-file(item.file-path); }
-                                    }
-                                    Button {
-                                        height: 40px;
-                                        horizontal-stretch: 1;
-                                        text: "App. du PC";
-                                        clicked => { root.open-capture-externally(item.file-path); }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Tab 4: Settings & Diagnostics
-            if root.current-tab == 4: ScrollView {
-                VerticalBox {
-                    padding: 20px;
-                    spacing: 12px;
-                    alignment: start;
-
-                    Text {
-                        text: "Paramètres et diagnostic";
-                        font-size: 20px;
-                        font-weight: 700;
-                        color: #ffffff;
-                    }
-
-                    Text {
-                        text: "Modifiez un champ, puis utilisez Entrée ou Enregistrer.";
-                        color: #9ca3af;
-                        font-size: 12px;
-                    }
-
-                    if root.settings-feedback != "": Text {
-                        text: root.settings-feedback;
-                        color: root.settings-feedback-is-error ? #fca5a5 : #6ee7b7;
-                        font-size: 12px;
-                        wrap: word-wrap;
-                    }
-
-                    HorizontalBox {
-                        spacing: 16px;
-
-                        // Diagnostic Technique
-                        Rectangle {
-                            border-radius: 8px;
-                            background: #181d23;
-                            border-width: 1px;
-                            border-color: #2f3842;
-                            width: (root.width - 80px) / 2;
-
-                            VerticalBox {
-                                spacing: 10px;
-                                padding: 16px;
-                                alignment: start;
-
-                                Text {
-                                    text: "État de la caméra";
-                                    font-size: 15px;
-                                    font-weight: 700;
-                                    color: #60a5fa;
-                                }
-                                Text {
-                                    text: root.camera-connected ? root.status-text : "Iridoscope déconnecté";
-                                    color: root.camera-connected ? #6ee7b7 : #fca5a5;
-                                    font-size: 12px;
-                                    overflow: elide;
-                                }
-
-                                if !root.camera-connected: Text {
-                                    text: "Les données du flux apparaîtront après la connexion.";
-                                    color: #9ca3af;
-                                    font-size: 12px;
-                                    wrap: word-wrap;
-                                }
-
-                                if root.camera-connected: VerticalBox {
-                                    spacing: 10px;
-                                HorizontalBox { Text { text: "Périphérique :"; color: #9ca3af; } Text { text: root.diagnostics.device-name; color: #ffffff; width: (root.width - 80px) / 2 - 190px; overflow: elide; } }
-                                HorizontalBox { Text { text: "Identifiant :"; color: #9ca3af; } Text { text: root.diagnostics.device-id; color: #ffffff; width: (root.width - 80px) / 2 - 190px; overflow: elide; } }
-                                HorizontalBox { Text { text: "Système caméra :"; color: #9ca3af; } Text { text: root.diagnostics.backend-name; color: #ffffff; width: (root.width - 80px) / 2 - 190px; overflow: elide; } }
-                                HorizontalBox { Text { text: "Identité USB :"; color: #9ca3af; } Text { text: root.diagnostics.usb-info; color: #ffffff; width: (root.width - 80px) / 2 - 190px; overflow: elide; } }
-                                HorizontalBox { Text { text: "Format actif :"; color: #9ca3af; } Text { text: root.diagnostics.active-format; color: #ffffff; width: (root.width - 80px) / 2 - 190px; overflow: elide; } }
-                                HorizontalBox { Text { text: "Résolution :"; color: #9ca3af; } Text { text: root.diagnostics.active-resolution; color: #ffffff; width: (root.width - 80px) / 2 - 190px; overflow: elide; } }
-                                HorizontalBox { Text { text: "FPS du mode :"; color: #9ca3af; } Text { text: root.diagnostics.active-fps; color: #ffffff; width: (root.width - 80px) / 2 - 190px; overflow: elide; } }
-                                HorizontalBox { Text { text: "FPS mesurés :"; color: #9ca3af; } Text { text: root.is-streaming ? root.diagnostics.measured-fps : "—"; color: root.is-streaming ? #34d399 : #ffffff; font-weight: 700; width: (root.width - 80px) / 2 - 190px; overflow: elide; } }
-                                HorizontalBox { Text { text: "Décodage :"; color: #9ca3af; } Text { text: root.diagnostics.decode-time-ms; color: #ffffff; width: (root.width - 80px) / 2 - 190px; overflow: elide; } }
-                                HorizontalBox { Text { text: "Images reçues :"; color: #9ca3af; } Text { text: "" + root.diagnostics.frame-count; color: #ffffff; } }
-                                HorizontalBox { Text { text: "Images ignorées :"; color: #9ca3af; } Text { text: "" + root.diagnostics.dropped-frames; color: #ffffff; } }
-                                }
-                            }
-                        }
-
-                        // Paramètres Généraux
-                        Rectangle {
-                            border-radius: 8px;
-                            background: #181d23;
-                            border-width: 1px;
-                            border-color: #2f3842;
-                            width: (root.width - 80px) / 2;
-
-                            VerticalBox {
-                                spacing: 12px;
-                                padding: 16px;
-
-                                Text {
-                                    text: "Enregistrement et références";
-                                    font-size: 15px;
-                                    font-weight: 700;
-                                    color: #60a5fa;
-                                }
-
-                                Text { text: "Dossier des captures :"; color: #9ca3af; }
-                                HorizontalBox {
-                                    height: 44px;
-                                    vertical-stretch: 0;
-                                    spacing: 8px;
-                                    capture-directory-field := LineEdit {
-                                        min-width: 0px;
-                                        height: 40px;
-                                        horizontal-stretch: 1;
-                                        enabled: !root.recording-busy;
-                                        text: root.settings-capture-directory;
-                                        changed has-focus => {
-                                            root.focused-text-fields = Math.max(0, root.focused-text-fields + (self.has-focus ? 1 : -1));
-                                        }
-                                        placeholder-text: "Chemin du dossier";
-                                        accepted(value) => { root.update-capture-directory(value); }
-                                    }
-                                    Button {
-                                        height: 40px;
-                                        text: "Enregistrer";
-                                        enabled: !root.recording-busy;
-                                        clicked => { root.update-capture-directory(capture-directory-field.text); }
-                                    }
-                                }
-
-                                Text { text: "Modèle de nommage :"; color: #9ca3af; }
-                                HorizontalBox {
-                                    height: 44px;
-                                    vertical-stretch: 0;
-                                    spacing: 8px;
-                                    filename-template-field := LineEdit {
-                                        min-width: 0px;
-                                        height: 40px;
-                                        horizontal-stretch: 1;
-                                        text: root.settings-filename-template;
-                                        changed has-focus => {
-                                            root.focused-text-fields = Math.max(0, root.focused-text-fields + (self.has-focus ? 1 : -1));
-                                        }
-                                        placeholder-text: "{prenom}_{nom}_{oeil}_{date}_{heure}";
-                                        accepted(value) => { root.update-filename-template(value); }
-                                    }
-                                    Button {
-                                        height: 40px;
-                                        text: "Enregistrer";
-                                        clicked => { root.update-filename-template(filename-template-field.text); }
-                                    }
-                                }
-                                Text {
-                                    text: "Jetons du modèle : {prenom}, {nom}, {oeil}, {date}, {heure}. Le nom du patient peut rester vide lors d'une capture.";
-                                    color: #9ca3af;
-                                    font-size: 11px;
-                                    wrap: word-wrap;
-                                }
-
-                                Text { text: "Action du bouton de l'iridoscope :"; color: #9ca3af; }
-                                HorizontalBox {
-                                    height: 44px;
-                                    alignment: start;
-                                    Button {
-                                        height: 40px;
-                                        text: root.settings-button-mode == 1
-                                            ? "Toujours prendre une photo"
-                                            : root.settings-button-mode == 2
-                                                ? "Toujours démarrer ou arrêter une vidéo"
-                                                : "Suit le mode actuel";
-                                        clicked => {
-                                            root.cycle-physical-button-mode();
-                                        }
-                                    }
-                                }
-                                Text {
-                                    text: "Cliquez pour parcourir les trois options.";
-                                    color: #9ca3af;
-                                    font-size: 11px;
-                                }
-
-                                Text { text: "Qualité vidéo et fluidité du direct :"; color: #9ca3af; }
-                                ComboBox {
-                                    height: 40px;
-                                    model: ["Maximale — résolution", "Équilibrée", "Fluide — images par seconde"];
-                                    current-index: root.settings-video-quality;
-                                    enabled: !root.recording-busy;
-                                    selected(value) => {
-                                        root.update-video-quality(value == "Équilibrée" ? 1
-                                            : value == "Fluide — images par seconde" ? 2 : 0);
-                                    }
-                                }
-                                Text {
-                                    text: "Changer de qualité redémarre brièvement le flux. Le mode actif figure dans État de la caméra.";
-                                    color: #9ca3af;
-                                    font-size: 11px;
-                                    wrap: word-wrap;
-                                }
-
-                                Text { text: "Carte d'iridologie (image) :"; color: #9ca3af; }
-                                HorizontalBox {
-                                    height: 44px;
-                                    vertical-stretch: 0;
-                                    spacing: 8px;
-                                    map-path-field := LineEdit {
-                                        min-width: 0px;
-                                        height: 40px;
-                                        horizontal-stretch: 1;
-                                        text: root.settings-iridology-map-path;
-                                        changed has-focus => {
-                                            root.focused-text-fields = Math.max(0, root.focused-text-fields + (self.has-focus ? 1 : -1));
-                                        }
-                                        placeholder-text: "Chemin vers une image JPEG/PNG";
-                                        accepted(value) => { root.update-iridology-map-path(value); }
-                                    }
-                                    Button {
-                                        height: 40px;
-                                        text: "Enregistrer";
-                                        clicked => { root.update-iridology-map-path(map-path-field.text); }
-                                    }
-                                }
-
-                                Text { text: "Planche de signes et symboles :"; color: #9ca3af; }
-                                HorizontalBox {
-                                    height: 44px;
-                                    vertical-stretch: 0;
-                                    spacing: 8px;
-                                    symbols-path-field := LineEdit {
-                                        min-width: 0px;
-                                        height: 40px;
-                                        horizontal-stretch: 1;
-                                        text: root.settings-iridology-symbols-path;
-                                        changed has-focus => {
-                                            root.focused-text-fields = Math.max(0, root.focused-text-fields + (self.has-focus ? 1 : -1));
-                                        }
-                                        placeholder-text: "Chemin vers une image JPEG/PNG";
-                                        accepted(value) => { root.update-iridology-symbols-path(value); }
-                                    }
-                                    Button {
-                                        height: 40px;
-                                        text: "Enregistrer";
-                                        clicked => { root.update-iridology-symbols-path(symbols-path-field.text); }
-                                    }
-                                }
-
-                                HorizontalBox {
-                                    height: 44px;
-                                    alignment: start;
-                                    Button {
-                                        height: 40px;
-                                        text: "Ouvrir le dossier des captures";
-                                        clicked => { root.open-capture-directory(); }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if root.library-map-open: Rectangle {
-        x: 0px;
-        y: 0px;
-        width: 100%;
-        height: 100%;
-        background: #05070af2;
-
-        TouchArea {
-            width: 100%;
-            height: 100%;
-            clicked => {}
-
-            VerticalBox {
-                padding: 24px;
-                spacing: 12px;
-
-                HorizontalBox {
-                    height: 52px;
-                    vertical-stretch: 0;
-                    alignment: space-between;
-                    VerticalBox {
-                        spacing: 4px;
-                        Text {
-                            text: "Carte d'iridologie";
-                            color: #ffffff;
-                            font-size: 18px;
-                            font-weight: 700;
-                        }
-                        Text {
-                            text: "Référence visuelle";
-                            color: #9ca3af;
-                            font-size: 12px;
-                        }
-                    }
-                    Button {
-                        height: 40px;
-                        text: "Fermer";
-                        clicked => { root.library-map-open = false; }
-                    }
-                }
-
-                if root.has-iridology-map || root.has-iridology-symbols: Rectangle {
-                    height: 48px;
-                    vertical-stretch: 0;
-                    border-radius: 6px;
-                    background: #1c252e;
-                    HorizontalBox {
-                        padding-left: 8px;
-                        padding-right: 8px;
-                        alignment: space-between;
-                        HorizontalBox {
-                            height: 44px;
-                            spacing: 6px;
-                            Button {
-                                height: 40px;
-                                text: "Carte";
-                                primary: root.iridology-reference-mode == 0;
-                                clicked => {
-                                    root.iridology-reference-mode = 0;
-                                    root.iridology-reference-zoom = 100;
-                                    root.iridology-reference-pan-x = 0px;
-                                    root.iridology-reference-pan-y = 0px;
-                                }
-                            }
-                            if root.settings-iridology-symbols-path != "": Button {
-                                height: 40px;
-                                text: "Signes et symboles";
-                                primary: root.iridology-reference-mode == 1;
-                                clicked => {
-                                    root.iridology-reference-mode = 1;
-                                    root.iridology-reference-zoom = 100;
-                                    root.iridology-reference-pan-x = 0px;
-                                    root.iridology-reference-pan-y = 0px;
-                                }
-                            }
-                        }
-                        HorizontalBox {
-                            height: 44px;
-                            spacing: 8px;
-                            Text {
-                                text: "Zoom";
-                                color: #aebfc9;
-                                vertical-alignment: center;
-                            }
-                            Slider {
-                                width: 150px;
-                                height: 32px;
-                                minimum: 100;
-                                maximum: 200;
-                                value: root.iridology-reference-zoom;
-                                enabled: root.iridology-reference-mode == 0
-                                    ? root.has-iridology-map : root.has-iridology-symbols;
-                                changed => {
-                                    root.iridology-reference-zoom = round(self.value);
-                                    root.iridology-reference-pan-x = 0px;
-                                    root.iridology-reference-pan-y = 0px;
-                                }
-                            }
-                            Text {
-                                width: 48px;
-                                text: root.iridology-reference-zoom + " %";
-                                color: #ffffff;
-                                vertical-alignment: center;
-                            }
-                        }
-                    }
-                }
+                height: 64px;
+                visible: !AppState.iris-fullscreen && !AppState.viewer-open && !AppState.library-map-open;
+                background: Design.header;
 
                 Rectangle {
-                    background: #0b1016;
-                    border-radius: 8px;
-                    clip: true;
-
-                    if root.iridology-reference-mode == 0 && root.has-iridology-map: Image {
-                        source: root.iridology-map-image;
-                        width: parent.width * root.iridology-reference-zoom / 100.0;
-                        height: parent.height * root.iridology-reference-zoom / 100.0;
-                        x: (parent.width - self.width) / 2 + root.iridology-reference-pan-x;
-                        y: (parent.height - self.height) / 2 + root.iridology-reference-pan-y;
-                        image-fit: contain;
-                    }
-
-                    if root.iridology-reference-mode == 1 && root.has-iridology-symbols: Image {
-                        source: root.iridology-symbols-image;
-                        width: parent.width * root.iridology-reference-zoom / 100.0;
-                        height: parent.height * root.iridology-reference-zoom / 100.0;
-                        x: (parent.width - self.width) / 2 + root.iridology-reference-pan-x;
-                        y: (parent.height - self.height) / 2 + root.iridology-reference-pan-y;
-                        image-fit: contain;
-                    }
-
-                    if root.iridology-reference-mode == 0 ? !root.has-iridology-map : !root.has-iridology-symbols: VerticalBox {
-                        alignment: center;
-                        spacing: 12px;
-                        Text {
-                            text: root.iridology-reference-mode == 0
-                                ? "Aucune carte d'iridologie sélectionnée"
-                                : "Aucune planche de signes sélectionnée";
-                            color: #ffffff;
-                            font-size: 16px;
-                            horizontal-alignment: center;
-                        }
-                        Text {
-                            text: "Ajoutez votre image dans les paramètres pour l'afficher ici.";
-                            color: #9ca3af;
-                            font-size: 13px;
-                            horizontal-alignment: center;
-                        }
-                        HorizontalBox {
-                            alignment: center;
-                            Button {
-                                text: "Ouvrir les paramètres";
-                                height: 40px;
-                                clicked => {
-                                    root.library-map-open = false;
-                                    root.navigate-to(4);
-                                }
-                            }
-                        }
-                    }
-
-                    TouchArea {
-                        enabled: root.iridology-reference-zoom > 100
-                            && (root.iridology-reference-mode == 0 ? root.has-iridology-map : root.has-iridology-symbols);
-                        private property <length> pan-start-x;
-                        private property <length> pan-start-y;
-                        changed pressed => {
-                            if self.pressed {
-                                self.pan-start-x = root.iridology-reference-pan-x;
-                                self.pan-start-y = root.iridology-reference-pan-y;
-                            }
-                        }
-                        moved => {
-                            if self.pressed {
-                                root.iridology-reference-pan-x = self.pan-start-x + self.mouse-x - self.pressed-x;
-                                root.iridology-reference-pan-y = self.pan-start-y + self.mouse-y - self.pressed-y;
-                            }
-                        }
-                    }
+                    y: parent.height - 1px;
+                    width: 100%;
+                    height: 1px;
+                    background: Design.border;
                 }
-            }
-        }
-    }
-
-    if root.viewer-open: Rectangle {
-        x: 0px;
-        y: 0px;
-        width: 100%;
-        height: 100%;
-        background: #05070af2;
-
-        TouchArea {
-            width: 100%;
-            height: 100%;
-            clicked => {}
-
-            VerticalBox {
-                padding: 24px;
-                spacing: 12px;
 
                 HorizontalBox {
-                    height: 44px;
-                    vertical-stretch: 0;
+                    y: 0px;
+                    width: 100%;
+                    height: 40px;
+                    padding-left: 16px;
+                    padding-right: 16px;
                     alignment: space-between;
 
-                    Text {
-                        text: root.viewer-loading ? "Ouverture de la capture" : root.viewer-is-video ? "Vidéo de l'iris" : "Photo de l'iris";
-                        color: #ffffff;
-                        font-size: 18px;
-                        font-weight: 700;
+                    HorizontalBox {
+                        spacing: Design.gap;
+                        alignment: start;
+                        height: 40px;
+
+                        Rectangle {
+                            visible: root.width >= 900px;
+                            width: 26px;
+                            height: 26px;
+                            border-radius: 13px;
+                            border-width: 2px;
+                            border-color: Design.accent;
+                            background: Design.header;
+                            Rectangle {
+                                x: 7px;
+                                y: 7px;
+                                width: 8px;
+                                height: 8px;
+                                border-radius: 4px;
+                                background: Design.accent;
+                            }
+                        }
+
+                        Text {
+                            visible: root.width >= 900px;
+                            text: "IRISCOPE";
+                            color: Design.accent;
+                            font-size: 16px;
+                            font-weight: 700;
+                            letter-spacing: 1.8px;
+                            vertical-alignment: center;
+                        }
+
+                        Rectangle {
+                            visible: root.width >= 900px;
+                            width: 1px;
+                            height: 24px;
+                            background: Design.border;
+                        }
+
+                        AppButton {
+                            height: 40px;
+                            text: "Caméra";
+                            quiet: true;
+                            primary: AppState.current-tab == 0 && !AppState.image-controls-open;
+                            selected: AppState.current-tab == 0 && !AppState.image-controls-open;
+                            clicked => { AppState.navigate-to(0); AppState.image-controls-open = false; }
+                        }
+
+                        AppButton {
+                            height: 40px;
+                            text: root.width < 1120px ? "Image" : "Réglages image";
+                            quiet: true;
+                            primary: AppState.current-tab == 0 && AppState.image-controls-open;
+                            selected: AppState.current-tab == 0 && AppState.image-controls-open;
+                            clicked => {
+                                AppState.navigate-to(0);
+                                AppState.image-controls-open = !AppState.image-controls-open;
+                            }
+                        }
+
+                        AppButton {
+                            height: 40px;
+                            text: "Bibliothèque";
+                            quiet: true;
+                            primary: AppState.current-tab == 2;
+                            selected: AppState.current-tab == 2;
+                            clicked => { AppState.navigate-to(2); }
+                        }
+
+                        AppButton {
+                            height: 40px;
+                            text: root.width < 1120px ? "Paramètres" : "Paramètres et diagnostic";
+                            quiet: true;
+                            primary: AppState.current-tab == 4;
+                            selected: AppState.current-tab == 4;
+                            clicked => { AppState.navigate-to(4); }
+                        }
+
                     }
 
                     HorizontalBox {
-                        spacing: 6px;
+                        spacing: 10px;
+                        alignment: end;
 
-                        Button {
-                            height: 40px;
-                            text: "Ajuster";
-                            primary: root.viewer-zoom == 100;
-                            enabled: !root.viewer-loading;
-                            clicked => {
-                                root.viewer-zoom = 100;
-                                root.viewer-pan-x = 0px;
-                                root.viewer-pan-y = 0px;
-                            }
-                        }
-                        Button {
-                            height: 40px;
-                            text: "150%";
-                            primary: root.viewer-zoom == 150;
-                            enabled: !root.viewer-loading;
-                            clicked => {
-                                root.viewer-zoom = 150;
-                                root.viewer-pan-x = 0px;
-                                root.viewer-pan-y = 0px;
-                            }
-                        }
-                        Button {
-                            height: 40px;
-                            text: "200%";
-                            primary: root.viewer-zoom == 200;
-                            enabled: !root.viewer-loading;
-                            clicked => {
-                                root.viewer-zoom = 200;
-                                root.viewer-pan-x = 0px;
-                                root.viewer-pan-y = 0px;
-                            }
-                        }
-                        if root.viewer-is-video && !root.viewer-loading: Button {
-                            height: 40px;
-                            text: root.viewer-video-playing ? "Pause" : "Lecture";
-                            clicked => { root.toggle-viewer-video(); }
-                        }
+                        Rectangle {
+                            width: root.width < 1120px ? 160px : 220px;
+                            border-radius: 15px;
+                            border-width: 1px;
+                            border-color: AppState.camera-connected ? #3e614b : #79504a;
+                            background: AppState.camera-connected ? Design.success-surface : Design.error-surface;
+                            height: 30px;
 
-                        Button {
-                            height: 40px;
-                            text: "Fermer";
-                            clicked => { root.dismiss-viewer(); }
+                            Rectangle {
+                                x: 8px;
+                                y: 11px;
+                                width: 8px;
+                                height: 8px;
+                                border-radius: 4px;
+                                background: AppState.camera-connected ? Design.success : Design.danger;
+                            }
+
+                            Text {
+                                x: 22px;
+                                y: 0px;
+                                width: parent.width - 30px;
+                                height: 100%;
+                                text: AppState.status-text;
+                                overflow: elide;
+                                color: AppState.camera-connected ? Design.success : Design.danger;
+                                font-size: 12px;
+                                vertical-alignment: center;
+                            }
                         }
                     }
                 }
-
-                viewer-frame := Rectangle {
-                    clip: true;
-                    background: #000000;
-                    border-radius: 8px;
-
-                    if !root.viewer-loading: Image {
-                        source: root.viewer-image;
-                        x: (parent.width - self.width) / 2 + root.viewer-pan-x;
-                        y: (parent.height - self.height) / 2 + root.viewer-pan-y;
-                        width: root.viewer-zoom == 200
-                            ? parent.width * 2
-                            : root.viewer-zoom == 150
-                                ? parent.width * 1.5
-                                : parent.width;
-                        height: root.viewer-zoom == 200
-                            ? parent.height * 2
-                            : root.viewer-zoom == 150
-                                ? parent.height * 1.5
-                                : parent.height;
-                        image-fit: contain;
-                    }
-
-                    viewer-pan := TouchArea {
-                        enabled: !root.viewer-loading && root.viewer-zoom > 100;
-                        private property <length> pan-start-x;
-                        private property <length> pan-start-y;
-
-                        changed pressed => {
-                            if self.pressed {
-                                self.pan-start-x = root.viewer-pan-x;
-                                self.pan-start-y = root.viewer-pan-y;
-                            }
-                        }
-
-                        moved => {
-                            if self.pressed {
-                                root.viewer-pan-x =
-                                    self.pan-start-x + self.mouse-x - self.pressed-x;
-                                root.viewer-pan-y =
-                                    self.pan-start-y + self.mouse-y - self.pressed-y;
-                            }
-                        }
-                    }
-
-                    if root.viewer-loading: Text {
-                        width: 100%;
-                        height: 100%;
-                        text: "Chargement de la capture…";
-                        color: #d1d5db;
-                        font-size: 16px;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-                }
-
-                if !root.viewer-loading: Text {
-                    text: root.viewer-zoom > 100 ? "Glisser l'image pour la déplacer" : "Zoomer pour examiner les détails";
-                    color: #9ca3af;
-                    font-size: 12px;
-                    horizontal-alignment: center;
-                }
-
-                if root.viewer-is-video && !root.viewer-loading: HorizontalBox {
-                    height: 36px;
-                    vertical-stretch: 0;
-                    spacing: 12px;
-
-                    Text {
-                        width: 56px;
-                        text: root.viewer-video-position;
-                        color: #d1d5db;
-                        font-size: 12px;
-                        vertical-alignment: center;
-                    }
-
-                    Slider {
-                        minimum: 0;
-                        maximum: 1000;
-                        value: root.viewer-video-progress;
-                        released(value) => {
-                            root.seek-viewer-video(value);
-                        }
-                    }
-
-                    Text {
-                        width: 56px;
-                        text: root.viewer-video-duration;
-                        color: #9ca3af;
-                        font-size: 12px;
-                        horizontal-alignment: right;
-                        vertical-alignment: center;
-                    }
-                }
+            }
+            Rectangle {
+                x: 0px; y: AppState.iris-fullscreen ? 0px : 64px; width: 100%; height: parent.height - self.y; background: Design.canvas;
+                visible: !AppState.viewer-open && !AppState.library-map-open;
+                if AppState.current-tab == 0: CameraPage { width: 100%; height: 100%; }
+                if AppState.current-tab == 2: LibraryPage { width: 100%; height: 100%; }
+                if AppState.current-tab == 4: SettingsPage { width: 100%; height: 100%; }
             }
         }
-    }
-
-    if root.show-last-capture: Rectangle {
-        x: (parent.width - self.width) / 2;
-        y: 64px;
-        width: root.width < 1120px ? 460px : 520px;
-        height: 58px;
-        border-radius: 8px;
-        background: root.capture-notice-tone == 2 ? #7f1d1d : root.capture-notice-tone == 1 ? #065f46 : #1e3a5f;
-        border-width: 1px;
-        border-color: root.capture-notice-tone == 2 ? #fca5a5 : root.capture-notice-tone == 1 ? #6ee7b7 : #93c5fd;
-
-        HorizontalBox {
-            padding-left: 14px;
-            padding-right: 14px;
-            spacing: 10px;
-            Text {
-                horizontal-stretch: 1;
-                text: root.last-capture-message;
-                color: #ffffff;
-                font-size: 13px;
-                font-weight: 600;
-                vertical-alignment: center;
-                wrap: word-wrap;
-            }
-            if root.has-last-capture && root.capture-notice-tone == 1: Button {
-                height: 40px;
-                text: "Voir";
-                clicked => { root.open-capture-file(root.last-capture-path); }
-            }
-        }
-    }
+        if AppState.library-map-open: MapOverlay { width: 100%; height: 100%; }
+        if AppState.viewer-open: ViewerOverlay { width: 100%; height: 100%; }
+        if AppState.show-last-capture: CaptureNotice { width: 100%; height: 100%; }
     }
 }

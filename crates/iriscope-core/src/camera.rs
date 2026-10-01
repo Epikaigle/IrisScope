@@ -205,6 +205,73 @@ impl Error for CameraError {}
 /// Result type returned by camera operations.
 pub type CameraResult<T> = Result<T, CameraError>;
 
+/// Largest accepted width or height of a native camera frame.
+pub const MAX_CAMERA_FRAME_DIMENSION: u32 = 8_192;
+/// Largest accepted decoded camera image.
+pub const MAX_CAMERA_FRAME_PIXELS: u64 = 16_000_000;
+/// Largest accepted native MJPEG sample.
+pub const MAX_CAMERA_MJPEG_BYTES: usize = 32 * 1024 * 1024;
+/// Largest accepted native uncompressed sample or packed image.
+pub const MAX_CAMERA_RAW_BYTES: usize = 64 * 1024 * 1024;
+
+/// Returns the byte limit for a supported frame format after validating its dimensions.
+///
+/// # Errors
+///
+/// Rejects zero, excessive or incompatible dimensions and unknown formats.
+pub fn camera_frame_byte_limit(
+    pixel_format: &PixelFormat,
+    resolution: Resolution,
+) -> CameraResult<usize> {
+    if resolution.width == 0
+        || resolution.height == 0
+        || resolution.width > MAX_CAMERA_FRAME_DIMENSION
+        || resolution.height > MAX_CAMERA_FRAME_DIMENSION
+        || resolution.pixel_count() > MAX_CAMERA_FRAME_PIXELS
+    {
+        return Err(CameraError::new(
+            CameraErrorKind::InvalidConfiguration,
+            format!("camera frame dimensions {resolution} exceed safe limits"),
+        ));
+    }
+    if (matches!(pixel_format, PixelFormat::Yuyv | PixelFormat::Nv12) && resolution.width % 2 != 0)
+        || (matches!(pixel_format, PixelFormat::Nv12) && resolution.height % 2 != 0)
+    {
+        return Err(CameraError::new(
+            CameraErrorKind::InvalidConfiguration,
+            format!("camera frame dimensions {resolution} are incompatible with {pixel_format}"),
+        ));
+    }
+    match pixel_format {
+        PixelFormat::Mjpeg => Ok(MAX_CAMERA_MJPEG_BYTES),
+        PixelFormat::Yuyv | PixelFormat::Nv12 | PixelFormat::Bgra8 => Ok(MAX_CAMERA_RAW_BYTES),
+        PixelFormat::Other(_) => Err(CameraError::new(
+            CameraErrorKind::Unsupported,
+            format!("camera frame format {pixel_format} is unsupported"),
+        )),
+    }
+}
+
+/// Checks a native sample size before copying or allocating its bytes.
+///
+/// # Errors
+///
+/// Rejects an empty or oversized sample, or an invalid mode.
+pub fn validate_camera_frame_bytes(
+    pixel_format: &PixelFormat,
+    resolution: Resolution,
+    bytes: usize,
+) -> CameraResult<()> {
+    let limit = camera_frame_byte_limit(pixel_format, resolution)?;
+    if bytes == 0 || bytes > limit {
+        return Err(CameraError::new(
+            CameraErrorKind::Backend,
+            format!("camera frame contains {bytes} bytes; allowed range is 1..={limit}"),
+        ));
+    }
+    Ok(())
+}
+
 /// Platform-independent entry point implemented by each native camera backend.
 pub trait CameraBackend: Send {
     /// Identifies the native API used by this backend.
@@ -311,8 +378,81 @@ mod tests {
     use super::{
         CameraBackend, CameraBackendKind, CameraDescriptor, CameraDevice, CameraDeviceEvent,
         CameraDeviceId, CameraError, CameraErrorKind, CameraEvent, CameraResult, CapturedFrame,
-        StreamConfiguration,
+        MAX_CAMERA_FRAME_DIMENSION, MAX_CAMERA_FRAME_PIXELS, MAX_CAMERA_MJPEG_BYTES,
+        MAX_CAMERA_RAW_BYTES, StreamConfiguration, camera_frame_byte_limit,
+        validate_camera_frame_bytes,
     };
+
+    #[test]
+    fn frame_limits_accept_de400_and_exact_byte_boundaries() {
+        let de400 = Resolution::new(1280, 1024);
+        assert_eq!(
+            camera_frame_byte_limit(&PixelFormat::Mjpeg, de400),
+            Ok(MAX_CAMERA_MJPEG_BYTES)
+        );
+        assert_eq!(
+            camera_frame_byte_limit(&PixelFormat::Bgra8, de400),
+            Ok(MAX_CAMERA_RAW_BYTES)
+        );
+        assert_eq!(
+            camera_frame_byte_limit(&PixelFormat::Bgra8, Resolution::new(4_000, 4_000)),
+            Ok(MAX_CAMERA_RAW_BYTES)
+        );
+        assert_eq!(
+            camera_frame_byte_limit(
+                &PixelFormat::Mjpeg,
+                Resolution::new(MAX_CAMERA_FRAME_DIMENSION, 1),
+            ),
+            Ok(MAX_CAMERA_MJPEG_BYTES)
+        );
+        assert!(
+            validate_camera_frame_bytes(&PixelFormat::Mjpeg, de400, MAX_CAMERA_MJPEG_BYTES).is_ok()
+        );
+        assert!(
+            validate_camera_frame_bytes(&PixelFormat::Bgra8, de400, MAX_CAMERA_RAW_BYTES).is_ok()
+        );
+        assert_eq!(MAX_CAMERA_FRAME_PIXELS, 16_000_000);
+    }
+
+    #[test]
+    fn frame_limits_reject_empty_oversized_and_incompatible_modes() {
+        let de400 = Resolution::new(1280, 1024);
+        for bytes in [0, MAX_CAMERA_MJPEG_BYTES + 1] {
+            assert_eq!(
+                validate_camera_frame_bytes(&PixelFormat::Mjpeg, de400, bytes)
+                    .expect_err("invalid MJPEG byte count")
+                    .kind(),
+                CameraErrorKind::Backend
+            );
+        }
+        assert_eq!(
+            validate_camera_frame_bytes(&PixelFormat::Bgra8, de400, MAX_CAMERA_RAW_BYTES + 1)
+                .expect_err("oversized raw frame")
+                .kind(),
+            CameraErrorKind::Backend
+        );
+        for resolution in [
+            Resolution::new(0, 1024),
+            Resolution::new(MAX_CAMERA_FRAME_DIMENSION + 1, 1),
+            Resolution::new(4_000, 4_001),
+            Resolution::new(u32::MAX, u32::MAX),
+        ] {
+            assert_eq!(
+                camera_frame_byte_limit(&PixelFormat::Mjpeg, resolution)
+                    .expect_err("unsafe camera dimensions")
+                    .kind(),
+                CameraErrorKind::InvalidConfiguration
+            );
+        }
+        assert!(camera_frame_byte_limit(&PixelFormat::Yuyv, Resolution::new(1279, 1024)).is_err());
+        assert!(camera_frame_byte_limit(&PixelFormat::Nv12, Resolution::new(1280, 1023)).is_err());
+        assert_eq!(
+            camera_frame_byte_limit(&PixelFormat::Other("unknown".to_owned()), de400)
+                .expect_err("unknown camera format")
+                .kind(),
+            CameraErrorKind::Unsupported
+        );
+    }
 
     struct FakeBackend {
         descriptor: CameraDescriptor,
