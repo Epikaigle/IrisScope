@@ -34,7 +34,7 @@ jobs:
           python-version: '3.12'
       - name: Install Linux build and headless test dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libudev-dev xvfb xauth
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev libfontconfig1-dev xvfb xauth
       - name: Check formatting
         if: runner.os == 'Linux'
         run: cargo fmt --all --check
@@ -80,6 +80,6 @@ jobs:
           targets: ${{ matrix.target }}
           components: clippy
       - name: Install Linux build dependencies
-        run: sudo apt-get update && sudo apt-get install -y libudev-dev
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev libfontconfig1-dev
       - name: Lint target compilation
         run: cargo clippy --workspace --all-targets --target ${{ matrix.target }} --locked -- -D warnings
