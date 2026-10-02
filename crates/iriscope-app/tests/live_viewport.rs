@@ -64,7 +64,11 @@ fn fullscreen_keyboard_controls_remain_visible_and_reappear_on_tab(window: &Main
             text: Key::Tab.into(),
         });
         assert!(window.global::<AppState>().get_viewport_controls_visible());
-        assert!(window.global::<AppState>().get_viewport_controls_interacting());
+        assert!(
+            window
+                .global::<AppState>()
+                .get_viewport_controls_interacting()
+        );
         thread::sleep(Duration::from_millis(1100));
         slint::platform::update_timers_and_animations();
         assert!(
@@ -72,12 +76,12 @@ fn fullscreen_keyboard_controls_remain_visible_and_reappear_on_tab(window: &Main
             "a keyboard-focused fullscreen command must not disappear"
         );
     }
-    window.window().dispatch_event(WindowEvent::KeyPressed {
-        text: " ".into(),
-    });
-    window.window().dispatch_event(WindowEvent::KeyReleased {
-        text: " ".into(),
-    });
+    window
+        .window()
+        .dispatch_event(WindowEvent::KeyPressed { text: " ".into() });
+    window
+        .window()
+        .dispatch_event(WindowEvent::KeyReleased { text: " ".into() });
     assert_eq!(photos.get(), 1, "Tab reaches the capture command");
     escape(window);
     assert!(!window.get_iris_fullscreen());
