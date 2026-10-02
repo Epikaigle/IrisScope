@@ -7,6 +7,19 @@ use slint::ComponentHandle;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
+fn reset_viewer_presentation(win: &MainWindow) {
+    win.set_viewer_zoom(100);
+    win.set_viewer_pan_x(0.0);
+    win.set_viewer_pan_y(0.0);
+    win.set_viewer_image(slint::Image::default());
+    win.set_viewer_loading(false);
+    win.set_viewer_is_video(false);
+    win.set_viewer_video_playing(false);
+    win.set_viewer_video_progress(0.0);
+    win.set_viewer_video_position("00:00".into());
+    win.set_viewer_video_duration("00:00".into());
+}
+
 #[allow(clippy::too_many_lines)]
 pub(super) fn install(main_window: &MainWindow, runtime: &AppRuntime) {
     let viewer_generation = Arc::clone(&runtime.viewer_generation);
@@ -80,7 +93,7 @@ pub(super) fn install(main_window: &MainWindow, runtime: &AppRuntime) {
                 is_photo,
                 expected_version,
             });
-            win.set_viewer_image(slint::Image::default());
+            reset_viewer_presentation(&win);
             win.set_viewer_is_video(!is_photo);
             win.set_viewer_loading(true);
             win.set_viewer_open(true);
@@ -166,13 +179,8 @@ pub(super) fn install(main_window: &MainWindow, runtime: &AppRuntime) {
             seek.requested_frame = None;
         }
         if let Some(win) = weak_close_viewer.upgrade() {
-            win.set_viewer_image(slint::Image::default());
-            win.set_viewer_loading(false);
-            win.set_viewer_is_video(false);
-            win.set_viewer_video_playing(false);
-            win.set_viewer_video_progress(0.0);
-            win.set_viewer_video_position("00:00".into());
-            win.set_viewer_video_duration("00:00".into());
+            win.set_viewer_open(false);
+            reset_viewer_presentation(&win);
         }
     });
 

@@ -30,6 +30,7 @@ export global AppState {
     in-out property <bool> iris-fullscreen: false;
     in-out property <bool> image-controls-open: false;
     in-out property <bool> viewport-controls-visible: true;
+    in-out property <bool> viewport-controls-interacting: false;
     in-out property <int> viewport-controls-revision: 0;
     in-out property <DiagnosticData> diagnostics;
     in-out property <string> last-capture-message: "";
@@ -89,6 +90,28 @@ export global AppState {
     in-out property <string> viewer-video-duration: "00:00";
     in-out property <bool> text-field-focused: AppState.focused-text-fields > 0;
     in-out property <bool> recording-busy: AppState.is-recording || AppState.recording-finalizing;
+    out property <bool> capture-ready: !AppState.patient-action-pending && AppState.is-streaming
+        && AppState.selected-eye != 0 && (AppState.patient-id != ""
+            || (AppState.patient-first-name == "" && AppState.patient-last-name == ""));
+    out property <bool> capture-enabled: !AppState.recording-finalizing
+        && (AppState.is-recording || AppState.capture-ready);
+    out property <string> capture-label: AppState.recording-finalizing ? "Finalisation de la vidéo…"
+        : AppState.is-recording ? "Arrêter l’enregistrement"
+        : AppState.is-video-mode ? "Démarrer la vidéo" : "Capturer une photo";
+    out property <string> capture-hint: AppState.recording-finalizing ? "Finalisation de la vidéo…"
+        : AppState.is-recording ? "Enregistrement · " + AppState.recording-duration
+        : AppState.patient-action-pending ? "Ouverture du dossier en cours…"
+        : !AppState.is-streaming ? "En attente du flux caméra"
+        : AppState.patient-id == "" && (AppState.patient-first-name != "" || AppState.patient-last-name != "") ? "Choisissez ou créez le dossier patient"
+        : AppState.selected-eye == 0 ? "Choisissez l’œil gauche ou droit"
+        : AppState.patient-id == "" ? "Prêt · capture sans patient" : "Prêt pour la capture";
+
+    public function capture() {
+        if AppState.capture-enabled {
+            if AppState.is-recording || AppState.is-video-mode { AppState.toggle-recording(); }
+            else { AppState.trigger-capture(); }
+        }
+    }
 
     callback open-capture-file(string, string);
     callback open-capture-externally(string, string);
@@ -127,6 +150,7 @@ export global AppState {
     public function navigate-to(tab: int) {
         if (tab == 0 || tab == 2 || tab == 4) && AppState.current-tab != tab {
             AppState.iris-fullscreen = false;
+            AppState.viewport-controls-interacting = false;
             AppState.focused-text-fields = 0;
             AppState.image-controls-open = false;
             AppState.library-map-open = false;

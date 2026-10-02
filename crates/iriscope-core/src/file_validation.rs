@@ -202,6 +202,18 @@ impl CaptureFileVersion {
     }
 }
 
+// Native identity only: no hashing or stability wait during transaction cleanup.
+#[cfg(target_os = "windows")]
+pub(crate) fn capture_native_file_identity_from_file(file: &File) -> io::Result<(u64, u128)> {
+    let version = CaptureFileVersion::from_file(file)?;
+    version.device.zip(version.file_id).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            "filesystem does not expose native capture identity",
+        )
+    })
+}
+
 /// Reads the filesystem version of an already opened capture.
 ///
 /// # Errors

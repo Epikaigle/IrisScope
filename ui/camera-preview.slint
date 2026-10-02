@@ -16,6 +16,9 @@ export component CameraPreview inherits Rectangle {
     changed pan-limit-x => { AppState.zoom-pan-x = clamp(AppState.zoom-pan-x, -root.pan-limit-x, root.pan-limit-x); }
     changed pan-limit-y => { AppState.zoom-pan-y = clamp(AppState.zoom-pan-y, -root.pan-limit-y, root.pan-limit-y); }
     private property <length> tools-height: AppState.iris-fullscreen ? 0px : root.compact-tools ? 92px : 48px;
+    private property <bool> viewport-interacting: fullscreen-exit.active-interaction
+        || viewport-capture.active-interaction;
+    changed viewport-interacting => { AppState.viewport-controls-interacting = root.viewport-interacting; }
 
     image-surface := Rectangle {
         x: 0px;
@@ -88,8 +91,9 @@ export component CameraPreview inherits Rectangle {
         live-pan-focus := FocusScope {
             width: 0px;
             height: 0px;
-            enabled: AppState.is-streaming && AppState.zoom-level > 100;
+            focus-on-tab-navigation: AppState.is-streaming && AppState.zoom-level > 100;
             key-pressed(event) => {
+                if !AppState.is-streaming || AppState.zoom-level <= 100 { return reject; }
                 if event.text == Key.LeftArrow {
                     AppState.zoom-pan-x = clamp(AppState.zoom-pan-x + 24px, -root.pan-limit-x, root.pan-limit-x);
                     return accept;
@@ -117,7 +121,8 @@ export component CameraPreview inherits Rectangle {
             background: transparent;
         }
 
-        AppButton {
+        fullscreen-exit := AppButton {
+            width: self.preferred-width;
             x: parent.width - self.width - 16px;
             y: AppState.is-frozen ? 56px : 16px;
             height: 36px;
@@ -132,38 +137,43 @@ export component CameraPreview inherits Rectangle {
         }
 
         if !AppState.sidebar-visible && !AppState.iris-fullscreen: AppButton {
+            width: self.preferred-width;
             x: 12px;
             y: AppState.is-recording || AppState.session-photo-count > 0 ? 56px : 16px;
             height: 40px;
             text: "Afficher le panneau";
             overlay: true;
             compact: true;
+            visible: !AppState.image-controls-open;
+            accessibility-label: "Afficher le panneau patient et capture";
             clicked => { AppState.sidebar-visible = true; }
         }
 
-        if AppState.iris-fullscreen: AppButton {
+        viewport-capture := AppButton {
+            width: self.preferred-width;
             x: (parent.width - self.width) / 2;
-            y: parent.height - self.height - 20px;
-            height: 48px;
-            visible: AppState.viewport-controls-visible;
-            text: AppState.recording-finalizing ? "Finalisation de la vidéo…"
-            : AppState.is-recording ? "■ Arrêter la vidéo"
-            : AppState.is-video-mode ? "● Démarrer la vidéo"
-            : "Capturer une photo";
+            y: parent.height - self.height - (AppState.iris-fullscreen ? 20px : 40px);
+            height: AppState.iris-fullscreen ? 48px : Design.capture-height;
+            visible: (AppState.iris-fullscreen || !AppState.sidebar-visible)
+                && (!AppState.iris-fullscreen || AppState.viewport-controls-visible);
+            text: AppState.capture-label;
             primary: !AppState.is-recording;
             danger: AppState.is-recording;
             overlay: true;
-            enabled: !AppState.recording-finalizing && (AppState.is-recording
-            || (!AppState.patient-action-pending && AppState.is-streaming && AppState.selected-eye != 0
-            && (AppState.patient-id != ""
-            || (AppState.patient-first-name == "" && AppState.patient-last-name == ""))));
-            clicked => {
-                if AppState.is-recording || AppState.is-video-mode {
-                    AppState.toggle-recording();
-                } else {
-                    AppState.trigger-capture();
-                }
-            }
+            enabled: self.visible && AppState.capture-enabled;
+            clicked => { AppState.capture(); }
+        }
+        if !AppState.sidebar-visible && !AppState.iris-fullscreen: Text {
+            x: 16px;
+            y: parent.height - 32px;
+            width: parent.width - 32px;
+            height: 20px;
+            text: AppState.capture-hint;
+            color: Design.overlay-text;
+            font-size: 12px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            overflow: elide;
         }
 
         if AppState.is-streaming && AppState.show-iridology-grid: Rectangle {
@@ -177,6 +187,7 @@ export component CameraPreview inherits Rectangle {
         }
 
         if !AppState.is-streaming: VerticalLayout {
+            padding: 24px;
             alignment: center;
             spacing: Design.gap;
 
@@ -217,14 +228,17 @@ export component CameraPreview inherits Rectangle {
                 font-weight: 700;
                 letter-spacing: 1.6px;
                 horizontal-alignment: center;
+                vertical-stretch: 0;
             }
 
             Text {
                 text: AppState.camera-connected ? "Démarrage du flux en cours..." : "DE400 non détecté";
                 color: Design.overlay-text;
                 font-family: Design.font-ui;
-                font-size: 30px;
+                font-size: root.width < 600px ? 24px : 30px;
                 horizontal-alignment: center;
+                wrap: word-wrap;
+                vertical-stretch: 0;
             }
             Text {
                 text: AppState.status-text;
@@ -232,6 +246,7 @@ export component CameraPreview inherits Rectangle {
                 font-size: 13px;
                 horizontal-alignment: center;
                 wrap: word-wrap;
+                vertical-stretch: 0;
             }
         }
 
@@ -382,10 +397,12 @@ export component CameraPreview inherits Rectangle {
                     wrap: word-wrap;
                 }
 
-                if AppState.camera-controls.length > 0: ScrollView {
+                if AppState.camera-controls.length > 0: controls-scroll := ScrollView {
                     min-height: 0px;
                     vertical-stretch: 1;
+                    horizontal-scrollbar-policy: always-off;
                     VerticalLayout {
+                        width: controls-scroll.visible-width;
                         spacing: 6px;
                         for control in AppState.camera-controls: Rectangle {
                             height: 80px;
@@ -434,6 +451,7 @@ export component CameraPreview inherits Rectangle {
                                     }
                                     Text {
                                         width: 58px;
+                                        overflow: elide;
                                         text: control.value-label;
                                         color: Design.overlay-text;
                                         horizontal-alignment: right;
@@ -477,6 +495,9 @@ export component CameraPreview inherits Rectangle {
                                     height: 32px;
                                     vertical-stretch: 0;
                                     text: control.boolean-value ? "Activé" : "Désactivé";
+                                    checkable: true;
+                                    selected: control.boolean-value;
+                                    accessibility-label: control.name;
                                     enabled: !control.read-only;
                                     clicked => { AppState.set-camera-control-bool(control.key, !control.boolean-value); }
                                 }
@@ -486,6 +507,9 @@ export component CameraPreview inherits Rectangle {
                                     height: 32px;
                                     vertical-stretch: 0;
                                     text: control.menu-label;
+                                    elide-text: true;
+                                    horizontal-stretch: 1;
+                                    accessibility-label: control.name + " : " + control.menu-label;
                                     enabled: !control.read-only;
                                     clicked => { AppState.cycle-camera-control-menu(control.key); }
                                 }
@@ -515,83 +539,97 @@ export component CameraPreview inherits Rectangle {
         Rectangle { width: 100%; height: 1px; background: Design.border; }
         GridLayout {
             padding: 8px;
-            spacing: 6px;
-            AppButton {
-                row: 0; col: 0; height: 32px; compact: true;
-                text: AppState.is-frozen ? "Reprendre" : "Figer";
-                checkable: true;
-                selected: AppState.is-frozen;
-                enabled: AppState.is-streaming || AppState.is-frozen;
-                clicked => { AppState.toggle-freeze(); }
+            spacing: root.compact-tools ? 12px : 8px;
+            // Independent rows avoid sharing the widest cell of each column.
+            HorizontalLayout {
+                row: 0; col: 0;
+                min-width: 0px;
+                height: Design.compact-control-height;
+                spacing: 6px;
+                AppButton {
+                    height: 32px; compact: true;
+                    text: AppState.is-frozen ? "Reprendre" : "Figer";
+                    checkable: true;
+                    selected: AppState.is-frozen;
+                    enabled: AppState.is-streaming || AppState.is-frozen;
+                    clicked => { AppState.toggle-freeze(); }
+                }
+                AppButton {
+                    height: 32px; compact: true;
+                    text: "Grille";
+                    accessibility-label: "Afficher la grille de l'iris";
+                    checkable: true;
+                    selected: AppState.show-iridology-grid;
+                    enabled: AppState.is-streaming;
+                    clicked => { AppState.show-iridology-grid = !AppState.show-iridology-grid; }
+                }
+                AppSlider {
+                    label: "Zoom de l'image";
+                    minimum: 100; maximum: 200;
+                    value: AppState.zoom-level;
+                    enabled: AppState.is-streaming;
+                    changed => { AppState.zoom-level = round(self.value); AppState.zoom-pan-x = 0px; AppState.zoom-pan-y = 0px; }
+                }
+                Text {
+                    width: 44px;
+                    text: AppState.zoom-level + " %";
+                    color: Design.text-secondary;
+                    font-size: 12px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                AppButton {
+                    height: 32px; compact: true; quiet: true;
+                    text: "Ajuster";
+                    accessibility-label: "Rétablir le zoom à 100 % et recentrer l'image";
+                    clicked => { AppState.zoom-level = 100; AppState.zoom-pan-x = 0px; AppState.zoom-pan-y = 0px; }
+                }
             }
-            AppButton {
-                row: 0; col: 1; height: 32px; compact: true;
-                text: "Grille";
-                accessibility-label: "Afficher la grille de l'iris";
-                checkable: true;
-                selected: AppState.show-iridology-grid;
-                clicked => { AppState.show-iridology-grid = !AppState.show-iridology-grid; }
-            }
-            AppSlider {
-                row: 0; col: 2;
-                label: "Zoom de l'image";
-                minimum: 100; maximum: 200;
-                value: AppState.zoom-level;
-                changed => { AppState.zoom-level = round(self.value); AppState.zoom-pan-x = 0px; AppState.zoom-pan-y = 0px; }
-            }
-            Text {
-                row: 0; col: 3;
-                text: AppState.zoom-level + " %";
-                color: Design.text-secondary;
-                font-size: 12px;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-            }
-            AppButton {
-                row: 0; col: 4; height: 32px; compact: true; quiet: true;
-                text: "Ajuster";
-                accessibility-label: "Rétablir le zoom à 100 % et recentrer l'image";
-                clicked => { AppState.zoom-level = 100; AppState.zoom-pan-x = 0px; AppState.zoom-pan-y = 0px; }
-            }
-            AppButton {
-                row: root.compact-tools ? 1 : 0; col: root.compact-tools ? 0 : 5;
-                height: 32px; compact: true; quiet: true;
-                text: AppState.rotation-angle + "°";
-                accessibility-label: "Faire pivoter l'image de 90 degrés";
-                clicked => { AppState.rotation-angle = Math.mod(AppState.rotation-angle + 90, 360); AppState.zoom-pan-x = 0px; AppState.zoom-pan-y = 0px; }
-            }
-            AppButton {
-                row: root.compact-tools ? 1 : 0; col: root.compact-tools ? 1 : 6;
-                height: 32px; compact: true; quiet: true;
-                text: "Miroir H";
-                accessibility-label: "Miroir horizontal";
-                checkable: true;
-                selected: AppState.mirror-horizontal;
-                clicked => { AppState.mirror-horizontal = !AppState.mirror-horizontal; }
-            }
-            AppButton {
-                row: root.compact-tools ? 1 : 0; col: root.compact-tools ? 2 : 7;
-                height: 32px; compact: true; quiet: true;
-                text: "Miroir V";
-                accessibility-label: "Miroir vertical";
-                checkable: true;
-                selected: AppState.mirror-vertical;
-                clicked => { AppState.mirror-vertical = !AppState.mirror-vertical; }
-            }
-            AppButton {
-                row: root.compact-tools ? 1 : 0; col: root.compact-tools ? 3 : 8;
-                height: 32px; compact: true;
-                text: "Réglages";
-                accessibility-label: "Réglages de l'image en direct";
-                checkable: true;
-                selected: AppState.image-controls-open;
-                clicked => { AppState.image-controls-open = !AppState.image-controls-open; }
-            }
-            AppButton {
-                row: root.compact-tools ? 1 : 0; col: root.compact-tools ? 4 : 9;
-                height: 32px; compact: true;
-                text: "Plein écran";
-                clicked => { AppState.image-controls-open = false; AppState.iris-fullscreen = true; AppState.show-viewport-controls(); }
+            HorizontalLayout {
+                row: root.compact-tools ? 1 : 0;
+                col: root.compact-tools ? 0 : 1;
+                height: Design.compact-control-height;
+                horizontal-stretch: 0;
+                alignment: end;
+                spacing: 6px;
+                AppButton {
+                    height: 32px; compact: true; quiet: true;
+                    text: AppState.rotation-angle + "°";
+                    accessibility-label: "Faire pivoter l'image de 90 degrés";
+                    enabled: AppState.is-streaming;
+                    clicked => { AppState.rotation-angle = Math.mod(AppState.rotation-angle + 90, 360); AppState.zoom-pan-x = 0px; AppState.zoom-pan-y = 0px; }
+                }
+                AppButton {
+                    height: 32px; compact: true; quiet: true;
+                    text: "Miroir H";
+                    accessibility-label: "Miroir horizontal";
+                    checkable: true;
+                    selected: AppState.mirror-horizontal;
+                    enabled: AppState.is-streaming;
+                    clicked => { AppState.mirror-horizontal = !AppState.mirror-horizontal; }
+                }
+                AppButton {
+                    height: 32px; compact: true; quiet: true;
+                    text: "Miroir V";
+                    accessibility-label: "Miroir vertical";
+                    checkable: true;
+                    selected: AppState.mirror-vertical;
+                    enabled: AppState.is-streaming;
+                    clicked => { AppState.mirror-vertical = !AppState.mirror-vertical; }
+                }
+                AppButton {
+                    height: 32px; compact: true;
+                    text: "Réglages";
+                    accessibility-label: "Réglages de l'image en direct";
+                    checkable: true;
+                    selected: AppState.image-controls-open;
+                    clicked => { AppState.image-controls-open = !AppState.image-controls-open; }
+                }
+                AppButton {
+                    height: 32px; compact: true;
+                    text: "Plein écran";
+                    clicked => { AppState.image-controls-open = false; AppState.iris-fullscreen = true; AppState.show-viewport-controls(); }
+                }
             }
         }
     }

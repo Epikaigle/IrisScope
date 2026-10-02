@@ -13,8 +13,8 @@ export component PatientPanel inherits Rectangle {
     border-color: Design.border;
 
     VerticalLayout {
-        padding: 16px;
-        spacing: 12px;
+        padding: Design.inset;
+        spacing: Design.gap;
         HorizontalLayout {
             height: 32px;
             vertical-stretch: 0;
@@ -39,11 +39,12 @@ export component PatientPanel inherits Rectangle {
         }
 
         // Only the form scrolls; the capture action remains within reach.
-        ScrollView {
+        patient-scroll := ScrollView {
             min-height: 0px;
             vertical-stretch: 1;
             horizontal-scrollbar-policy: always-off;
             VerticalLayout {
+                width: patient-scroll.visible-width;
                 padding-right: 4px;
                 spacing: 16px;
                 alignment: start;
@@ -215,11 +216,12 @@ export component PatientPanel inherits Rectangle {
                             wrap: word-wrap;
                             vertical-stretch: 0;
                         }
-                        if AppState.patient-first-name != "" && AppState.patient-last-name != "" && AppState.patient-candidates.length > 0: ScrollView {
+                        if AppState.patient-first-name != "" && AppState.patient-last-name != "" && AppState.patient-candidates.length > 0: candidate-scroll := ScrollView {
                             height: min(180px, AppState.patient-candidates.length * 88px);
                             vertical-stretch: 0;
                             horizontal-scrollbar-policy: always-off;
                             VerticalLayout {
+                                width: candidate-scroll.visible-width;
                                 spacing: 8px;
                                 for candidate in AppState.patient-candidates: Rectangle {
                                     height: 80px;
@@ -373,7 +375,7 @@ export component PatientPanel inherits Rectangle {
                                     source: AppState.last-capture-thumbnail;
                                     width: 100%;
                                     height: 100%;
-                                    image-fit: cover;
+                                    image-fit: contain;
                                 }
                                 if !AppState.has-last-capture-thumbnail: Text {
                                     text: "Capture";
@@ -430,41 +432,27 @@ export component PatientPanel inherits Rectangle {
             }
         }
 
-        if !root.identity-needed: VerticalLayout {
-            height: 88px;
+        VerticalLayout {
             vertical-stretch: 0;
             spacing: 8px;
             Rectangle { height: 1px; vertical-stretch: 0; background: Design.border; }
             AppButton {
-                height: 44px;
+                height: Design.capture-height;
                 horizontal-stretch: 1;
-                text: AppState.recording-finalizing ? "Finalisation de la vidéo…"
-                    : AppState.is-recording ? "Arrêter l’enregistrement"
-                        : AppState.is-video-mode ? "Démarrer la vidéo" : "Capturer une photo";
+                text: AppState.capture-label;
                 primary: !AppState.is-recording;
                 danger: AppState.is-recording;
-                enabled: !AppState.recording-finalizing && (AppState.is-recording
-                    || (AppState.is-streaming && AppState.selected-eye != 0 && !root.identity-needed && !AppState.patient-action-pending));
-                clicked => {
-                    if AppState.is-recording || AppState.is-video-mode {
-                        AppState.toggle-recording();
-                    } else {
-                        AppState.trigger-capture();
-                    }
-                }
+                enabled: AppState.capture-enabled;
+                clicked => { AppState.capture(); }
             }
             Text {
-                height: 22px;
+                min-width: 0px;
                 vertical-stretch: 0;
-                text: AppState.recording-finalizing ? "Finalisation de la vidéo…"
-                    : AppState.is-recording ? "Enregistrement · " + AppState.recording-duration
-                        : AppState.patient-action-pending ? "Ouverture du dossier en cours…"
-                            : !AppState.is-streaming ? "En attente du flux caméra"
-                                : AppState.selected-eye == 0 ? "Choisissez l’œil gauche ou droit"
-                                    : AppState.patient-id == "" ? "Prêt · capture sans patient" : "Prêt pour la capture";
+                text: AppState.capture-hint;
+                wrap: word-wrap;
                 color: AppState.recording-busy ? Design.danger
                     : AppState.patient-action-pending || !AppState.is-streaming ? Design.text-muted
-                    : AppState.selected-eye == 0 ? Design.warning
+                    : root.identity-needed || AppState.selected-eye == 0 ? Design.warning
                         : Design.text-secondary;
                 font-size: 12px;
                 vertical-alignment: center;

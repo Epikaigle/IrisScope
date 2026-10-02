@@ -163,6 +163,9 @@ export component MapOverlay inherits Rectangle {
                 }
 
                 reference-area := Rectangle {
+                    min-height: 0px;
+                    min-width: 0px;
+                    vertical-stretch: 1;
                     accessible-role: groupbox;
                     accessible-label: "Image de référence. Utilisez les flèches pour déplacer la vue agrandie.";
                     forward-focus: reference-pan-focus;

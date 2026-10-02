@@ -3,7 +3,7 @@
 use std::{
     collections::HashSet,
     fs::{self, File, OpenOptions},
-    io::{self, Read, Write},
+    io::{self, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::{Mutex, MutexGuard, atomic::Ordering},
     thread,
@@ -91,6 +91,8 @@ struct FileIdentity {
     #[serde(default)]
     inode: Option<u64>,
     created_nanos: Option<u128>,
+    #[serde(default)]
+    file_id: Option<u128>,
 }
 
 /// A file created by this transaction. Preparation failures clean up only the
@@ -109,17 +111,12 @@ impl PreparedFile {
     }
 
     fn from_created_file(path: PathBuf, file: File) -> io::Result<Self> {
-        let metadata = match file.metadata() {
-            Ok(metadata) => metadata,
-            Err(error) => {
-                drop(file);
-                let _ = fs::remove_file(path);
-                return Err(error);
-            }
-        };
+        // If identity cannot be queried, preserve the newly created path rather
+        // than risk removing a replacement during preparation cleanup.
+        let identity = FileIdentity::of(&file)?;
         Ok(Self {
             path,
-            identity: FileIdentity::of(&metadata),
+            identity,
             file: Some(file),
             preserve: false,
         })
@@ -137,39 +134,65 @@ impl PreparedFile {
 impl Drop for PreparedFile {
     fn drop(&mut self) {
         self.close();
-        if !self.preserve
-            && fs::symlink_metadata(&self.path).is_ok_and(|metadata| {
-                metadata.file_type().is_file() && self.identity.matches(&metadata)
-            })
-        {
-            let _ = fs::remove_file(&self.path);
+        if !self.preserve {
+            let _ = self.identity.remove_if_matches(&self.path);
         }
     }
 }
 
 impl FileIdentity {
-    fn of(metadata: &fs::Metadata) -> Self {
+    fn of(file: &File) -> io::Result<Self> {
+        let metadata = file.metadata()?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
-            Self {
+            Ok(Self {
                 device: Some(metadata.dev()),
                 inode: Some(metadata.ino()),
                 created_nanos: metadata.created().ok().and_then(system_time_nanos),
-            }
+                file_id: None,
+            })
         }
-        #[cfg(not(unix))]
+        #[cfg(target_os = "windows")]
         {
-            Self {
+            let (device, file_id) =
+                crate::file_validation::capture_native_file_identity_from_file(file)?;
+            Ok(Self {
+                device: Some(device),
+                inode: None,
+                created_nanos: metadata.created().ok().and_then(system_time_nanos),
+                file_id: Some(file_id),
+            })
+        }
+        #[cfg(not(any(unix, target_os = "windows")))]
+        {
+            Ok(Self {
                 device: None,
                 inode: None,
                 created_nanos: metadata.created().ok().and_then(system_time_nanos),
-            }
+                file_id: None,
+            })
         }
     }
 
-    fn matches(&self, metadata: &fs::Metadata) -> bool {
-        let actual = Self::of(metadata);
+    fn matches_path(&self, path: &Path) -> bool {
+        File::open(path).is_ok_and(|file| self.matches(&file))
+    }
+
+    fn remove_if_matches(&self, path: &Path) -> io::Result<()> {
+        if !fs::symlink_metadata(path)?.file_type().is_file() || !self.matches_path(path) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "capture file was replaced before cleanup",
+            ));
+        }
+        fs::remove_file(path)
+    }
+
+    fn matches(&self, file: &File) -> bool {
+        let Ok(actual) = Self::of(file) else {
+            return false;
+        };
         #[cfg(unix)]
         {
             self.device == actual.device
@@ -178,7 +201,16 @@ impl FileIdentity {
                     .created_nanos
                     .is_none_or(|created| Some(created) == actual.created_nanos)
         }
-        #[cfg(not(unix))]
+        #[cfg(target_os = "windows")]
+        {
+            // Creation times can be reused after a rename. Legacy journals
+            // without native identity remain preserved for explicit recovery.
+            self.device.is_some()
+                && self.file_id.is_some()
+                && self.device == actual.device
+                && self.file_id == actual.file_id
+        }
+        #[cfg(not(any(unix, target_os = "windows")))]
         {
             self.created_nanos.is_some() && self.created_nanos == actual.created_nanos
         }
@@ -212,7 +244,8 @@ pub fn save_indexed_capture(
 /// Publishes a completed recording and records its explicit dossier association.
 /// A private hard link, or streaming copy when unavailable, keeps the completed
 /// source recoverable until the index is durably written. No full video is buffered.
-/// The original source is removed only after the complete media is published.
+/// The original source is removed only after the complete media is published,
+/// and only if the path still identifies that source.
 ///
 /// # Errors
 ///
@@ -232,11 +265,13 @@ pub fn publish_indexed_capture(
             "capture source is not a regular file",
         ));
     }
+    let mut source_file = File::open(source)?;
+    let source_identity = FileIdentity::of(&source_file)?;
     create_private_directory(directory)?;
-    let mut staging = prepare_staged_source(source, directory)?;
+    let mut staging = prepare_staged_source(source, &mut source_file, &source_identity, directory)?;
     let result =
         commit_staged_capture(directory, file_name, &mut staging, session, kind, timestamp)?;
-    let _ = fs::remove_file(source);
+    let _ = source_identity.remove_if_matches(source);
     Ok(result)
 }
 
@@ -256,7 +291,12 @@ fn prepare_staged_file(
     Ok(staging)
 }
 
-fn prepare_staged_source(source: &Path, directory: &Path) -> io::Result<PreparedFile> {
+fn prepare_staged_source(
+    source: &Path,
+    source_file: &mut File,
+    source_identity: &FileIdentity,
+    directory: &Path,
+) -> io::Result<PreparedFile> {
     loop {
         let path = new_staging_path(directory);
         match fs::hard_link(source, &path) {
@@ -265,11 +305,17 @@ fn prepare_staged_source(source: &Path, directory: &Path) -> io::Result<Prepared
                 let file = match OpenOptions::new().read(true).write(true).open(&path) {
                     Ok(file) => file,
                     Err(error) => {
-                        let _ = fs::remove_file(path);
+                        let _ = source_identity.remove_if_matches(&path);
                         return Err(error);
                     }
                 };
                 let mut staging = PreparedFile::from_created_file(path, file)?;
+                if !source_identity.matches(staging.file_mut()) {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "capture source was replaced before staging",
+                    ));
+                }
                 staging.file_mut().sync_all()?;
                 staging.close();
                 return Ok(staging);
@@ -277,8 +323,8 @@ fn prepare_staged_source(source: &Path, directory: &Path) -> io::Result<Prepared
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
             Err(_) => {
                 return prepare_staged_file(directory, |output| {
-                    let mut input = File::open(source)?;
-                    io::copy(&mut input, output)?;
+                    source_file.seek(SeekFrom::Start(0))?;
+                    io::copy(source_file, output)?;
                     output.sync_all()
                 });
             }
@@ -306,6 +352,34 @@ fn private_new_file(path: &Path) -> io::Result<File> {
     options.open(path)
 }
 
+fn reserve_capture_destination(directory: &Path, file_name: &str) -> io::Result<PreparedFile> {
+    let requested = Path::new(file_name);
+    let stem = requested
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("Iris");
+    let extension = requested.extension().and_then(|value| value.to_str());
+    (1_u32..=u32::MAX)
+        .find_map(|number| {
+            let name = match collision_name(stem, extension, file_name, number) {
+                Ok(name) => name,
+                Err(error) => return Some(Err(error)),
+            };
+            let path = directory.join(name);
+            match PreparedFile::create(path) {
+                Ok(file) => Some(Ok(file)),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => None,
+                Err(error) => Some(Err(error)),
+            }
+        })
+        .unwrap_or_else(|| {
+            Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "capture filename suffix exhausted",
+            ))
+        })
+}
+
 fn commit_staged_capture(
     directory: &Path,
     file_name: &str,
@@ -324,7 +398,7 @@ fn commit_staged_capture(
     let mut index = load_library_index_for_write(directory)?;
     recover_pending_locked(directory, &mut index)?;
     let stage_metadata = fs::metadata(&staging.path)?;
-    if !stage_metadata.file_type().is_file() || !staging.identity.matches(&stage_metadata) {
+    if !stage_metadata.file_type().is_file() || !staging.identity.matches_path(&staging.path) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "prepared capture was replaced before publication",
@@ -333,37 +407,13 @@ fn commit_staged_capture(
     let mut metadata = capture_metadata(session, kind, timestamp, &index, &stage_metadata)?;
     metadata.file_version = Some(stage_version);
     metadata.content_sha256 = Some(digest);
-    let requested = Path::new(file_name);
-    let stem = requested
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .unwrap_or("Iris");
-    let extension = requested.extension().and_then(|value| value.to_str());
-    let mut destination = (1_u32..=u32::MAX)
-        .find_map(|number| {
-            let name = match collision_name(stem, extension, file_name, number) {
-                Ok(name) => name,
-                Err(error) => return Some(Err(error)),
-            };
-            let path = directory.join(name);
-            match PreparedFile::create(path) {
-                Ok(file) => Some(Ok(file)),
-                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => None,
-                Err(error) => Some(Err(error)),
-            }
-        })
-        .unwrap_or_else(|| {
-            Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                "capture filename suffix exhausted",
-            ))
-        })?;
+    let mut destination = reserve_capture_destination(directory, file_name)?;
     destination.file_mut().sync_all()?;
     let pending = PendingCapture {
         version: 1,
         staging_file: utf8_file_name(&staging.path)?,
         destination_file: utf8_file_name(&destination.path)?,
-        staging_identity: FileIdentity::of(&stage_metadata),
+        staging_identity: staging.identity.clone(),
         destination_identity: destination.identity.clone(),
         staging_size: stage_metadata.len(),
         staging_modified_nanos: stage_metadata.modified().ok().and_then(system_time_nanos),
@@ -371,7 +421,7 @@ fn commit_staged_capture(
     };
     let journal = staging.path.with_extension("json");
     let bytes = serde_json::to_vec(&pending).map_err(io::Error::other)?;
-    install_capture_journal(&journal, &bytes)?;
+    let journal_identity = install_capture_journal(&journal, &bytes)?;
     // Once installed, even an uncertain directory sync must retain every file
     // needed for replay: deleting it could leave a surviving journal incomplete.
     staging.preserve = true;
@@ -415,7 +465,13 @@ fn commit_staged_capture(
     })();
     let metadata_warning = match result {
         Ok(()) => {
-            cleanup_pending(directory, &journal, &staging.path);
+            cleanup_pending(
+                directory,
+                &journal,
+                &journal_identity,
+                &staging.path,
+                &staging.identity,
+            );
             None
         }
         Err(error) => Some(error.to_string()),
@@ -450,7 +506,7 @@ fn wait_for_destination_stability(file: &File) -> io::Result<bool> {
     }
 }
 
-fn install_capture_journal(journal: &Path, bytes: &[u8]) -> io::Result<()> {
+fn install_capture_journal(journal: &Path, bytes: &[u8]) -> io::Result<FileIdentity> {
     // Library writers hold the process and directory locks here. Refuse an
     // existing journal instead of replacing another transaction's dossier.
     require_absent(journal)?;
@@ -459,7 +515,8 @@ fn install_capture_journal(journal: &Path, bytes: &[u8]) -> io::Result<()> {
     temporary.file_mut().sync_all()?;
     temporary.close();
     require_absent(journal)?;
-    fs::rename(&temporary.path, journal)
+    fs::rename(&temporary.path, journal)?;
+    Ok(temporary.identity.clone())
 }
 
 fn require_absent(path: &Path) -> io::Result<()> {
@@ -560,7 +617,7 @@ fn commit_pending_metadata(
     let path = directory.join(&pending.destination_file);
     ensure_local_regular_capture(directory, &path)?;
     let file_metadata = fs::metadata(&path)?;
-    if !pending.destination_identity.matches(&file_metadata)
+    if !pending.destination_identity.matches_path(&path)
         || file_metadata.len() != pending.staging_size
     {
         return Err(io::Error::new(
@@ -689,10 +746,10 @@ pub(super) fn recover_pending_locked(
     let mut recovered = 0;
     for journal in journals {
         ensure_local_regular_capture(directory, &journal)?;
+        let journal_file = File::open(&journal)?;
+        let journal_identity = FileIdentity::of(&journal_file)?;
         let mut data = Vec::new();
-        File::open(&journal)?
-            .take(64 * 1024 + 1)
-            .read_to_end(&mut data)?;
+        (&journal_file).take(64 * 1024 + 1).read_to_end(&mut data)?;
         if data.len() > 64 * 1024 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -713,47 +770,85 @@ pub(super) fn recover_pending_locked(
         let destination = directory.join(&pending.destination_file);
         ensure_local_regular_capture(directory, &staging)?;
         ensure_local_regular_capture(directory, &destination)?;
-        let stage_metadata = fs::metadata(&staging)?;
-        let destination_metadata = fs::metadata(&destination)?;
-        if !pending.staging_identity.matches(&stage_metadata)
-            || stage_metadata.len() != pending.staging_size
-            || stage_metadata.modified().ok().and_then(system_time_nanos)
-                != pending.staging_modified_nanos
-            || !pending.destination_identity.matches(&destination_metadata)
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "capture transaction files were replaced; dossier journal preserved",
-            ));
-        }
         validate_dossier(&pending.metadata, index)?;
-        // Complete a partial copy only into the exact file reserved by this transaction.
-        if !same_contents(&staging, &destination)? {
-            if destination_metadata.len() >= stage_metadata.len()
-                || !is_staging_prefix(&staging, &destination)?
-            {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "capture transaction destination was edited; original media and dossier journal preserved",
-                ));
-            }
-            let mut output = OpenOptions::new().write(true).open(&destination)?;
-            if !pending.destination_identity.matches(&output.metadata()?) {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "capture destination changed during recovery",
-                ));
-            }
-            output.set_len(0)?;
-            let mut input = File::open(&staging)?;
-            io::copy(&mut input, &mut output)?;
-            output.sync_all()?;
-        }
+        complete_pending_media(&pending, &staging, &destination)?;
         commit_pending_metadata(directory, &pending, index, None)?;
-        cleanup_pending(directory, &journal, &staging);
+        cleanup_pending(
+            directory,
+            &journal,
+            &journal_identity,
+            &staging,
+            &pending.staging_identity,
+        );
         recovered += 1;
     }
     Ok(recovered)
+}
+
+fn complete_pending_media(
+    pending: &PendingCapture,
+    staging: &Path,
+    destination: &Path,
+) -> io::Result<()> {
+    let mut input = File::open(staging)?;
+    let mut destination_file = File::open(destination)?;
+    let stage_metadata = input.metadata()?;
+    let destination_metadata = destination_file.metadata()?;
+    if !pending.staging_identity.matches(&input)
+        || stage_metadata.len() != pending.staging_size
+        || stage_metadata.modified().ok().and_then(system_time_nanos)
+            != pending.staging_modified_nanos
+        || !pending.destination_identity.matches(&destination_file)
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "capture transaction files were replaced; dossier journal preserved",
+        ));
+    }
+    // Identity, length and modification time do not detect an in-place edit
+    // with restored timestamps. Verify the journal's original bytes before
+    // writing anything into an interrupted destination.
+    let expected_digest = pending.metadata.content_sha256.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "capture journal has no content digest; original media and journal preserved",
+        )
+    })?;
+    if capture_file_version_from_file(&input)?.content_digest() != Some(expected_digest) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "staged media bytes differ from the dossier journal; original media and journal preserved",
+        ));
+    }
+    // Complete a partial copy only into the exact file reserved by this transaction.
+    if destination_metadata.len() > stage_metadata.len()
+        || !is_staging_prefix(&mut input, &mut destination_file)?
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "capture transaction destination was edited; original media and dossier journal preserved",
+        ));
+    }
+    if destination_metadata.len() < stage_metadata.len() {
+        let mut output = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(destination)?;
+        if !pending.destination_identity.matches(&output)
+            || output.metadata()?.len() != destination_metadata.len()
+            || !is_staging_prefix(&mut input, &mut output)?
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "capture destination changed during recovery",
+            ));
+        }
+        // Both cursors now point just past the verified prefix. Retain those
+        // bytes if another interruption occurs while appending the rest.
+        io::copy(&mut input, &mut output)?;
+        output.sync_all()?;
+    }
+    Ok(())
 }
 
 pub(super) fn pending_destination_names(directory: &Path) -> io::Result<HashSet<String>> {
@@ -802,37 +897,23 @@ pub(super) fn pending_destination_names_cancellable(
     Ok(names)
 }
 
-fn same_contents(first: &Path, second: &Path) -> io::Result<bool> {
-    let mut first = File::open(first)?;
-    let mut second = File::open(second)?;
-    if first.metadata()?.len() != second.metadata()?.len() {
-        return Ok(false);
-    }
-    let mut left = [0_u8; 8 * 1024];
-    let mut right = [0_u8; 8 * 1024];
-    loop {
-        let count = first.read(&mut left)?;
-        second.read_exact(&mut right[..count])?;
-        if left[..count] != right[..count] {
-            return Ok(false);
-        }
-        if count == 0 {
-            return Ok(true);
-        }
-    }
-}
-
-fn cleanup_pending(directory: &Path, journal: &Path, staging: &Path) {
+fn cleanup_pending(
+    directory: &Path,
+    journal: &Path,
+    journal_identity: &FileIdentity,
+    staging: &Path,
+    staging_identity: &FileIdentity,
+) {
     // Remove the journal first: a remaining staging file is harmless, whereas a
     // surviving journal without its source would prevent safe recovery.
-    if fs::remove_file(journal).is_ok() && sync_directory(directory).is_ok() {
-        let _ = fs::remove_file(staging);
+    if journal_identity.remove_if_matches(journal).is_ok() && sync_directory(directory).is_ok() {
+        let _ = staging_identity.remove_if_matches(staging);
     }
 }
 
-fn is_staging_prefix(staging: &Path, destination: &Path) -> io::Result<bool> {
-    let mut staging = File::open(staging)?;
-    let mut destination = File::open(destination)?;
+fn is_staging_prefix(staging: &mut File, destination: &mut File) -> io::Result<bool> {
+    staging.seek(SeekFrom::Start(0))?;
+    destination.seek(SeekFrom::Start(0))?;
     let mut left = [0_u8; 8 * 1024];
     let mut right = [0_u8; 8 * 1024];
     loop {
@@ -897,22 +978,30 @@ mod tests {
             },
         )
         .expect("interrupted copy");
+        let (stage_version, digest) = capture_fingerprint(&staging).expect("staging fingerprint");
+        let mut metadata = capture_metadata(
+            session,
+            CaptureKind::Photo,
+            CaptureTimestamp::now(),
+            &index,
+            &stage_metadata,
+        )
+        .expect("explicit dossier");
+        metadata.file_version = Some(stage_version);
+        metadata.content_sha256 = Some(digest);
         let pending = PendingCapture {
             version: 1,
             staging_file: utf8_file_name(&staging).expect("name"),
             destination_file: utf8_file_name(&destination).expect("name"),
-            staging_identity: FileIdentity::of(&stage_metadata),
-            destination_identity: FileIdentity::of(&fs::metadata(&destination).expect("metadata")),
+            staging_identity: FileIdentity::of(&File::open(&staging).expect("staging file"))
+                .expect("staging identity"),
+            destination_identity: FileIdentity::of(
+                &File::open(&destination).expect("destination file"),
+            )
+            .expect("destination identity"),
             staging_size: stage_metadata.len(),
             staging_modified_nanos: stage_metadata.modified().ok().and_then(system_time_nanos),
-            metadata: capture_metadata(
-                session,
-                CaptureKind::Photo,
-                CaptureTimestamp::now(),
-                &index,
-                &stage_metadata,
-            )
-            .expect("explicit dossier"),
+            metadata,
         };
         let journal = staging.with_extension("json");
         fs::write(&journal, serde_json::to_vec(&pending).expect("serialize")).expect("journal");
@@ -977,6 +1066,68 @@ mod tests {
             recover_pending_capture_metadata(&directory).expect("idempotent replay"),
             0
         );
+        fs::remove_dir_all(directory).expect("cleanup");
+    }
+
+    #[test]
+    fn replay_rejects_edited_staging_before_writing_the_destination() {
+        let directory = test_directory("edited-staging");
+        let session = selected_session(&directory);
+        let (journal, destination) = pending_fixture(&directory, &session, false);
+        let pending: PendingCapture =
+            serde_json::from_slice(&fs::read(&journal).expect("journal")).expect("pending");
+        let staging = directory.join(&pending.staging_file);
+        let modified = fs::metadata(&staging)
+            .expect("metadata")
+            .modified()
+            .expect("modified time");
+        let mut edited = fs::read(&staging).expect("staging");
+        *edited.last_mut().expect("last byte") = b'!';
+        fs::write(&staging, &edited).expect("same-size edit after the destination prefix");
+        File::options()
+            .write(true)
+            .open(&staging)
+            .expect("staging file")
+            .set_modified(modified)
+            .expect("restore modified time");
+
+        assert!(recover_pending_capture_metadata(&directory).is_err());
+        assert_eq!(
+            fs::read(&destination).expect("partial destination preserved"),
+            b"complete original"
+        );
+        assert_eq!(
+            fs::read(&staging).expect("edited staging preserved"),
+            edited
+        );
+        assert!(journal.exists());
+        assert!(
+            load_library_index(&directory)
+                .expect("index")
+                .entries
+                .is_empty()
+        );
+        fs::remove_dir_all(directory).expect("cleanup");
+    }
+
+    #[test]
+    fn replay_without_a_content_digest_preserves_an_interrupted_destination() {
+        let directory = test_directory("missing-staging-digest");
+        let session = selected_session(&directory);
+        let (journal, destination) = pending_fixture(&directory, &session, false);
+        let mut pending: PendingCapture =
+            serde_json::from_slice(&fs::read(&journal).expect("journal")).expect("pending");
+        pending.metadata.content_sha256 = None;
+        fs::write(&journal, serde_json::to_vec(&pending).expect("serialize"))
+            .expect("journal without digest");
+
+        assert!(recover_pending_capture_metadata(&directory).is_err());
+        assert_eq!(
+            fs::read(&destination).expect("partial destination preserved"),
+            b"complete original"
+        );
+        assert!(journal.exists());
+        assert!(directory.join(pending.staging_file).exists());
         fs::remove_dir_all(directory).expect("cleanup");
     }
 
@@ -1140,6 +1291,101 @@ mod tests {
     }
 
     #[test]
+    fn published_recording_removes_only_its_original_source() {
+        let directory = test_directory("published-recording");
+        let source = directory.join("source.part");
+        fs::write(&source, b"completed original recording").expect("source");
+        let session = selected_session(&directory);
+        let result = publish_indexed_capture(
+            &source,
+            &directory,
+            "custom.avi",
+            &session,
+            CaptureKind::Video,
+            CaptureTimestamp::now(),
+        )
+        .expect("publish recording");
+
+        assert_eq!(result.metadata_warning, None);
+        assert_eq!(
+            fs::read(result.file_path).expect("published recording"),
+            b"completed original recording"
+        );
+        assert!(!source.exists());
+        assert_no_transaction_files(&directory);
+        fs::remove_dir_all(directory).expect("cleanup");
+    }
+
+    #[test]
+    fn recording_cleanup_preserves_a_source_replaced_after_staging() {
+        let directory = test_directory("source-replacement");
+        let source = directory.join("source.part");
+        fs::write(&source, b"completed original recording").expect("source");
+        let mut source_file = File::open(&source).expect("source file");
+        let source_identity = FileIdentity::of(&source_file).expect("source identity");
+        let mut staging =
+            prepare_staged_source(&source, &mut source_file, &source_identity, &directory)
+                .expect("staging");
+        fs::rename(&source, directory.join("original.part")).expect("move source");
+        fs::write(&source, b"external replacement").expect("replacement");
+        let result = commit_staged_capture(
+            &directory,
+            "custom.avi",
+            &mut staging,
+            &CaptureSession::default(),
+            CaptureKind::Video,
+            CaptureTimestamp::now(),
+        )
+        .expect("publish original staging");
+
+        assert!(source_identity.remove_if_matches(&source).is_err());
+        assert_eq!(
+            fs::read(&source).expect("replacement kept"),
+            b"external replacement"
+        );
+        assert_eq!(
+            fs::read(result.file_path).expect("original recording published"),
+            b"completed original recording"
+        );
+        drop(source_file);
+        drop(staging);
+        fs::remove_dir_all(directory).expect("cleanup");
+    }
+
+    #[test]
+    fn pending_cleanup_preserves_replaced_staging_and_journals() {
+        for replace_journal in [false, true] {
+            let directory = test_directory("pending-cleanup-replacement");
+            let session = selected_session(&directory);
+            let (journal, _) = pending_fixture(&directory, &session, true);
+            let pending: PendingCapture =
+                serde_json::from_slice(&fs::read(&journal).expect("journal")).expect("pending");
+            let journal_identity = FileIdentity::of(&File::open(&journal).expect("journal file"))
+                .expect("journal identity");
+            let staging = directory.join(&pending.staging_file);
+            let replaced = if replace_journal { &journal } else { &staging };
+            fs::rename(replaced, directory.join("original.data")).expect("move original");
+            fs::write(replaced, b"external replacement").expect("replacement");
+
+            cleanup_pending(
+                &directory,
+                &journal,
+                &journal_identity,
+                &staging,
+                &pending.staging_identity,
+            );
+
+            assert_eq!(
+                fs::read(replaced).expect("replacement kept"),
+                b"external replacement"
+            );
+            assert!(staging.exists());
+            assert_eq!(journal.exists(), replace_journal);
+            fs::remove_dir_all(directory).expect("cleanup");
+        }
+    }
+
+    #[test]
     fn blocked_journal_temp_removes_the_reserved_visible_file() {
         let directory = test_directory("blocked-journal-temp");
         let mut staging = prepare_staged_file(&directory, |file| {
@@ -1200,6 +1446,42 @@ mod tests {
             fs::read(path).expect("replacement kept"),
             b"external replacement"
         );
+        fs::remove_dir_all(directory).expect("cleanup");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn native_identity_rejects_replacement_even_with_identical_creation_time() {
+        let directory = test_directory("same-created-replacement");
+        let path = directory.join("original.data");
+        fs::write(&path, b"identical bytes").expect("original");
+        let mut identity = FileIdentity::of(&File::open(&path).expect("original file"))
+            .expect("original identity");
+        fs::rename(&path, directory.join("moved.data")).expect("move original");
+        fs::write(&path, b"identical bytes").expect("replacement");
+        let replacement = File::open(&path).expect("replacement file");
+        let actual = FileIdentity::of(&replacement).expect("replacement identity");
+        identity.created_nanos = actual.created_nanos;
+        assert!(!identity.matches(&replacement));
+        // A timestamp-only journal must not authorize destructive recovery.
+        identity.file_id = None;
+        identity.device = None;
+        assert!(!identity.matches(&replacement));
+        drop(replacement);
+        fs::remove_dir_all(directory).expect("cleanup");
+    }
+
+    #[test]
+    fn prepared_file_cleanup_removes_its_own_file_after_writing() {
+        let directory = test_directory("owned-stage-cleanup");
+        let mut staging = PreparedFile::create(directory.join("owned.data")).expect("stage");
+        staging
+            .file_mut()
+            .write_all(b"completed bytes")
+            .expect("write");
+        let path = staging.path.clone();
+        drop(staging);
+        assert!(!path.exists());
         fs::remove_dir_all(directory).expect("cleanup");
     }
 }

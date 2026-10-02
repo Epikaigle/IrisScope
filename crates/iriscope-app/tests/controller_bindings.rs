@@ -5,6 +5,31 @@ use iriscope_core::session::Eye;
 use iriscope_core::settings::{AppTheme, VideoQualityPreference};
 use std::path::PathBuf;
 
+fn viewer_open_and_close_reset_the_previous_transform(harness: &ControllerHarness) {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("iriscope-viewer-reset-{unique}.jpg"));
+    std::fs::write(&path, b"queued photo snapshot").expect("capture file");
+    let version = iriscope_core::library::capture_file_version(&path).expect("capture version");
+    harness.set_viewer_transform(200, 50.0, 25.0);
+    harness.open_viewer_capture(&path, &version);
+    assert_eq!(
+        harness.viewer_transform(),
+        (100, 0.0, 0.0),
+        "opening a capture must discard an earlier zoom and pan"
+    );
+    harness.set_viewer_transform(150, 30.0, 20.0);
+    harness.close_viewer();
+    assert_eq!(
+        harness.viewer_transform(),
+        (100, 0.0, 0.0),
+        "the close callback used after errors must also reset the view"
+    );
+    std::fs::remove_file(path).expect("cleanup");
+}
+
 fn unavailable_shutter_sound_cannot_report_an_accepted_photo_as_failed() {
     let harness = ControllerHarness::new(PathBuf::from("/tmp/iriscope-optional-sound"))
         .expect("Slint window");
@@ -212,6 +237,7 @@ fn production_callbacks_reach_capture_settings_and_viewer_state() {
     assert_eq!(tone, 2, "patient lookup failure uses the error notice tone");
     assert!(message.contains("Numéro de dossier invalide"));
 
+    viewer_open_and_close_reset_the_previous_transform(&harness);
     harness.seed_playing_viewer();
     let before = harness.viewer_observation();
     assert_eq!(before.generation, 4);
