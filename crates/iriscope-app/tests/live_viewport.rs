@@ -275,9 +275,15 @@ fn toolbar_and_hidden_panel_capture_remain_usable_after_resizing(window: &MainWi
         #[allow(clippy::cast_precision_loss)] // These small display sizes are exact f32 integers.
         let (x, y) = (width as f32 - 70.0, height as f32 - 36.0);
         click(window, x, y);
-        assert!(window.get_iris_fullscreen(), "toolbar is reachable at {width}×{height}");
+        assert!(
+            window.get_iris_fullscreen(),
+            "toolbar is reachable at {width}×{height}"
+        );
         click(window, x, 35.0);
-        assert!(!window.get_iris_fullscreen(), "fullscreen exit fits its label");
+        assert!(
+            !window.get_iris_fullscreen(),
+            "fullscreen exit fits its label"
+        );
     }
 
     window.window().set_size(PhysicalSize::new(800, 600));
@@ -297,7 +303,11 @@ fn toolbar_and_hidden_panel_capture_remain_usable_after_resizing(window: &MainWi
         move || calls.set(calls.get() + 1)
     });
     click(window, 400.0, 434.0);
-    assert_eq!(photos.get(), 1, "hiding the panel keeps photo capture available");
+    assert_eq!(
+        photos.get(),
+        1,
+        "hiding the panel keeps photo capture available"
+    );
     window.set_patient_first_name("Jean".into());
     window.set_patient_last_name("Dupont".into());
     click(window, 400.0, 434.0);
@@ -309,7 +319,11 @@ fn toolbar_and_hidden_panel_capture_remain_usable_after_resizing(window: &MainWi
     window.set_is_recording(true);
     window.set_patient_action_pending(true);
     click(window, 400.0, 434.0);
-    assert_eq!(recordings.get(), 2, "a pending dossier still allows stopping video");
+    assert_eq!(
+        recordings.get(),
+        2,
+        "a pending dossier still allows stopping video"
+    );
     window.set_is_recording(false);
     window.set_patient_action_pending(false);
     window.set_recording_finalizing(true);
