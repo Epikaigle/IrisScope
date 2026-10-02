@@ -352,6 +352,34 @@ fn private_new_file(path: &Path) -> io::Result<File> {
     options.open(path)
 }
 
+fn reserve_capture_destination(directory: &Path, file_name: &str) -> io::Result<PreparedFile> {
+    let requested = Path::new(file_name);
+    let stem = requested
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("Iris");
+    let extension = requested.extension().and_then(|value| value.to_str());
+    (1_u32..=u32::MAX)
+        .find_map(|number| {
+            let name = match collision_name(stem, extension, file_name, number) {
+                Ok(name) => name,
+                Err(error) => return Some(Err(error)),
+            };
+            let path = directory.join(name);
+            match PreparedFile::create(path) {
+                Ok(file) => Some(Ok(file)),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => None,
+                Err(error) => Some(Err(error)),
+            }
+        })
+        .unwrap_or_else(|| {
+            Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "capture filename suffix exhausted",
+            ))
+        })
+}
+
 fn commit_staged_capture(
     directory: &Path,
     file_name: &str,
@@ -379,31 +407,7 @@ fn commit_staged_capture(
     let mut metadata = capture_metadata(session, kind, timestamp, &index, &stage_metadata)?;
     metadata.file_version = Some(stage_version);
     metadata.content_sha256 = Some(digest);
-    let requested = Path::new(file_name);
-    let stem = requested
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .unwrap_or("Iris");
-    let extension = requested.extension().and_then(|value| value.to_str());
-    let mut destination = (1_u32..=u32::MAX)
-        .find_map(|number| {
-            let name = match collision_name(stem, extension, file_name, number) {
-                Ok(name) => name,
-                Err(error) => return Some(Err(error)),
-            };
-            let path = directory.join(name);
-            match PreparedFile::create(path) {
-                Ok(file) => Some(Ok(file)),
-                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => None,
-                Err(error) => Some(Err(error)),
-            }
-        })
-        .unwrap_or_else(|| {
-            Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                "capture filename suffix exhausted",
-            ))
-        })?;
+    let mut destination = reserve_capture_destination(directory, file_name)?;
     destination.file_mut().sync_all()?;
     let pending = PendingCapture {
         version: 1,
