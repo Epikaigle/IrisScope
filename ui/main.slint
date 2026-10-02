@@ -129,15 +129,19 @@ export component MainWindow inherits Window {
     in-out property <string> viewer-video-duration <=> AppState.viewer-video-duration;
 
     private property <int> viewport-controls-revision <=> AppState.viewport-controls-revision;
-    changed viewport-controls-revision => { viewport-controls-timer.restart(); }
+    changed viewport-controls-revision => {
+        if !AppState.viewport-controls-interacting { viewport-controls-timer.restart(); }
+    }
 
     viewport-controls-timer := Timer {
         interval: 1s;
         running: AppState.viewport-controls-visible && !AppState.viewport-controls-interacting;
         triggered => {
-            AppState.viewport-controls-visible = false;
-            if AppState.iris-fullscreen && !AppState.viewer-open && !AppState.library-map-open {
-                app-shortcuts.focus();
+            if !AppState.viewport-controls-interacting {
+                AppState.viewport-controls-visible = false;
+                if AppState.iris-fullscreen && !AppState.viewer-open && !AppState.library-map-open {
+                    app-shortcuts.focus();
+                }
             }
         }
     }
@@ -147,6 +151,14 @@ export component MainWindow inherits Window {
         height: 100%;
         focus-on-tab-navigation: false;
         init => { self.focus(); }
+
+        key-pressed(event) => {
+            // Reveal the controls before Slint finds the next tab-focus target.
+            if AppState.iris-fullscreen && event.text == Key.Tab {
+                AppState.show-viewport-controls();
+            }
+            return reject;
+        }
 
         // One shortcut scope covers the active page and the private viewer.
         KeyBinding { keys: @keys(Control + Shift? + "1"); enabled: !AppState.text-field-focused && !AppState.viewer-open && !AppState.library-map-open; activated => { AppState.navigate-to(0); AppState.image-controls-open = false; } }

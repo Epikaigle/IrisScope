@@ -91,8 +91,9 @@ export component CameraPreview inherits Rectangle {
         live-pan-focus := FocusScope {
             width: 0px;
             height: 0px;
-            enabled: AppState.is-streaming && AppState.zoom-level > 100;
+            focus-on-tab-navigation: AppState.is-streaming && AppState.zoom-level > 100;
             key-pressed(event) => {
+                if !AppState.is-streaming || AppState.zoom-level <= 100 { return reject; }
                 if event.text == Key.LeftArrow {
                     AppState.zoom-pan-x = clamp(AppState.zoom-pan-x + 24px, -root.pan-limit-x, root.pan-limit-x);
                     return accept;

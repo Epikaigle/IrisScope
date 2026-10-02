@@ -45,6 +45,44 @@ fn escape(window: &MainWindow) {
     });
 }
 
+fn fullscreen_keyboard_controls_remain_visible_and_reappear_on_tab(window: &MainWindow) {
+    window.set_selected_eye(1);
+    let photos = Rc::new(Cell::new(0));
+    window.global::<AppState>().on_trigger_capture({
+        let photos = photos.clone();
+        move || photos.set(photos.get() + 1)
+    });
+    click(window, 955.0, 688.0);
+    assert!(window.get_iris_fullscreen());
+    wait_for_controls_timeout(window);
+
+    for _ in 0..2 {
+        window.window().dispatch_event(WindowEvent::KeyPressed {
+            text: Key::Tab.into(),
+        });
+        window.window().dispatch_event(WindowEvent::KeyReleased {
+            text: Key::Tab.into(),
+        });
+        assert!(window.global::<AppState>().get_viewport_controls_visible());
+        assert!(window.global::<AppState>().get_viewport_controls_interacting());
+        thread::sleep(Duration::from_millis(1100));
+        slint::platform::update_timers_and_animations();
+        assert!(
+            window.global::<AppState>().get_viewport_controls_visible(),
+            "a keyboard-focused fullscreen command must not disappear"
+        );
+    }
+    window.window().dispatch_event(WindowEvent::KeyPressed {
+        text: " ".into(),
+    });
+    window.window().dispatch_event(WindowEvent::KeyReleased {
+        text: " ".into(),
+    });
+    assert_eq!(photos.get(), 1, "Tab reaches the capture command");
+    escape(window);
+    assert!(!window.get_iris_fullscreen());
+}
+
 fn permanent_toolbar_and_fullscreen_exit_follow_overlay_visibility(window: &MainWindow) {
     let image_position = LogicalPosition::new(700.0, 350.0);
 
@@ -338,6 +376,7 @@ fn permanent_toolbar_zoom_and_guarded_fullscreen_capture_work_from_the_live_view
     window.set_is_streaming(true);
 
     permanent_toolbar_and_fullscreen_exit_follow_overlay_visibility(&window);
+    fullscreen_keyboard_controls_remain_visible_and_reappear_on_tab(&window);
     wheel_zoom_and_resize_keep_image_pan_bounded(&window);
     arrow_keys_move_the_focused_zoomed_image(&window);
     fullscreen_photo_capture_respects_patient_and_finalization_guards(&window);

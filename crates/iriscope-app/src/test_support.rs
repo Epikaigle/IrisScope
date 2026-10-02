@@ -8,11 +8,12 @@ use crate::runtime::AppRuntime;
 use crate::ui::{AppState, MainWindow};
 use iriscope_core::camera::{CapturedFrame, StreamConfiguration};
 use iriscope_core::capabilities::{FrameRate, PixelFormat, Resolution};
+use iriscope_core::library::CaptureFileVersion;
 use iriscope_core::session::{CaptureSession, Eye};
 use iriscope_core::settings::{AppSettings, AppTheme, VideoQualityPreference};
 use iriscope_core::storage::CaptureTimestamp;
 use slint::ComponentHandle;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -292,6 +293,31 @@ impl ControllerHarness {
     /// Invokes the production viewer close binding.
     pub fn close_viewer(&self) {
         self.window.global::<AppState>().invoke_close_viewer();
+    }
+
+    /// Seeds the view left behind by an earlier capture or a failed viewer.
+    pub fn set_viewer_transform(&self, zoom: i32, pan_x: f32, pan_y: f32) {
+        self.window.set_viewer_zoom(zoom);
+        self.window.set_viewer_pan_x(pan_x);
+        self.window.set_viewer_pan_y(pan_y);
+    }
+
+    /// Reads the displayed zoom and image displacement.
+    #[must_use]
+    pub fn viewer_transform(&self) -> (i32, f32, f32) {
+        (
+            self.window.get_viewer_zoom(),
+            self.window.get_viewer_pan_x(),
+            self.window.get_viewer_pan_y(),
+        )
+    }
+
+    /// Queues an open through the production callback without running a worker.
+    pub fn open_viewer_capture(&self, path: &Path, version: &CaptureFileVersion) {
+        self.window.global::<AppState>().invoke_open_capture_file(
+            path.to_string_lossy().into_owned().into(),
+            version.token().into(),
+        );
     }
 
     /// Reads the viewer state after the callback.

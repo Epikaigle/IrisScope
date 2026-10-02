@@ -15,7 +15,8 @@ export component AppButton inherits Rectangle {
     in property <bool> checkable: false;
     in property <bool> enabled: true;
     out property <bool> has-focus: keyboard-focus.has-focus;
-    out property <bool> active-interaction: root.visible && (pointer.has-hover || root.pressed);
+    out property <bool> active-interaction: root.visible && (pointer.has-hover || root.pressed
+        || (root.has-focus && !root.pointer-focus));
     callback clicked;
 
     private property <color> foreground: root.overlay ? Design.overlay-text : Design.text;
@@ -26,6 +27,7 @@ export component AppButton inherits Rectangle {
     private property <color> button-pressed: root.overlay ? Design.overlay-control-pressed : Design.control-pressed;
     private property <color> selection-surface: root.overlay ? Design.overlay-selected : Design.accent-soft;
     private property <bool> pressed: pointer.pressed || keyboard-focus.activation-key != "";
+    private property <bool> pointer-focus: false;
     min-width: max(root.compact ? Design.compact-control-height : Design.control-height,
         root.elide-text ? 0px : content.min-width);
     preferred-width: max(root.min-width, content.preferred-width);
@@ -85,7 +87,10 @@ export component AppButton inherits Rectangle {
         enabled: root.enabled;
         mouse-cursor: root.enabled ? MouseCursor.pointer : MouseCursor.default;
         pointer-event(event) => {
-            if event.button == PointerEventButton.left && event.kind == PointerEventKind.down { keyboard-focus.focus(); }
+            if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
+                root.pointer-focus = true;
+                keyboard-focus.focus();
+            }
         }
         clicked => { root.clicked(); }
     }
@@ -95,9 +100,12 @@ export component AppButton inherits Rectangle {
         width: 0px;
         enabled: root.enabled;
         private property <string> activation-key: "";
-        changed has-focus => { if !self.has-focus { self.activation-key = ""; } }
+        changed has-focus => {
+            if !self.has-focus { self.activation-key = ""; root.pointer-focus = false; }
+        }
         changed enabled => { if !self.enabled { self.activation-key = ""; } }
         key-pressed(event) => {
+            root.pointer-focus = false;
             if root.enabled && (event.text == " " || event.text == "\n") {
                 if !event.repeat && self.activation-key == "" { self.activation-key = event.text; }
                 return accept;
