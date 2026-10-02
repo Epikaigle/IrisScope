@@ -745,9 +745,7 @@ pub(super) fn recover_pending_locked(
         let journal_file = File::open(&journal)?;
         let journal_identity = FileIdentity::of(&journal_file)?;
         let mut data = Vec::new();
-        (&journal_file)
-            .take(64 * 1024 + 1)
-            .read_to_end(&mut data)?;
+        (&journal_file).take(64 * 1024 + 1).read_to_end(&mut data)?;
         if data.len() > 64 * 1024 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -828,7 +826,10 @@ fn complete_pending_media(
         ));
     }
     if destination_metadata.len() < stage_metadata.len() {
-        let mut output = OpenOptions::new().read(true).write(true).open(destination)?;
+        let mut output = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(destination)?;
         if !pending.destination_identity.matches(&output)
             || output.metadata()?.len() != destination_metadata.len()
             || !is_staging_prefix(&mut input, &mut output)?
@@ -1091,7 +1092,10 @@ mod tests {
             fs::read(&destination).expect("partial destination preserved"),
             b"complete original"
         );
-        assert_eq!(fs::read(&staging).expect("edited staging preserved"), edited);
+        assert_eq!(
+            fs::read(&staging).expect("edited staging preserved"),
+            edited
+        );
         assert!(journal.exists());
         assert!(
             load_library_index(&directory)
