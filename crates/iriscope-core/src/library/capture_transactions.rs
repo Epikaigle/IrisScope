@@ -91,6 +91,8 @@ struct FileIdentity {
     #[serde(default)]
     inode: Option<u64>,
     created_nanos: Option<u128>,
+    #[serde(default)]
+    file_id: Option<u128>,
 }
 
 /// A file created by this transaction. Preparation failures clean up only the
@@ -109,17 +111,12 @@ impl PreparedFile {
     }
 
     fn from_created_file(path: PathBuf, file: File) -> io::Result<Self> {
-        let metadata = match file.metadata() {
-            Ok(metadata) => metadata,
-            Err(error) => {
-                drop(file);
-                let _ = fs::remove_file(path);
-                return Err(error);
-            }
-        };
+        // If identity cannot be queried, preserve the newly created path rather
+        // than risk removing a replacement during preparation cleanup.
+        let identity = FileIdentity::of(&file)?;
         Ok(Self {
             path,
-            identity: FileIdentity::of(&metadata),
+            identity,
             file: Some(file),
             preserve: false,
         })
@@ -139,7 +136,7 @@ impl Drop for PreparedFile {
         self.close();
         if !self.preserve
             && fs::symlink_metadata(&self.path).is_ok_and(|metadata| {
-                metadata.file_type().is_file() && self.identity.matches(&metadata)
+                metadata.file_type().is_file() && self.identity.matches_path(&self.path)
             })
         {
             let _ = fs::remove_file(&self.path);
@@ -148,28 +145,48 @@ impl Drop for PreparedFile {
 }
 
 impl FileIdentity {
-    fn of(metadata: &fs::Metadata) -> Self {
+    fn of(file: &File) -> io::Result<Self> {
+        let metadata = file.metadata()?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
-            Self {
+            Ok(Self {
                 device: Some(metadata.dev()),
                 inode: Some(metadata.ino()),
                 created_nanos: metadata.created().ok().and_then(system_time_nanos),
-            }
+                file_id: None,
+            })
         }
-        #[cfg(not(unix))]
+        #[cfg(target_os = "windows")]
         {
-            Self {
+            let (device, file_id) =
+                crate::file_validation::capture_native_file_identity_from_file(file)?;
+            Ok(Self {
+                device: Some(device),
+                inode: None,
+                created_nanos: metadata.created().ok().and_then(system_time_nanos),
+                file_id: Some(file_id),
+            })
+        }
+        #[cfg(not(any(unix, target_os = "windows")))]
+        {
+            Ok(Self {
                 device: None,
                 inode: None,
                 created_nanos: metadata.created().ok().and_then(system_time_nanos),
-            }
+                file_id: None,
+            })
         }
     }
 
-    fn matches(&self, metadata: &fs::Metadata) -> bool {
-        let actual = Self::of(metadata);
+    fn matches_path(&self, path: &Path) -> bool {
+        File::open(path).is_ok_and(|file| self.matches(&file))
+    }
+
+    fn matches(&self, file: &File) -> bool {
+        let Ok(actual) = Self::of(file) else {
+            return false;
+        };
         #[cfg(unix)]
         {
             self.device == actual.device
@@ -178,7 +195,16 @@ impl FileIdentity {
                     .created_nanos
                     .is_none_or(|created| Some(created) == actual.created_nanos)
         }
-        #[cfg(not(unix))]
+        #[cfg(target_os = "windows")]
+        {
+            // Creation times can be reused after a rename. Legacy journals
+            // without native identity remain preserved for explicit recovery.
+            self.device.is_some()
+                && self.file_id.is_some()
+                && self.device == actual.device
+                && self.file_id == actual.file_id
+        }
+        #[cfg(not(any(unix, target_os = "windows")))]
         {
             self.created_nanos.is_some() && self.created_nanos == actual.created_nanos
         }
@@ -324,7 +350,7 @@ fn commit_staged_capture(
     let mut index = load_library_index_for_write(directory)?;
     recover_pending_locked(directory, &mut index)?;
     let stage_metadata = fs::metadata(&staging.path)?;
-    if !stage_metadata.file_type().is_file() || !staging.identity.matches(&stage_metadata) {
+    if !stage_metadata.file_type().is_file() || !staging.identity.matches_path(&staging.path) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "prepared capture was replaced before publication",
@@ -363,7 +389,7 @@ fn commit_staged_capture(
         version: 1,
         staging_file: utf8_file_name(&staging.path)?,
         destination_file: utf8_file_name(&destination.path)?,
-        staging_identity: FileIdentity::of(&stage_metadata),
+        staging_identity: staging.identity.clone(),
         destination_identity: destination.identity.clone(),
         staging_size: stage_metadata.len(),
         staging_modified_nanos: stage_metadata.modified().ok().and_then(system_time_nanos),
@@ -560,7 +586,7 @@ fn commit_pending_metadata(
     let path = directory.join(&pending.destination_file);
     ensure_local_regular_capture(directory, &path)?;
     let file_metadata = fs::metadata(&path)?;
-    if !pending.destination_identity.matches(&file_metadata)
+    if !pending.destination_identity.matches_path(&path)
         || file_metadata.len() != pending.staging_size
     {
         return Err(io::Error::new(
@@ -715,11 +741,11 @@ pub(super) fn recover_pending_locked(
         ensure_local_regular_capture(directory, &destination)?;
         let stage_metadata = fs::metadata(&staging)?;
         let destination_metadata = fs::metadata(&destination)?;
-        if !pending.staging_identity.matches(&stage_metadata)
+        if !pending.staging_identity.matches_path(&staging)
             || stage_metadata.len() != pending.staging_size
             || stage_metadata.modified().ok().and_then(system_time_nanos)
                 != pending.staging_modified_nanos
-            || !pending.destination_identity.matches(&destination_metadata)
+            || !pending.destination_identity.matches_path(&destination)
         {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -738,7 +764,7 @@ pub(super) fn recover_pending_locked(
                 ));
             }
             let mut output = OpenOptions::new().write(true).open(&destination)?;
-            if !pending.destination_identity.matches(&output.metadata()?) {
+            if !pending.destination_identity.matches(&output) {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "capture destination changed during recovery",
@@ -901,8 +927,12 @@ mod tests {
             version: 1,
             staging_file: utf8_file_name(&staging).expect("name"),
             destination_file: utf8_file_name(&destination).expect("name"),
-            staging_identity: FileIdentity::of(&stage_metadata),
-            destination_identity: FileIdentity::of(&fs::metadata(&destination).expect("metadata")),
+            staging_identity: FileIdentity::of(&File::open(&staging).expect("staging file"))
+                .expect("staging identity"),
+            destination_identity: FileIdentity::of(
+                &File::open(&destination).expect("destination file"),
+            )
+            .expect("destination identity"),
             staging_size: stage_metadata.len(),
             staging_modified_nanos: stage_metadata.modified().ok().and_then(system_time_nanos),
             metadata: capture_metadata(
@@ -1200,6 +1230,42 @@ mod tests {
             fs::read(path).expect("replacement kept"),
             b"external replacement"
         );
+        fs::remove_dir_all(directory).expect("cleanup");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn native_identity_rejects_replacement_even_with_identical_creation_time() {
+        let directory = test_directory("same-created-replacement");
+        let path = directory.join("original.data");
+        fs::write(&path, b"identical bytes").expect("original");
+        let mut identity = FileIdentity::of(&File::open(&path).expect("original file"))
+            .expect("original identity");
+        fs::rename(&path, directory.join("moved.data")).expect("move original");
+        fs::write(&path, b"identical bytes").expect("replacement");
+        let replacement = File::open(&path).expect("replacement file");
+        let actual = FileIdentity::of(&replacement).expect("replacement identity");
+        identity.created_nanos = actual.created_nanos;
+        assert!(!identity.matches(&replacement));
+        // A timestamp-only journal must not authorize destructive recovery.
+        identity.file_id = None;
+        identity.device = None;
+        assert!(!identity.matches(&replacement));
+        drop(replacement);
+        fs::remove_dir_all(directory).expect("cleanup");
+    }
+
+    #[test]
+    fn prepared_file_cleanup_removes_its_own_file_after_writing() {
+        let directory = test_directory("owned-stage-cleanup");
+        let mut staging = PreparedFile::create(directory.join("owned.data")).expect("stage");
+        staging
+            .file_mut()
+            .write_all(b"completed bytes")
+            .expect("write");
+        let path = staging.path.clone();
+        drop(staging);
+        assert!(!path.exists());
         fs::remove_dir_all(directory).expect("cleanup");
     }
 }
