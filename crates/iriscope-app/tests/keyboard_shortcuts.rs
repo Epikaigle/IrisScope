@@ -85,7 +85,7 @@ fn escape(window: &MainWindow) {
 
 fn camera_panel_and_image_popup_have_clickable_controls(window: &MainWindow) {
     // At 1024×720 the image toolbar has two rows below the preview.
-    click(window, 780.0, 678.0);
+    click(window, 875.0, 684.0);
     assert!(window.get_image_controls_open());
     window.set_is_streaming(true);
     window.set_zoom_level(150);

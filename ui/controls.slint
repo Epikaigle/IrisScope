@@ -8,11 +8,14 @@ export component AppButton inherits Rectangle {
     in property <bool> primary: false;
     in property <bool> quiet: false;
     in property <bool> compact: false;
+    // Long device-provided labels may shrink without widening the whole panel.
+    in property <bool> elide-text: false;
     in property <bool> overlay: false;
     in property <bool> danger: false;
     in property <bool> checkable: false;
     in property <bool> enabled: true;
     out property <bool> has-focus: keyboard-focus.has-focus;
+    out property <bool> active-interaction: root.visible && (pointer.has-hover || root.pressed);
     callback clicked;
 
     private property <color> foreground: root.overlay ? Design.overlay-text : Design.text;
@@ -23,8 +26,11 @@ export component AppButton inherits Rectangle {
     private property <color> button-pressed: root.overlay ? Design.overlay-control-pressed : Design.control-pressed;
     private property <color> selection-surface: root.overlay ? Design.overlay-selected : Design.accent-soft;
     private property <bool> pressed: pointer.pressed || keyboard-focus.activation-key != "";
-    min-width: max(root.compact ? 32px : 36px, content.min-width);
-    min-height: max(root.compact ? 32px : 36px, content.min-height);
+    min-width: max(root.compact ? Design.compact-control-height : Design.control-height,
+        root.elide-text ? 0px : content.min-width);
+    preferred-width: max(root.min-width, content.preferred-width);
+    min-height: max(root.compact ? Design.compact-control-height : Design.control-height, content.min-height);
+    preferred-height: root.min-height;
     horizontal-stretch: 0;
     vertical-stretch: 0;
     forward-focus: keyboard-focus;
@@ -60,6 +66,8 @@ export component AppButton inherits Rectangle {
         alignment: center;
 
         Text {
+            min-width: root.elide-text ? 0px : self.preferred-width;
+            overflow: root.elide-text ? elide : clip;
             text: root.text;
             color: !root.enabled ? root.secondary-foreground : root.danger ? (root.overlay ? Design.overlay-danger : Design.danger)
                 : root.selected ? (root.overlay ? Design.overlay-accent : Design.accent)
@@ -75,6 +83,7 @@ export component AppButton inherits Rectangle {
 
     pointer := TouchArea {
         enabled: root.enabled;
+        mouse-cursor: root.enabled ? MouseCursor.pointer : MouseCursor.default;
         pointer-event(event) => {
             if event.button == PointerEventButton.left && event.kind == PointerEventKind.down { keyboard-focus.focus(); }
         }

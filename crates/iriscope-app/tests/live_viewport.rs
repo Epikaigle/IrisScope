@@ -22,6 +22,11 @@ fn click(window: &MainWindow, x: f32, y: f32) {
 }
 
 fn wait_for_controls_timeout(window: &MainWindow) {
+    // A hovered or pressed fullscreen button must remain visible. Leave the
+    // controls before checking the inactivity timeout.
+    window.window().dispatch_event(WindowEvent::PointerMoved {
+        position: LogicalPosition::new(700.0, 350.0),
+    });
     // The headless backend needs an explicit timer pump after elapsed wall time.
     thread::sleep(Duration::from_millis(1100));
     slint::platform::update_timers_and_animations();
@@ -262,6 +267,56 @@ fn fullscreen_exit_stays_available_after_stream_loss(window: &MainWindow) {
     assert!(!window.window().is_fullscreen());
 }
 
+fn toolbar_and_hidden_panel_capture_remain_usable_after_resizing(window: &MainWindow) {
+    window.set_is_streaming(true);
+    window.set_sidebar_visible(true);
+    for (width, height) in [(800, 600), (1024, 720), (1360, 860), (1920, 1080)] {
+        window.window().set_size(PhysicalSize::new(width, height));
+        #[allow(clippy::cast_precision_loss)] // These small display sizes are exact f32 integers.
+        let (x, y) = (width as f32 - 70.0, height as f32 - 36.0);
+        click(window, x, y);
+        assert!(window.get_iris_fullscreen(), "toolbar is reachable at {width}×{height}");
+        click(window, x, 35.0);
+        assert!(!window.get_iris_fullscreen(), "fullscreen exit fits its label");
+    }
+
+    window.window().set_size(PhysicalSize::new(800, 600));
+    window.set_sidebar_visible(false);
+    window.set_patient_first_name("".into());
+    window.set_patient_last_name("".into());
+    window.set_patient_id("".into());
+    window.set_selected_eye(1);
+    let photos = Rc::new(Cell::new(0));
+    let recordings = Rc::new(Cell::new(0));
+    window.global::<AppState>().on_trigger_capture({
+        let calls = photos.clone();
+        move || calls.set(calls.get() + 1)
+    });
+    window.global::<AppState>().on_toggle_recording({
+        let calls = recordings.clone();
+        move || calls.set(calls.get() + 1)
+    });
+    click(window, 400.0, 434.0);
+    assert_eq!(photos.get(), 1, "hiding the panel keeps photo capture available");
+    window.set_patient_first_name("Jean".into());
+    window.set_patient_last_name("Dupont".into());
+    click(window, 400.0, 434.0);
+    assert_eq!(photos.get(), 1, "an unresolved dossier blocks capture");
+    window.set_patient_id("42".into());
+    window.set_is_video_mode(true);
+    click(window, 400.0, 434.0);
+    assert_eq!(recordings.get(), 1);
+    window.set_is_recording(true);
+    window.set_patient_action_pending(true);
+    click(window, 400.0, 434.0);
+    assert_eq!(recordings.get(), 2, "a pending dossier still allows stopping video");
+    window.set_is_recording(false);
+    window.set_patient_action_pending(false);
+    window.set_recording_finalizing(true);
+    click(window, 400.0, 434.0);
+    assert_eq!(recordings.get(), 2, "finalization blocks repeated capture");
+}
+
 #[test]
 fn permanent_toolbar_zoom_and_guarded_fullscreen_capture_work_from_the_live_view() {
     let window = MainWindow::new().expect("create camera interface");
@@ -274,4 +329,5 @@ fn permanent_toolbar_zoom_and_guarded_fullscreen_capture_work_from_the_live_view
     fullscreen_photo_capture_respects_patient_and_finalization_guards(&window);
     fullscreen_recording_can_stop_during_patient_actions(&window);
     fullscreen_exit_stays_available_after_stream_loss(&window);
+    toolbar_and_hidden_panel_capture_remain_usable_after_resizing(&window);
 }

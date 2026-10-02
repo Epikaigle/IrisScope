@@ -83,13 +83,13 @@ export component LibraryPage inherits Rectangle {
         }
 
         if AppState.pending-recordings-count > 0: Rectangle {
-            height: 56px;
+            height: max(56px, recovery-content.preferred-height);
             vertical-stretch: 0;
             border-radius: Design.card-radius;
             background: Design.info-surface;
             border-width: 1px;
             border-color: Design.border;
-            HorizontalLayout {
+            recovery-content := HorizontalLayout {
                 padding: 12px;
                 spacing: 12px;
                 Text {
@@ -101,6 +101,7 @@ export component LibraryPage inherits Rectangle {
                     color: Design.text;
                     font-size: 12px;
                     wrap: word-wrap;
+                    vertical-stretch: 0;
                     vertical-alignment: center;
                 }
                 AppButton {
@@ -115,13 +116,13 @@ export component LibraryPage inherits Rectangle {
 
         if !AppState.library-loading && AppState.library-error == ""
             && AppState.selected-library-path != "" && AppState.selected-library-dossier-number == "" && AppState.patient-id != "": Rectangle {
-            height: 88px;
+            height: assignment-content.preferred-height;
             vertical-stretch: 0;
             border-radius: Design.card-radius;
             background: Design.accent-soft;
             border-width: 1px;
             border-color: Design.accent;
-            VerticalLayout {
+            assignment-content := VerticalLayout {
                 padding-left: 12px;
                 padding-right: 12px;
                 padding-top: 8px;
@@ -136,11 +137,13 @@ export component LibraryPage inherits Rectangle {
                     color: Design.text;
                     font-size: 12px;
                     wrap: word-wrap;
+                    vertical-stretch: 0;
                 }
                 HorizontalLayout {
                     height: 32px;
                     vertical-stretch: 0;
                     spacing: 8px;
+                    alignment: start;
                     AppButton {
                         height: 32px;
                         compact: true;
@@ -541,6 +544,7 @@ export component LibraryPage inherits Rectangle {
         if !AppState.library-loading && AppState.library-error == "" && AppState.library-items.length > 0 && AppState.library-view == 0: library-grid := ScrollView {
             min-height: 0px;
             vertical-stretch: 1;
+            horizontal-scrollbar-policy: always-off;
 
             GridLayout {
                 width: library-grid.visible-width;

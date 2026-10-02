@@ -133,7 +133,7 @@ export component MainWindow inherits Window {
 
     viewport-controls-timer := Timer {
         interval: 1s;
-        running: AppState.viewport-controls-visible;
+        running: AppState.viewport-controls-visible && !AppState.viewport-controls-interacting;
         triggered => {
             AppState.viewport-controls-visible = false;
             if AppState.iris-fullscreen && !AppState.viewer-open && !AppState.library-map-open {
@@ -207,10 +207,11 @@ export component MainWindow inherits Window {
                     padding-bottom: 12px;
                     padding-left: 20px;
                     padding-right: 20px;
-                    spacing: 24px;
+                    spacing: root.width < 1000px ? 16px : 24px;
                     alignment: space-between;
                     HorizontalLayout {
                         height: 36px;
+                        horizontal-stretch: 0;
                         spacing: 12px;
                         alignment: start;
                         Rectangle {
@@ -261,9 +262,9 @@ export component MainWindow inherits Window {
                         }
                     }
                     Rectangle {
-                        width: 188px;
-                        height: 36px;
+                        width: root.width < 1000px ? 188px : 236px;
                         horizontal-stretch: 0;
+                        height: 36px;
                         Rectangle {
                             x: 0px; y: 14px;
                             width: 7px; height: 7px; border-radius: 4px;
