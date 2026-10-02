@@ -165,27 +165,34 @@ pub(super) fn install(main_window: &MainWindow, runtime: &AppRuntime) {
     let settings_theme = Arc::clone(&settings);
     let save_theme = Arc::clone(&camera_settings_save);
     let weak_theme = main_window.as_weak();
-    main_window.global::<AppState>().on_cycle_theme(move || {
-        let Some(win) = weak_theme.upgrade() else {
-            return;
-        };
-        let next = if let Ok(mut guard) = settings_theme.lock() {
-            guard.theme = match guard.theme {
-                AppTheme::System => AppTheme::Light,
-                AppTheme::Light => AppTheme::Dark,
-                AppTheme::Dark => AppTheme::System,
+    main_window
+        .global::<AppState>()
+        .on_select_theme(move |index| {
+            let Some(win) = weak_theme.upgrade() else {
+                return;
             };
-            guard.theme
-        } else {
-            return;
-        };
-        win.set_settings_theme(match next {
-            AppTheme::System => 0,
-            AppTheme::Light => 1,
-            AppTheme::Dark => 2,
+            let next = match index {
+                0 => AppTheme::System,
+                1 => AppTheme::Light,
+                2 => AppTheme::Dark,
+                _ => return,
+            };
+            let changed = if let Ok(mut guard) = settings_theme.lock() {
+                let changed = guard.theme != next;
+                guard.theme = next;
+                changed
+            } else {
+                return;
+            };
+            win.set_settings_theme(match next {
+                AppTheme::System => 0,
+                AppTheme::Light => 1,
+                AppTheme::Dark => 2,
+            });
+            if changed || win.get_settings_feedback_is_error() {
+                queue_settings_save(&win, &save_theme, "Enregistrement du thème…");
+            }
         });
-        queue_settings_save(&win, &save_theme, "Enregistrement du thème…");
-    });
 
     let settings_quality = Arc::clone(&settings);
     let save_quality = Arc::clone(&camera_settings_save);
@@ -218,10 +225,16 @@ pub(super) fn install(main_window: &MainWindow, runtime: &AppRuntime) {
             win.set_settings_video_quality(index);
             if changed {
                 stream_restart_quality.store(true, Ordering::Release);
+            }
+            if changed || win.get_settings_feedback_is_error() {
                 queue_settings_save(
                     &win,
                     &save_quality,
-                    "Enregistrement de la qualité. Mise à jour du flux…",
+                    if changed {
+                        "Enregistrement de la qualité. Mise à jour du flux…"
+                    } else {
+                        "Enregistrement de la qualité…"
+                    },
                 );
             }
         });

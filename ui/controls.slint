@@ -7,45 +7,65 @@ export component AppButton inherits Rectangle {
     in property <bool> selected: false;
     in property <bool> primary: false;
     in property <bool> quiet: false;
+    in property <bool> compact: false;
+    in property <bool> overlay: false;
+    in property <bool> danger: false;
+    in property <bool> checkable: false;
     in property <bool> enabled: true;
     out property <bool> has-focus: keyboard-focus.has-focus;
     callback clicked;
 
-    min-width: max(36px, content.min-width);
-    min-height: max(38px, content.min-height);
+    private property <color> foreground: root.overlay ? Design.overlay-text : Design.text;
+    private property <color> secondary-foreground: root.overlay ? Design.overlay-text-muted : Design.text-muted;
+    private property <color> button-border: root.overlay ? Design.overlay-border : Design.border;
+    private property <color> button-surface: root.overlay ? Design.overlay-control : Design.control;
+    private property <color> button-hover: root.overlay ? Design.overlay-control-hover : Design.control-hover;
+    private property <color> button-pressed: root.overlay ? Design.overlay-control-pressed : Design.control-pressed;
+    private property <color> selection-surface: root.overlay ? Design.overlay-selected : Design.accent-soft;
+    private property <bool> pressed: pointer.pressed || keyboard-focus.activation-key != "";
+    min-width: max(root.compact ? 32px : 36px, content.min-width);
+    min-height: max(root.compact ? 32px : 36px, content.min-height);
     horizontal-stretch: 0;
     vertical-stretch: 0;
     forward-focus: keyboard-focus;
     border-radius: Design.control-radius;
     border-width: 1px;
-    border-color: !root.enabled ? Design.border
+    border-color: !root.enabled ? root.button-border
+        : root.danger ? (root.overlay ? Design.overlay-danger : Design.danger)
+        : root.selected ? (root.overlay ? Design.overlay-accent : Design.accent)
         : root.primary ? Design.accent
-        : root.quiet ? (pointer.has-hover ? Design.border : transparent)
-        : Design.border;
-    background: !root.enabled ? Design.control-disabled
-        : root.primary ? (pointer.pressed ? Design.accent-pressed : pointer.has-hover ? Design.accent-hover : Design.accent)
-        : root.quiet ? (pointer.has-hover ? Design.control-hover : transparent)
-        : pointer.pressed ? Design.control-pressed : pointer.has-hover ? Design.control-hover : Design.control;
+        : root.quiet ? (pointer.has-hover ? root.button-border : transparent)
+        : root.button-border;
+    background: !root.enabled ? (root.overlay ? Design.overlay-control : Design.control-disabled)
+        : root.danger ? (root.overlay ? (root.pressed ? Design.overlay-danger-pressed : pointer.has-hover ? Design.overlay-danger-hover : Design.overlay-danger-surface) : Design.error-surface)
+        : root.selected ? (root.pressed ? root.button-pressed : pointer.has-hover ? root.button-hover : root.selection-surface)
+        : root.primary ? (root.pressed ? Design.accent-pressed : pointer.has-hover ? Design.accent-hover : Design.accent)
+        : root.quiet ? (root.pressed ? root.button-pressed : pointer.has-hover ? root.button-hover : transparent)
+        : root.pressed ? root.button-pressed : pointer.has-hover ? root.button-hover : root.button-surface;
     animate background, border-color { duration: 120ms; }
 
     accessible-role: button;
     accessible-enabled: root.enabled;
     accessible-label: root.accessibility-label;
+    accessible-checkable: root.checkable;
+    accessible-checked: root.selected;
     accessible-description: root.selected ? "Sélectionné" : "";
     accessible-action-default => { if root.enabled { root.clicked(); } }
 
     content := HorizontalLayout {
-        padding-left: 13px;
-        padding-right: 13px;
+        padding-left: root.compact ? 10px : 14px;
+        padding-right: root.compact ? 10px : 14px;
         padding-top: 5px;
         padding-bottom: 5px;
         alignment: center;
 
         Text {
             text: root.text;
-            color: !root.enabled ? Design.text-muted : root.primary ? Design.accent-ink : Design.text;
+            color: !root.enabled ? root.secondary-foreground : root.danger ? (root.overlay ? Design.overlay-danger : Design.danger)
+                : root.selected ? (root.overlay ? Design.overlay-accent : Design.accent)
+                : root.primary ? Design.accent-ink : root.foreground;
             font-family: Design.font-ui;
-            font-size: 12px;
+            font-size: root.compact ? 12px : 13px;
             font-weight: root.primary ? 700 : 600;
             letter-spacing: 0.1px;
             horizontal-alignment: center;
@@ -55,6 +75,9 @@ export component AppButton inherits Rectangle {
 
     pointer := TouchArea {
         enabled: root.enabled;
+        pointer-event(event) => {
+            if event.button == PointerEventButton.left && event.kind == PointerEventKind.down { keyboard-focus.focus(); }
+        }
         clicked => { root.clicked(); }
     }
 
@@ -62,9 +85,22 @@ export component AppButton inherits Rectangle {
         x: 0px;
         width: 0px;
         enabled: root.enabled;
+        private property <string> activation-key: "";
+        changed has-focus => { if !self.has-focus { self.activation-key = ""; } }
+        changed enabled => { if !self.enabled { self.activation-key = ""; } }
         key-pressed(event) => {
+            if root.enabled && (event.text == " " || event.text == "\n") {
+                if !event.repeat && self.activation-key == "" { self.activation-key = event.text; }
+                return accept;
+            }
+            return reject;
+        }
+        key-released(event) => {
             if (event.text == " " || event.text == "\n") {
-                root.clicked();
+                if self.activation-key == event.text {
+                    self.activation-key = "";
+                    if root.enabled { root.clicked(); }
+                }
                 return accept;
             }
             return reject;
@@ -78,7 +114,7 @@ export component AppButton inherits Rectangle {
         height: parent.height + 6px;
         border-radius: Design.control-radius + 3px;
         border-width: 2px;
-        border-color: Design.focus;
+        border-color: root.overlay ? Design.overlay-accent : Design.focus;
         background: transparent;
     }
 }
@@ -89,16 +125,19 @@ export component AppSlider inherits Rectangle {
     in property <float> maximum: 100;
     in property <float> step: 1;
     in property <bool> enabled: true;
+    in property <bool> overlay: false;
     in-out property <float> value: minimum;
     out property <bool> has-focus: keyboard-focus.has-focus;
     callback changed;
     callback released(float);
 
-    private property <float> range: max(1, root.maximum - root.minimum);
+    private property <float> range: max(0.0001, root.maximum - root.minimum);
+    private property <float> effective-step: max(0.0001, root.step);
+    private property <float> final-step-value: root.minimum + floor(max(0, root.maximum - root.minimum) / root.effective-step) * root.effective-step;
     private property <float> fraction: clamp((root.value - root.minimum) / root.range, 0, 1);
 
     min-width: 60px;
-    min-height: 22px;
+    min-height: 32px;
     horizontal-stretch: 1;
     vertical-stretch: 0;
     background: transparent;
@@ -110,15 +149,23 @@ export component AppSlider inherits Rectangle {
     accessible-value: root.value;
     accessible-value-minimum: root.minimum;
     accessible-value-maximum: root.maximum;
-    accessible-value-step: root.step;
+    accessible-value-step: root.effective-step;
     accessible-action-set-value(v) => {
-        if root.enabled && v.is-float() { root.set-value(v.to-float()); }
+        if root.enabled && v.is-float() {
+            root.set-value(v.to-float());
+            root.released(root.value);
+        }
     }
-    accessible-action-increment => { if root.enabled { root.set-value(root.value + root.step); } }
-    accessible-action-decrement => { if root.enabled { root.set-value(root.value - root.step); } }
+    accessible-action-increment => {
+        if root.enabled { root.set-value(root.value + root.effective-step); root.released(root.value); }
+    }
+    accessible-action-decrement => {
+        if root.enabled { root.set-value(root.value - root.effective-step); root.released(root.value); }
+    }
 
     public function set-value(next: float) {
-        let adjusted = clamp(next, root.minimum, root.maximum);
+        let bounded = clamp(next, root.minimum, root.maximum);
+        let adjusted = clamp(root.minimum + round((bounded - root.minimum) / root.effective-step) * root.effective-step, root.minimum, root.final-step-value);
         if root.value != adjusted {
             root.value = adjusted;
             root.changed();
@@ -131,7 +178,7 @@ export component AppSlider inherits Rectangle {
         width: parent.width - 18px;
         height: 4px;
         border-radius: 2px;
-        background: Design.border;
+        background: root.overlay ? Design.overlay-border : Design.border;
     }
 
     Rectangle {
@@ -140,7 +187,7 @@ export component AppSlider inherits Rectangle {
         width: rail.width * root.fraction;
         height: rail.height;
         border-radius: rail.border-radius;
-        background: root.enabled ? Design.accent : Design.text-muted;
+        background: root.enabled ? (root.overlay ? Design.overlay-accent : Design.accent) : Design.text-muted;
     }
 
     Rectangle {
@@ -150,8 +197,8 @@ export component AppSlider inherits Rectangle {
         height: 18px;
         border-radius: 9px;
         border-width: root.has-focus ? 3px : 2px;
-        border-color: root.has-focus ? Design.focus : Design.surface;
-        background: root.enabled ? (pointer.pressed ? Design.accent-hover : Design.accent) : Design.text-muted;
+        border-color: root.has-focus ? (root.overlay ? Design.overlay-text : Design.focus) : (root.overlay ? Design.overlay-control : Design.surface);
+        background: root.enabled ? (root.overlay ? Design.overlay-accent : pointer.pressed ? Design.accent-hover : Design.accent) : Design.text-muted;
     }
 
     pointer := TouchArea {
@@ -176,12 +223,13 @@ export component AppSlider inherits Rectangle {
         width: 0px;
         enabled: root.enabled;
         key-pressed(event) => {
+            if !root.enabled { return reject; }
             if event.text == Key.RightArrow {
-                root.set-value(root.value + root.step);
+                root.set-value(root.value + root.effective-step);
                 return accept;
             }
             if event.text == Key.LeftArrow {
-                root.set-value(root.value - root.step);
+                root.set-value(root.value - root.effective-step);
                 return accept;
             }
             if event.text == Key.Home {

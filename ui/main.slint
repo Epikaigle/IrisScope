@@ -1,6 +1,6 @@
 import { AppButton } from "./controls.slint";
 import { Design } from "./theme.slint";
-import { HorizontalBox, Palette } from "std-widgets.slint";
+import { Palette } from "std-widgets.slint";
 import { AppState } from "./state.slint";
 import { DiagnosticData, LibraryItemData, CameraControlUiData, PatientCandidateData } from "./models.slint";
 import { CameraPage } from "./camera.slint";
@@ -15,12 +15,14 @@ export { DiagnosticData, LibraryItemData, CameraControlUiData, PatientCandidateD
 export { AppState } from "./state.slint";
 
 export component MainWindow inherits Window {
-    title: "IrisScope - Digital Microscope";
+    title: "IrisScope";
     full-screen: root.iris-fullscreen;
     min-width: 800px;
     min-height: 600px;
-    preferred-width: 1280px;
-    preferred-height: 800px;
+    max-width: 16384px;
+    max-height: 16384px;
+    preferred-width: 1360px;
+    preferred-height: 860px;
     background: Design.canvas;
     default-font-family: Design.font-ui;
     default-font-size: 13px;
@@ -29,7 +31,17 @@ export component MainWindow inherits Window {
         Palette.color-scheme = root.settings-theme == 1 ? ColorScheme.light
             : root.settings-theme == 2 ? ColorScheme.dark : ColorScheme.unknown;
     }
+    changed iris-fullscreen => { app-shortcuts.focus(); }
+    changed image-controls-open => {
+        if (!root.image-controls-open) { app-shortcuts.focus(); }
+    }
+    changed sidebar-visible => { app-shortcuts.focus(); }
+    changed library-map-open => {
+        AppState.preview-tab-changed(root.current-tab == 0 && !root.viewer-open && !root.library-map-open);
+        if (!root.library-map-open) { app-shortcuts.focus(); }
+    }
     changed viewer-open => {
+        AppState.preview-tab-changed(root.current-tab == 0 && !root.viewer-open && !root.library-map-open);
         if (!root.viewer-open) { app-shortcuts.focus(); }
     }
     in-out property <image> live-frame <=> AppState.live-frame;
@@ -122,32 +134,38 @@ export component MainWindow inherits Window {
     viewport-controls-timer := Timer {
         interval: 1s;
         running: AppState.viewport-controls-visible;
-        triggered => { AppState.viewport-controls-visible = false; }
+        triggered => {
+            AppState.viewport-controls-visible = false;
+            if AppState.iris-fullscreen && !AppState.viewer-open && !AppState.library-map-open {
+                app-shortcuts.focus();
+            }
+        }
     }
 
     app-shortcuts := FocusScope {
         width: 100%;
         height: 100%;
         focus-on-tab-navigation: false;
+        init => { self.focus(); }
 
         // One shortcut scope covers the active page and the private viewer.
-        KeyBinding { keys: @keys(Control + "1"); enabled: !AppState.text-field-focused && !AppState.viewer-open && !AppState.library-map-open; activated => { AppState.navigate-to(0); AppState.image-controls-open = false; } }
-        KeyBinding { keys: @keys(Control + "2"); enabled: !AppState.text-field-focused && !AppState.viewer-open && !AppState.library-map-open; activated => { AppState.navigate-to(0); AppState.image-controls-open = !AppState.image-controls-open; } }
-        KeyBinding { keys: @keys(Control + "3"); enabled: !AppState.text-field-focused && !AppState.viewer-open && !AppState.library-map-open; activated => { AppState.navigate-to(2); } }
-        KeyBinding { keys: @keys(Control + "4"); enabled: !AppState.text-field-focused && !AppState.viewer-open && !AppState.library-map-open; activated => { AppState.navigate-to(2); AppState.iridology-reference-mode = 0; AppState.library-map-open = true; } }
-        KeyBinding { keys: @keys(Control + "5"); enabled: !AppState.text-field-focused && !AppState.viewer-open && !AppState.library-map-open; activated => { AppState.navigate-to(4); } }
+        KeyBinding { keys: @keys(Control + Shift? + "1"); enabled: !AppState.text-field-focused && !AppState.viewer-open && !AppState.library-map-open; activated => { AppState.navigate-to(0); AppState.image-controls-open = false; } }
+        KeyBinding { keys: @keys(Control + Shift? + "2"); enabled: !AppState.text-field-focused && !AppState.viewer-open && !AppState.library-map-open; activated => { AppState.navigate-to(0); AppState.image-controls-open = !AppState.image-controls-open; } }
+        KeyBinding { keys: @keys(Control + Shift? + "3"); enabled: !AppState.text-field-focused && !AppState.viewer-open && !AppState.library-map-open; activated => { AppState.navigate-to(2); } }
+        KeyBinding { keys: @keys(Control + Shift? + "4"); enabled: !AppState.text-field-focused && !AppState.viewer-open && !AppState.library-map-open; activated => { AppState.navigate-to(2); AppState.iridology-reference-mode = 0; AppState.library-map-open = true; } }
+        KeyBinding { keys: @keys(Control + Shift? + "5"); enabled: !AppState.text-field-focused && !AppState.viewer-open && !AppState.library-map-open; activated => { AppState.navigate-to(4); } }
 
         KeyBinding {
             keys: @keys(Control + P);
             enabled: !AppState.text-field-focused && !AppState.viewer-open && !AppState.library-map-open && AppState.current-tab == 0
-                && AppState.is-streaming && !AppState.recording-busy && AppState.selected-eye != 0
+                && !AppState.patient-action-pending && AppState.is-streaming && !AppState.recording-busy && AppState.selected-eye != 0
                 && (AppState.patient-id != "" || (AppState.patient-first-name == "" && AppState.patient-last-name == ""));
             activated => { AppState.trigger-capture(); }
         }
         KeyBinding {
             keys: @keys(Control + R);
             enabled: !AppState.text-field-focused && !AppState.viewer-open && !AppState.library-map-open && AppState.current-tab == 0
-                && !AppState.recording-finalizing && (AppState.is-recording || (AppState.is-streaming && AppState.selected-eye != 0
+                && !AppState.recording-finalizing && (AppState.is-recording || (!AppState.patient-action-pending && AppState.is-streaming && AppState.selected-eye != 0
                     && (AppState.patient-id != "" || (AppState.patient-first-name == "" && AppState.patient-last-name == ""))));
             activated => { AppState.toggle-recording(); }
         }
@@ -171,150 +189,101 @@ export component MainWindow inherits Window {
         Rectangle {
             width: 100%;
             height: 100%;
+            visible: !AppState.viewer-open && !AppState.library-map-open;
 
-            // The capture surface remains quiet; navigation and camera status live here.
+            // Global navigation stays separate from contextual image tools.
             Rectangle {
                 x: 0px;
                 y: 0px;
                 width: 100%;
-                height: 64px;
+                height: 60px;
                 visible: !AppState.iris-fullscreen && !AppState.viewer-open && !AppState.library-map-open;
                 background: Design.header;
-
-                Rectangle {
-                    y: parent.height - 1px;
+                Rectangle { y: parent.height - 1px; width: 100%; height: 1px; background: Design.border; }
+                HorizontalLayout {
                     width: 100%;
-                    height: 1px;
-                    background: Design.border;
-                }
-
-                HorizontalBox {
-                    y: 0px;
-                    width: 100%;
-                    height: 40px;
-                    padding-left: 16px;
-                    padding-right: 16px;
+                    height: 100%;
+                    padding-top: 12px;
+                    padding-bottom: 12px;
+                    padding-left: 20px;
+                    padding-right: 20px;
+                    spacing: 24px;
                     alignment: space-between;
-
-                    HorizontalBox {
-                        spacing: Design.gap;
+                    HorizontalLayout {
+                        height: 36px;
+                        spacing: 12px;
                         alignment: start;
-                        height: 40px;
-
                         Rectangle {
-                            visible: root.width >= 900px;
-                            width: 26px;
-                            height: 26px;
-                            border-radius: 13px;
-                            border-width: 2px;
-                            border-color: Design.accent;
-                            background: Design.header;
+                            width: 24px; height: 36px;
                             Rectangle {
-                                x: 7px;
-                                y: 7px;
-                                width: 8px;
-                                height: 8px;
-                                border-radius: 4px;
-                                background: Design.accent;
+                                y: 6px; width: 24px; height: 24px;
+                                border-radius: 12px;
+                                border-width: 2px;
+                                border-color: Design.accent;
+                                background: transparent;
+                                Rectangle { x: 6px; y: 6px; width: 8px; height: 8px; border-radius: 4px; background: Design.accent; }
                             }
                         }
-
-                        Text {
-                            visible: root.width >= 900px;
+                        if root.width >= 1000px: Text {
                             text: "IRISCOPE";
-                            color: Design.accent;
-                            font-size: 16px;
+                            color: Design.text;
+                            font-size: 15px;
                             font-weight: 700;
-                            letter-spacing: 1.8px;
+                            letter-spacing: 1.5px;
                             vertical-alignment: center;
                         }
-
-                        Rectangle {
-                            visible: root.width >= 900px;
-                            width: 1px;
-                            height: 24px;
-                            background: Design.border;
+                        Rectangle { width: 1px; height: 36px;
+                            Rectangle { y: 6px; width: 1px; height: 24px; background: Design.border; }
                         }
-
                         AppButton {
-                            height: 40px;
+                            height: 36px;
                             text: "Caméra";
                             quiet: true;
-                            primary: AppState.current-tab == 0 && !AppState.image-controls-open;
-                            selected: AppState.current-tab == 0 && !AppState.image-controls-open;
+                            checkable: true;
+                            selected: AppState.current-tab == 0;
                             clicked => { AppState.navigate-to(0); AppState.image-controls-open = false; }
                         }
-
                         AppButton {
-                            height: 40px;
-                            text: root.width < 1120px ? "Image" : "Réglages image";
-                            quiet: true;
-                            primary: AppState.current-tab == 0 && AppState.image-controls-open;
-                            selected: AppState.current-tab == 0 && AppState.image-controls-open;
-                            clicked => {
-                                AppState.navigate-to(0);
-                                AppState.image-controls-open = !AppState.image-controls-open;
-                            }
-                        }
-
-                        AppButton {
-                            height: 40px;
+                            height: 36px;
                             text: "Bibliothèque";
                             quiet: true;
-                            primary: AppState.current-tab == 2;
+                            checkable: true;
                             selected: AppState.current-tab == 2;
                             clicked => { AppState.navigate-to(2); }
                         }
-
                         AppButton {
-                            height: 40px;
-                            text: root.width < 1120px ? "Paramètres" : "Paramètres et diagnostic";
+                            height: 36px;
+                            text: "Paramètres";
                             quiet: true;
-                            primary: AppState.current-tab == 4;
+                            checkable: true;
                             selected: AppState.current-tab == 4;
                             clicked => { AppState.navigate-to(4); }
                         }
-
                     }
-
-                    HorizontalBox {
-                        spacing: 10px;
-                        alignment: end;
-
+                    Rectangle {
+                        width: 188px;
+                        height: 36px;
+                        horizontal-stretch: 0;
                         Rectangle {
-                            width: root.width < 1120px ? 160px : 220px;
-                            border-radius: 15px;
-                            border-width: 1px;
-                            border-color: AppState.camera-connected ? #3e614b : #79504a;
-                            background: AppState.camera-connected ? Design.success-surface : Design.error-surface;
-                            height: 30px;
-
-                            Rectangle {
-                                x: 8px;
-                                y: 11px;
-                                width: 8px;
-                                height: 8px;
-                                border-radius: 4px;
-                                background: AppState.camera-connected ? Design.success : Design.danger;
-                            }
-
-                            Text {
-                                x: 22px;
-                                y: 0px;
-                                width: parent.width - 30px;
-                                height: 100%;
-                                text: AppState.status-text;
-                                overflow: elide;
-                                color: AppState.camera-connected ? Design.success : Design.danger;
-                                font-size: 12px;
-                                vertical-alignment: center;
-                            }
+                            x: 0px; y: 14px;
+                            width: 7px; height: 7px; border-radius: 4px;
+                            background: AppState.camera-connected ? Design.success : Design.danger;
+                        }
+                        Text {
+                            x: 15px; y: 0px;
+                            width: parent.width - 15px;
+                            height: 100%;
+                            text: AppState.status-text;
+                            overflow: elide;
+                            color: AppState.camera-connected ? Design.success : Design.danger;
+                            font-size: 12px;
+                            vertical-alignment: center;
                         }
                     }
                 }
             }
             Rectangle {
-                x: 0px; y: AppState.iris-fullscreen ? 0px : 64px; width: 100%; height: parent.height - self.y; background: Design.canvas;
+                x: 0px; y: AppState.iris-fullscreen ? 0px : 60px; width: 100%; height: parent.height - self.y; background: Design.canvas;
                 visible: !AppState.viewer-open && !AppState.library-map-open;
                 if AppState.current-tab == 0: CameraPage { width: 100%; height: 100%; }
                 if AppState.current-tab == 2: LibraryPage { width: 100%; height: 100%; }

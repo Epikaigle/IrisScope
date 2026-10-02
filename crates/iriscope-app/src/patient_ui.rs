@@ -1,4 +1,6 @@
-use crate::app_helpers::{settings_error, settings_snapshot};
+use crate::app_helpers::settings_snapshot;
+use crate::config::NOTICE_ERROR;
+use crate::playback::show_capture_notice;
 use crate::ui::{MainWindow, PatientCandidateData};
 use iriscope_core::library::{PatientRecord, search_patients};
 use iriscope_core::settings::AppSettings;
@@ -131,9 +133,10 @@ pub(super) fn run_patient_search_worker(
                 }
                 Err(error) => {
                     clear_patient_candidates(&win);
-                    settings_error(
+                    show_capture_notice(
                         &win,
-                        &format!("Recherche des dossiers impossible : {error}"),
+                        format!("Recherche des dossiers impossible : {error}"),
+                        NOTICE_ERROR,
                     );
                 }
             }

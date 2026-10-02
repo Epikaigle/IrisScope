@@ -2,10 +2,163 @@
 
 use iriscope_app::test_support::ControllerHarness;
 use iriscope_core::session::Eye;
+use iriscope_core::settings::{AppTheme, VideoQualityPreference};
 use std::path::PathBuf;
+
+fn unavailable_shutter_sound_cannot_report_an_accepted_photo_as_failed() {
+    let harness = ControllerHarness::new(PathBuf::from("/tmp/iriscope-optional-sound"))
+        .expect("Slint window");
+    harness.set_patient("Alice", "Martin", "42", Eye::Left);
+    harness.publish_frame(17);
+    harness.saturate_background_jobs();
+    harness.trigger_capture();
+    assert_eq!(harness.photo_work_count(), 1, "the photo is accepted");
+    assert_eq!(
+        harness
+            .queued_capture()
+            .expect("accepted photo")
+            .sequence_number,
+        17
+    );
+    assert!(
+        !harness.capture_notice().0,
+        "skipping the optional shutter sound cannot invite a duplicate capture"
+    );
+}
+
+fn captures_wait_for_patient_actions(harness: &ControllerHarness) {
+    harness.seed_active_stream();
+    harness.set_patient_action_pending(true);
+    harness.publish_frame(18);
+    harness.trigger_capture();
+    assert_eq!(
+        harness.photo_work_count(),
+        1,
+        "patient action blocks new physical-button photos"
+    );
+    assert_eq!(
+        harness
+            .queued_capture()
+            .expect("original photo")
+            .sequence_number,
+        17
+    );
+    let (visible, tone, message) = harness.capture_notice();
+    assert!(visible);
+    assert_eq!(tone, 0, "pending patient action is informational");
+    assert!(message.contains("Traitement du dossier patient en cours"));
+
+    harness.toggle_recording();
+    assert!(
+        harness.active_recording_generation().is_none(),
+        "patient action also blocks recording start"
+    );
+    assert!(
+        harness
+            .capture_notice()
+            .2
+            .contains("Traitement du dossier patient en cours")
+    );
+
+    harness.set_patient_action_pending(false);
+    harness.toggle_recording();
+    let generation = harness
+        .active_recording_generation()
+        .expect("recording starts after patient action");
+    harness.set_patient_action_pending(true);
+    harness.toggle_recording();
+    assert!(
+        harness.active_recording_generation().is_none(),
+        "pending patient action still permits recording stop"
+    );
+    assert!(harness.recording_is_finalizing());
+    harness.complete_recording_finalization(generation);
+    harness.set_patient_action_pending(false);
+}
+
+fn hidden_preview_stays_paused_when_unfreezing(harness: &ControllerHarness) {
+    harness.set_preview_context(0, false, false);
+    assert!(harness.preview_is_active());
+    for (viewer_open, map_open) in [(true, false), (false, true)] {
+        harness.set_preview_context(0, viewer_open, map_open);
+        assert!(!harness.preview_is_active(), "overlay suspends decoding");
+        harness.toggle_freeze();
+        harness.toggle_freeze();
+        assert!(
+            !harness.preview_is_active(),
+            "unfreezing cannot resume decoding behind an overlay"
+        );
+    }
+    harness.set_preview_context(2, false, false);
+    harness.toggle_freeze();
+    harness.toggle_freeze();
+    assert!(
+        !harness.preview_is_active(),
+        "library keeps decoding paused"
+    );
+    harness.set_preview_context(0, false, false);
+    assert!(
+        harness.preview_is_active(),
+        "returning to live camera resumes preview"
+    );
+    harness.toggle_freeze();
+    harness.set_preview_context(0, true, false);
+    harness.set_preview_context(0, false, false);
+    assert!(
+        !harness.preview_is_active(),
+        "closing a viewer cannot unfreeze a frozen camera"
+    );
+    harness.toggle_freeze();
+    assert!(harness.preview_is_active());
+}
+
+fn unchanged_settings_retry_failed_saves_without_restarting_stream(harness: &ControllerHarness) {
+    let before = harness.settings_observation();
+    harness.report_settings_save_error();
+    harness.select_theme(before.displayed_theme);
+    let retried_theme = harness.settings_observation();
+    assert_eq!(retried_theme.theme, before.theme);
+    assert_eq!(retried_theme.displayed_theme, before.displayed_theme);
+    assert_eq!(retried_theme.save_generation, before.save_generation + 1);
+    assert!(retried_theme.save_dirty);
+    assert!(!retried_theme.displayed_save_error);
+    harness.select_theme(retried_theme.displayed_theme);
+    assert_eq!(harness.settings_observation(), retried_theme);
+
+    harness.update_video_quality(1);
+    let balanced = harness.settings_observation();
+    assert_eq!(balanced.video_quality, VideoQualityPreference::Balanced);
+    assert_eq!(balanced.displayed_video_quality, 1);
+    assert_eq!(balanced.save_generation, retried_theme.save_generation + 1);
+    assert!(balanced.stream_restart_requested);
+    harness.acknowledge_stream_restart();
+    let restarted = harness.settings_observation();
+    harness.update_video_quality(1);
+    harness.update_video_quality(9);
+    assert_eq!(harness.settings_observation(), restarted);
+
+    harness.report_settings_save_error();
+    harness.update_video_quality(1);
+    let retried_quality = harness.settings_observation();
+    assert_eq!(retried_quality.video_quality, restarted.video_quality);
+    assert_eq!(retried_quality.displayed_video_quality, 1);
+    assert_eq!(
+        retried_quality.save_generation,
+        restarted.save_generation + 1
+    );
+    assert!(retried_quality.save_dirty);
+    assert!(!retried_quality.displayed_save_error);
+    assert!(
+        !retried_quality.stream_restart_requested,
+        "retrying the existing quality only saves settings"
+    );
+    harness.update_video_quality(1);
+    assert_eq!(harness.settings_observation(), retried_quality);
+}
 
 #[test]
 fn production_callbacks_reach_capture_settings_and_viewer_state() {
+    unavailable_shutter_sound_cannot_report_an_accepted_photo_as_failed();
     // CI runs this test under Xvfb on Linux. No capture directory is created,
     // because the photo and settings workers are intentionally not started.
     let capture_directory = PathBuf::from("/tmp/iriscope-controller-bindings");
@@ -27,6 +180,8 @@ fn production_callbacks_reach_capture_settings_and_viewer_state() {
     assert_eq!(queued.patient_id, Some(42));
     assert_eq!(queued.eye, Eye::Left);
     assert_eq!(queued.context_generation, 0);
+    captures_wait_for_patient_actions(&harness);
+    hidden_preview_stays_paused_when_unfreezing(&harness);
 
     let template = "{prenom}_{nom}_{oeil}_{date}";
     let before = harness.settings_observation();
@@ -36,6 +191,26 @@ fn production_callbacks_reach_capture_settings_and_viewer_state() {
     assert_eq!(after.displayed_filename_template, template);
     assert!(after.save_dirty, "settings save must be queued");
     assert_eq!(after.save_generation, before.save_generation + 1);
+
+    harness.select_theme(2);
+    let dark_theme = harness.settings_observation();
+    assert_eq!(dark_theme.theme, AppTheme::Dark);
+    assert_eq!(dark_theme.displayed_theme, 2);
+    assert_eq!(dark_theme.save_generation, after.save_generation + 1);
+    harness.select_theme(2);
+    harness.select_theme(9);
+    assert_eq!(
+        harness.settings_observation(),
+        dark_theme,
+        "reselecting a theme or using an invalid index cannot enqueue another save"
+    );
+    unchanged_settings_retry_failed_saves_without_restarting_stream(&harness);
+
+    harness.lookup_patient_by_dossier("dossier inconnu");
+    let (visible, tone, message) = harness.capture_notice();
+    assert!(visible, "patient errors must appear on the camera page");
+    assert_eq!(tone, 2, "patient lookup failure uses the error notice tone");
+    assert!(message.contains("Numéro de dossier invalide"));
 
     harness.seed_playing_viewer();
     let before = harness.viewer_observation();

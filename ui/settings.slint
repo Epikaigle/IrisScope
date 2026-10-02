@@ -1,289 +1,428 @@
 import { AppButton } from "./controls.slint";
 import { Design } from "./theme.slint";
-import { VerticalBox, HorizontalBox, LineEdit, ComboBox, ScrollView } from "std-widgets.slint";
+import { LineEdit, ComboBox, ScrollView } from "std-widgets.slint";
 import { AppState } from "./state.slint";
 
-component DiagnosticRow inherits VerticalBox {
+// Values remain beside labels, without stretching to match the settings form.
+component DiagnosticRow inherits HorizontalLayout {
     in property <string> label;
     in property <string> value;
     in property <bool> highlight: false;
-    min-height: 50px;
     vertical-stretch: 0;
-    spacing: 2px;
+    spacing: 12px;
     Text {
-        height: 17px;
+        width: 104px;
         vertical-stretch: 0;
         text: root.label;
         color: Design.text-muted;
-        font-size: 11px;
+        font-size: 12px;
+        wrap: word-wrap;
     }
     Text {
-        min-height: 30px;
+        min-width: 0px;
+        horizontal-stretch: 1;
         vertical-stretch: 0;
-        text: root.value;
+        text: root.value == "" ? "—" : root.value;
         color: root.highlight ? Design.success : Design.text;
-        font-size: 12px;
-        font-weight: root.highlight ? 700 : 400;
+        font-size: 13px;
+        font-weight: root.highlight ? 600 : 400;
         wrap: word-wrap;
     }
 }
 
+component SettingsField inherits VerticalLayout {
+    in property <string> label;
+    in property <string> value;
+    in property <string> placeholder;
+    in property <bool> enabled: true;
+    callback save(string);
+    vertical-stretch: 0;
+    spacing: 8px;
+    Text {
+        text: root.label;
+        color: Design.text-secondary;
+        font-size: 13px;
+        font-weight: 600;
+        vertical-stretch: 0;
+    }
+    HorizontalLayout {
+        height: 40px;
+        vertical-stretch: 0;
+        spacing: 8px;
+        field := LineEdit {
+            min-width: 0px;
+            horizontal-stretch: 1;
+            height: 40px;
+            enabled: root.enabled;
+            text: root.value;
+            accessible-label: root.label;
+            placeholder-text: root.placeholder;
+            changed has-focus => {
+                AppState.focused-text-fields = Math.max(0,
+                    AppState.focused-text-fields + (self.has-focus ? 1 : -1));
+            }
+            accepted(value) => {
+                if root.enabled && (value != root.value || AppState.settings-feedback-is-error) {
+                    root.save(value);
+                }
+            }
+        }
+        AppButton {
+            height: 40px;
+            text: "Enregistrer";
+            accessibility-label: "Enregistrer : " + root.label;
+            enabled: root.enabled && (field.text != root.value || AppState.settings-feedback-is-error);
+            clicked => { root.save(field.text); }
+        }
+    }
+}
+
 export component SettingsPage inherits Rectangle {
-    ScrollView {
-        VerticalBox {
-            padding: 20px;
-            spacing: 12px;
-            alignment: start;
+    private property <bool> stacked: root.width < 1040px;
+    private property <length> available-width: max(0px, settings-scroll.visible-width - 48px);
+    private property <length> settings-width: root.stacked ? root.available-width
+        : (root.available-width - 24px) * 0.62;
+    private property <length> diagnostics-width: root.stacked ? root.available-width
+        : (root.available-width - 24px) * 0.38;
 
-            Text {
-                text: "Paramètres et diagnostic";
-                font-family: Design.font-display;
-                font-size: 29px;
-                font-weight: 400;
-                color: Design.text;
-            }
+    function select-theme(mode: int) {
+        if AppState.settings-theme != mode || AppState.settings-feedback-is-error {
+            AppState.select-theme(mode);
+        }
+    }
 
-            Text {
-                text: "Modifiez un champ, puis utilisez Entrée ou Enregistrer.";
-                color: Design.text-muted;
-                font-size: 12px;
-            }
+    VerticalLayout {
+        spacing: 0px;
+        settings-scroll := ScrollView {
+            horizontal-scrollbar-policy: always-off;
+            VerticalLayout {
+                width: settings-scroll.visible-width;
+                padding: 24px;
+                spacing: 24px;
+                alignment: start;
 
-            if AppState.settings-feedback != "": Text {
-                text: AppState.settings-feedback;
-                color: AppState.settings-feedback-is-error ? Design.danger : Design.success;
-                font-size: 12px;
-                wrap: word-wrap;
-            }
-
-            GridLayout {
-                spacing: 16px;
-
-                // Diagnostic Technique
-                Rectangle {
-                    row: 0;
-                    col: 0;
-                    border-radius: Design.card-radius;
-                    background: Design.surface;
-                    border-width: 1px;
-                    border-color: Design.border;
-                    width: root.width < 1050px ? root.width - 40px : (root.width - 56px) / 2;
-                    height: diagnostic-content.preferred-height;
+                VerticalLayout {
+                    spacing: 8px;
                     vertical-stretch: 0;
-
-                    diagnostic-content := VerticalBox {
-                        spacing: 10px;
-                        padding: 16px;
-                        alignment: start;
-
-                        Text {
-                            text: "État de la caméra";
-                            font-size: 15px;
-                            font-weight: 700;
-                            color: Design.accent;
-                        }
-                        Text {
-                            text: AppState.status-text == "" ? "Iridoscope déconnecté" : AppState.status-text;
-                            color: AppState.camera-connected ? Design.success : Design.danger;
-                            font-size: 12px;
-                            wrap: word-wrap;
-                        }
-
-                        if !AppState.camera-connected: Text {
-                            text: "Les données du flux apparaîtront après la connexion.";
-                            color: Design.text-muted;
-                            font-size: 12px;
-                            wrap: word-wrap;
-                        }
-
-                        if AppState.camera-connected: VerticalBox {
-                            spacing: 10px;
-                            DiagnosticRow { label: "Périphérique"; value: AppState.diagnostics.device-name; }
-                            DiagnosticRow { label: "Identifiant"; value: AppState.diagnostics.device-id; }
-                            DiagnosticRow { label: "Système caméra"; value: AppState.diagnostics.backend-name; }
-                            DiagnosticRow { label: "Identité USB"; value: AppState.diagnostics.usb-info; }
-                            DiagnosticRow { label: "Format actif"; value: AppState.diagnostics.active-format; }
-                            DiagnosticRow { label: "Résolution"; value: AppState.diagnostics.active-resolution; }
-                            DiagnosticRow { label: "FPS du mode"; value: AppState.diagnostics.active-fps; }
-                            DiagnosticRow { label: "FPS mesurés"; value: AppState.is-streaming ? AppState.diagnostics.measured-fps : "—"; highlight: AppState.is-streaming; }
-                            DiagnosticRow { label: "Décodage"; value: AppState.diagnostics.decode-time-ms; }
-                            DiagnosticRow { label: "Images reçues"; value: "" + AppState.diagnostics.frame-count; }
-                            DiagnosticRow { label: "Images ignorées"; value: "" + AppState.diagnostics.dropped-frames; }
-                        }
+                    Text {
+                        text: "Paramètres";
+                        font-family: Design.font-ui;
+                        font-size: 24px;
+                        font-weight: 600;
+                        color: Design.text;
+                        vertical-stretch: 0;
+                    }
+                    Text {
+                        text: "Personnalisez les captures, l’affichage et vos images de référence.";
+                        color: Design.text-muted;
+                        font-size: 13px;
+                        wrap: word-wrap;
+                        vertical-stretch: 0;
                     }
                 }
 
-                // Paramètres Généraux
-                Rectangle {
-                    row: root.width < 1050px ? 1 : 0;
-                    col: root.width < 1050px ? 0 : 1;
-                    border-radius: Design.card-radius;
-                    background: Design.surface;
-                    border-width: 1px;
-                    border-color: Design.border;
-                    width: root.width < 1050px ? root.width - 40px : (root.width - 56px) / 2;
+                GridLayout {
+                    spacing: 24px;
+                    vertical-stretch: 0;
 
-                    VerticalBox {
-                        spacing: 12px;
-                        padding: 16px;
+                    VerticalLayout {
+                        row: 0;
+                        col: 0;
+                        width: root.settings-width;
+                        spacing: 16px;
+                        alignment: start;
+                        vertical-stretch: 0;
 
-                        Text {
-                            text: "Enregistrement et références";
-                            font-size: 15px;
-                            font-weight: 700;
-                            color: Design.accent;
-                        }
-
-                        Text { text: "Dossier des captures :"; color: Design.text-muted; }
-                        HorizontalBox {
-                            height: 44px;
+                        Rectangle {
+                            border-radius: Design.card-radius;
+                            background: Design.surface;
+                            border-width: 1px;
+                            border-color: Design.border;
+                            height: capture-content.preferred-height;
                             vertical-stretch: 0;
-                            spacing: 8px;
-                            capture-directory-field := LineEdit {
-                                min-width: 0px;
-                                height: 40px;
-                                horizontal-stretch: 1;
-                                enabled: !AppState.recording-busy;
-                                text: AppState.settings-capture-directory;
-                                changed has-focus => {
-                                    AppState.focused-text-fields = Math.max(0, AppState.focused-text-fields + (self.has-focus ? 1 : -1));
+                            capture-content := VerticalLayout {
+                                spacing: 16px;
+                                padding: 20px;
+                                alignment: start;
+                                Text {
+                                    text: "Fichiers de capture";
+                                    font-size: 16px;
+                                    font-weight: 600;
+                                    color: Design.text;
+                                    vertical-stretch: 0;
                                 }
-                                placeholder-text: "Chemin du dossier";
-                                accepted(value) => { AppState.update-capture-directory(value); }
-                            }
-                            AppButton {
-                                height: 40px;
-                                text: "Enregistrer";
-                                enabled: !AppState.recording-busy;
-                                clicked => { AppState.update-capture-directory(capture-directory-field.text); }
+                                SettingsField {
+                                    label: "Dossier des captures";
+                                    value: AppState.settings-capture-directory;
+                                    placeholder: "Chemin du dossier";
+                                    enabled: !AppState.recording-busy;
+                                    save(value) => { AppState.update-capture-directory(value); }
+                                }
+                                HorizontalLayout {
+                                    alignment: start;
+                                    vertical-stretch: 0;
+                                    AppButton {
+                                        compact: true;
+                                        text: "Ouvrir ce dossier";
+                                        clicked => { AppState.open-capture-directory(); }
+                                    }
+                                }
+                                Rectangle { height: 1px; vertical-stretch: 0; background: Design.border; }
+                                SettingsField {
+                                    label: "Modèle de nom des fichiers";
+                                    value: AppState.settings-filename-template;
+                                    placeholder: "{prenom}_{nom}_{oeil}_{date}_{heure}";
+                                    save(value) => { AppState.update-filename-template(value); }
+                                }
+                                Text {
+                                    text: "Requis : {prenom}, {nom}, {oeil}. Facultatifs : {date}, {heure}. Une capture reste possible sans nom de patient.";
+                                    color: Design.text-muted;
+                                    font-size: 12px;
+                                    wrap: word-wrap;
+                                    vertical-stretch: 0;
+                                }
+                                Text {
+                                    text: "Les captures, leurs noms et l’index local ne sont pas chiffrés. Réservez l’accès à ce dossier aux personnes autorisées.";
+                                    color: Design.text-muted;
+                                    font-size: 12px;
+                                    wrap: word-wrap;
+                                    vertical-stretch: 0;
+                                }
                             }
                         }
 
-                        Text { text: "Modèle de nommage :"; color: Design.text-muted; }
-                        HorizontalBox {
-                            height: 44px;
+                        Rectangle {
+                            border-radius: Design.card-radius;
+                            background: Design.surface;
+                            border-width: 1px;
+                            border-color: Design.border;
+                            height: display-content.preferred-height;
                             vertical-stretch: 0;
-                            spacing: 8px;
-                            filename-template-field := LineEdit {
-                                min-width: 0px;
-                                height: 40px;
-                                horizontal-stretch: 1;
-                                text: AppState.settings-filename-template;
-                                changed has-focus => {
-                                    AppState.focused-text-fields = Math.max(0, AppState.focused-text-fields + (self.has-focus ? 1 : -1));
+                            display-content := VerticalLayout {
+                                spacing: 16px;
+                                padding: 20px;
+                                alignment: start;
+                                Text {
+                                    text: "Affichage et caméra";
+                                    font-size: 16px;
+                                    font-weight: 600;
+                                    color: Design.text;
+                                    vertical-stretch: 0;
                                 }
-                                placeholder-text: "{prenom}_{nom}_{oeil}_{date}_{heure}";
-                                accepted(value) => { AppState.update-filename-template(value); }
+                                VerticalLayout {
+                                    vertical-stretch: 0;
+                                    spacing: 8px;
+                                    Text {
+                                        text: "Thème de l’interface";
+                                        color: Design.text-secondary;
+                                        font-size: 13px;
+                                        font-weight: 600;
+                                        vertical-stretch: 0;
+                                    }
+                                    HorizontalLayout {
+                                        alignment: start;
+                                        spacing: 8px;
+                                        vertical-stretch: 0;
+                                        AppButton {
+                                            text: "Système";
+                                            checkable: true;
+                                            selected: AppState.settings-theme == 0;
+                                            clicked => { root.select-theme(0); }
+                                        }
+                                        AppButton {
+                                            text: "Clair";
+                                            checkable: true;
+                                            selected: AppState.settings-theme == 1;
+                                            clicked => { root.select-theme(1); }
+                                        }
+                                        AppButton {
+                                            text: "Sombre";
+                                            checkable: true;
+                                            selected: AppState.settings-theme == 2;
+                                            clicked => { root.select-theme(2); }
+                                        }
+                                    }
+                                }
+                                VerticalLayout {
+                                    vertical-stretch: 0;
+                                    spacing: 8px;
+                                    Text {
+                                        text: "Qualité du direct et des vidéos";
+                                        color: Design.text-secondary;
+                                        font-size: 13px;
+                                        font-weight: 600;
+                                        vertical-stretch: 0;
+                                    }
+                                    ComboBox {
+                                        height: 40px;
+                                        vertical-stretch: 0;
+                                        model: ["Maximale — résolution", "Équilibrée", "Fluide — images par seconde"];
+                                        current-index: AppState.settings-video-quality;
+                                        enabled: !AppState.recording-busy;
+                                        accessible-label: "Qualité du direct et des vidéos";
+                                        selected(value) => {
+                                            AppState.update-video-quality(value == "Équilibrée" ? 1
+                                                : value == "Fluide — images par seconde" ? 2 : 0);
+                                        }
+                                    }
+                                    Text {
+                                        text: AppState.recording-busy
+                                            ? "La qualité et le dossier seront modifiables une fois la vidéo terminée."
+                                            : "Changer de qualité redémarre brièvement le flux. Le mode actif est indiqué dans le diagnostic.";
+                                        color: Design.text-muted;
+                                        font-size: 12px;
+                                        wrap: word-wrap;
+                                        vertical-stretch: 0;
+                                    }
+                                }
                             }
-                            AppButton {
-                                height: 40px;
-                                text: "Enregistrer";
-                                clicked => { AppState.update-filename-template(filename-template-field.text); }
-                            }
-                        }
-                        Text {
-                            text: "Jetons requis dans le modèle : {prenom}, {nom}, {oeil}. Facultatifs : {date}, {heure}. Les champs patient peuvent rester vides lors d'une capture.";
-                            color: Design.text-muted;
-                            font-size: 11px;
-                            wrap: word-wrap;
                         }
 
-                        Text {
-                            text: "Confidentialité : les noms de fichiers, les captures et l'index local ne sont pas chiffrés. Limitez l'accès au dossier des captures sur cet ordinateur.";
-                            color: Design.text-muted;
-                            font-size: 11px;
-                            wrap: word-wrap;
-                        }
-
-                        Text {
-                            text: "Bouton Snapshot du DE400 : détection non disponible pour le moment. Utilisez les boutons de capture ou les raccourcis clavier.";
-                            color: Design.text-muted;
-                            font-size: 11px;
-                            wrap: word-wrap;
-                        }
-
-                        Text { text: "Thème de l'interface :"; color: Design.text-muted; }
-                        AppButton {
-                            height: 40px;
-                            text: AppState.settings-theme == 1 ? "Clair"
-                                : AppState.settings-theme == 2 ? "Sombre" : "Système";
-                            clicked => { AppState.cycle-theme(); }
-                        }
-
-                        Text { text: "Qualité vidéo et fluidité du direct :"; color: Design.text-muted; }
-                        ComboBox {
-                            height: 40px;
-                            model: ["Maximale — résolution", "Équilibrée", "Fluide — images par seconde"];
-                            current-index: AppState.settings-video-quality;
-                            enabled: !AppState.recording-busy;
-                            selected(value) => {
-                                AppState.update-video-quality(value == "Équilibrée" ? 1
-                                    : value == "Fluide — images par seconde" ? 2 : 0);
-                            }
-                        }
-                        Text {
-                            text: "Changer de qualité redémarre brièvement le flux. Le mode actif figure dans État de la caméra.";
-                            color: Design.text-muted;
-                            font-size: 11px;
-                            wrap: word-wrap;
-                        }
-
-                        Text { text: "Carte d'iridologie (image) :"; color: Design.text-muted; }
-                        HorizontalBox {
-                            height: 44px;
+                        Rectangle {
+                            border-radius: Design.card-radius;
+                            background: Design.surface;
+                            border-width: 1px;
+                            border-color: Design.border;
+                            height: reference-content.preferred-height;
                             vertical-stretch: 0;
-                            spacing: 8px;
-                            map-path-field := LineEdit {
-                                min-width: 0px;
-                                height: 40px;
-                                horizontal-stretch: 1;
-                                text: AppState.settings-iridology-map-path;
-                                changed has-focus => {
-                                    AppState.focused-text-fields = Math.max(0, AppState.focused-text-fields + (self.has-focus ? 1 : -1));
+                            reference-content := VerticalLayout {
+                                spacing: 16px;
+                                padding: 20px;
+                                alignment: start;
+                                Text {
+                                    text: "Images de référence";
+                                    font-size: 16px;
+                                    font-weight: 600;
+                                    color: Design.text;
+                                    vertical-stretch: 0;
                                 }
-                                placeholder-text: "Chemin vers une image JPEG/PNG";
-                                accepted(value) => { AppState.update-iridology-map-path(value); }
-                            }
-                            AppButton {
-                                height: 40px;
-                                text: "Enregistrer";
-                                clicked => { AppState.update-iridology-map-path(map-path-field.text); }
-                            }
-                        }
-
-                        Text { text: "Planche de signes et symboles :"; color: Design.text-muted; }
-                        HorizontalBox {
-                            height: 44px;
-                            vertical-stretch: 0;
-                            spacing: 8px;
-                            symbols-path-field := LineEdit {
-                                min-width: 0px;
-                                height: 40px;
-                                horizontal-stretch: 1;
-                                text: AppState.settings-iridology-symbols-path;
-                                changed has-focus => {
-                                    AppState.focused-text-fields = Math.max(0, AppState.focused-text-fields + (self.has-focus ? 1 : -1));
+                                Text {
+                                    text: "Indiquez le chemin d’une image JPEG ou PNG. Vos références seront accessibles depuis la bibliothèque.";
+                                    color: Design.text-muted;
+                                    font-size: 12px;
+                                    wrap: word-wrap;
+                                    vertical-stretch: 0;
                                 }
-                                placeholder-text: "Chemin vers une image JPEG/PNG";
-                                accepted(value) => { AppState.update-iridology-symbols-path(value); }
-                            }
-                            AppButton {
-                                height: 40px;
-                                text: "Enregistrer";
-                                clicked => { AppState.update-iridology-symbols-path(symbols-path-field.text); }
-                            }
-                        }
-
-                        HorizontalBox {
-                            height: 44px;
-                            alignment: start;
-                            AppButton {
-                                height: 40px;
-                                text: "Ouvrir le dossier des captures";
-                                clicked => { AppState.open-capture-directory(); }
+                                SettingsField {
+                                    label: "Carte d’iridologie";
+                                    value: AppState.settings-iridology-map-path;
+                                    placeholder: "Chemin vers une image JPEG ou PNG";
+                                    save(value) => { AppState.update-iridology-map-path(value); }
+                                }
+                                SettingsField {
+                                    label: "Planche de signes et symboles";
+                                    value: AppState.settings-iridology-symbols-path;
+                                    placeholder: "Chemin vers une image JPEG ou PNG";
+                                    save(value) => { AppState.update-iridology-symbols-path(value); }
+                                }
+                                Text {
+                                    text: "Laissez un chemin vide pour retirer l’image de référence.";
+                                    color: Design.text-muted;
+                                    font-size: 12px;
+                                    wrap: word-wrap;
+                                    vertical-stretch: 0;
+                                }
                             }
                         }
                     }
+
+                    Rectangle {
+                        row: root.stacked ? 1 : 0;
+                        col: root.stacked ? 0 : 1;
+                        width: root.diagnostics-width;
+                        border-radius: Design.card-radius;
+                        background: Design.surface;
+                        border-width: 1px;
+                        border-color: Design.border;
+                        height: diagnostic-content.preferred-height;
+                        vertical-stretch: 0;
+
+                        diagnostic-content := VerticalLayout {
+                            spacing: 16px;
+                            padding: 20px;
+                            alignment: start;
+                            Text {
+                                text: "Diagnostic caméra";
+                                font-size: 16px;
+                                font-weight: 600;
+                                color: Design.text;
+                                vertical-stretch: 0;
+                            }
+                            Text {
+                                text: AppState.status-text == "" ? "Iridoscope déconnecté" : AppState.status-text;
+                                color: AppState.camera-connected ? Design.success : Design.text-muted;
+                                font-size: 13px;
+                                font-weight: 600;
+                                wrap: word-wrap;
+                                vertical-stretch: 0;
+                            }
+
+                            if !AppState.camera-connected: Text {
+                                text: "Branchez l’iridoscope pour consulter les informations du périphérique et du flux.";
+                                color: Design.text-muted;
+                                font-size: 12px;
+                                wrap: word-wrap;
+                                vertical-stretch: 0;
+                            }
+
+                            if AppState.camera-connected: VerticalLayout {
+                                spacing: 12px;
+                                alignment: start;
+                                vertical-stretch: 0;
+                                DiagnosticRow { label: "Périphérique"; value: AppState.diagnostics.device-name; }
+                                DiagnosticRow { label: "Identifiant"; value: AppState.diagnostics.device-id; }
+                                DiagnosticRow { label: "Pilote"; value: AppState.diagnostics.backend-name; }
+                                DiagnosticRow { label: "Identité USB"; value: AppState.diagnostics.usb-info; }
+                                Rectangle { height: 1px; vertical-stretch: 0; background: Design.border; }
+                                DiagnosticRow { label: "Format"; value: AppState.diagnostics.active-format; }
+                                DiagnosticRow { label: "Résolution"; value: AppState.diagnostics.active-resolution; }
+                                DiagnosticRow { label: "Cadence du mode"; value: AppState.diagnostics.active-fps; }
+                                DiagnosticRow {
+                                    label: "Cadence mesurée";
+                                    value: AppState.is-streaming ? AppState.diagnostics.measured-fps : "Flux en pause";
+                                    highlight: AppState.is-streaming;
+                                }
+                                DiagnosticRow { label: "Décodage"; value: AppState.diagnostics.decode-time-ms; }
+                                DiagnosticRow { label: "Images reçues"; value: "" + AppState.diagnostics.frame-count; }
+                                DiagnosticRow { label: "Images ignorées"; value: "" + AppState.diagnostics.dropped-frames; }
+                            }
+
+                            Rectangle { height: 1px; vertical-stretch: 0; background: Design.border; }
+                            Text {
+                                text: "Bouton Snapshot du DE400 : détection indisponible pour le moment. Utilisez la capture dans l’application ou les raccourcis clavier.";
+                                color: Design.text-muted;
+                                font-size: 12px;
+                                wrap: word-wrap;
+                                vertical-stretch: 0;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Keep save results visible when the form is scrolled to the references.
+        if AppState.settings-feedback != "": Rectangle {
+            height: feedback-content.preferred-height;
+            vertical-stretch: 0;
+            background: AppState.settings-feedback-is-error ? Design.error-surface : Design.success-surface;
+            border-width: 1px;
+            border-color: AppState.settings-feedback-is-error ? Design.danger : Design.border;
+            accessible-role: groupbox;
+            accessible-label: AppState.settings-feedback;
+            feedback-content := HorizontalLayout {
+                padding-top: 12px;
+                padding-bottom: 12px;
+                padding-left: 24px;
+                padding-right: 24px;
+                Text {
+                    min-width: 0px;
+                    horizontal-stretch: 1;
+                    text: AppState.settings-feedback;
+                    color: AppState.settings-feedback-is-error ? Design.danger : Design.success;
+                    font-size: 13px;
+                    wrap: word-wrap;
+                    vertical-stretch: 0;
                 }
             }
         }

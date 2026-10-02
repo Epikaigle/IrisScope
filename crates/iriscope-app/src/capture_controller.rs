@@ -53,6 +53,14 @@ pub(super) fn install(main_window: &MainWindow, runtime: &AppRuntime) {
                 show_capture_notice(&win, "Finalisation de la vidéo en cours...", NOTICE_INFO);
                 return;
             }
+            if win.get_patient_action_pending() {
+                show_capture_notice(
+                    &win,
+                    "Traitement du dossier patient en cours : patientez avant la capture.",
+                    NOTICE_INFO,
+                );
+                return;
+            }
             let frame = if win.get_is_frozen() {
                 frozen_frame_cap
                     .lock()
@@ -111,7 +119,9 @@ pub(super) fn install(main_window: &MainWindow, runtime: &AppRuntime) {
                     }
                 }
             });
-            if !background_1.submit(|| {
+            // The photo is already queued. A skipped optional shutter sound
+            // must not report a capture failure or invite a duplicate photo.
+            let _ = background_1.submit(|| {
                 let sound_path = "/usr/share/sounds/freedesktop/stereo/camera-shutter.oga";
                 if std::path::Path::new(sound_path).exists() {
                     let _ = std::process::Command::new("paplay")
@@ -123,13 +133,7 @@ pub(super) fn install(main_window: &MainWindow, runtime: &AppRuntime) {
                                 .status()
                         });
                 }
-            }) {
-                crate::playback::show_capture_notice(
-                    &win,
-                    "Traitement disque en cours : réessayez dans un instant.",
-                    crate::config::NOTICE_ERROR,
-                );
-            }
+            });
         });
 
     let closing_recording = Arc::clone(&runtime.closing);
@@ -180,6 +184,14 @@ pub(super) fn install(main_window: &MainWindow, runtime: &AppRuntime) {
                 );
             } else {
                 // Start recording
+                if win.get_patient_action_pending() {
+                    show_capture_notice(
+                        &win,
+                        "Traitement du dossier patient en cours : patientez avant la capture.",
+                        NOTICE_INFO,
+                    );
+                    return;
+                }
                 if recovery_pending_rec.load(Ordering::Acquire) {
                     show_capture_notice(
                         &win,
@@ -215,7 +227,7 @@ pub(super) fn install(main_window: &MainWindow, runtime: &AppRuntime) {
                 let Some(current_frame) = latest_frame_rec.snapshot() else {
                     show_capture_notice(
                         &win,
-                        "Erreur vidéo : aucune frame caméra disponible",
+                        "Enregistrement impossible : aucune image caméra disponible.",
                         NOTICE_ERROR,
                     );
                     return;

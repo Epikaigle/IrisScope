@@ -1,24 +1,23 @@
 import { AppButton } from "./controls.slint";
-import { HorizontalBox } from "std-widgets.slint";
 import { AppState } from "./state.slint";
 import { Design } from "./theme.slint";
 
 export component CaptureNotice inherits Rectangle {
     Rectangle {
         x: (parent.width - self.width) / 2;
-        y: 64px;
-        width: root.width < 1120px ? 460px : 520px;
-        height: 58px;
+        y: AppState.iris-fullscreen ? 16px : 72px;
+        width: min(max(0px, root.width - 32px), 600px);
+        height: max(56px, notice-content.preferred-height);
         border-radius: Design.card-radius;
         background: AppState.capture-notice-tone == 2 ? Design.error-surface : AppState.capture-notice-tone == 1 ? Design.success-surface : Design.info-surface;
         border-width: 1px;
         border-color: AppState.capture-notice-tone == 2 ? Design.danger : AppState.capture-notice-tone == 1 ? Design.success : Design.accent;
 
-        HorizontalBox {
-            padding-left: 14px;
-            padding-right: 14px;
-            spacing: 10px;
+        notice-content := HorizontalLayout {
+            padding: 12px;
+            spacing: 12px;
             Text {
+                min-width: 0px;
                 horizontal-stretch: 1;
                 text: AppState.last-capture-message;
                 color: Design.text;
@@ -26,11 +25,22 @@ export component CaptureNotice inherits Rectangle {
                 font-weight: 600;
                 vertical-alignment: center;
                 wrap: word-wrap;
+                vertical-stretch: 0;
             }
             if AppState.has-last-capture && AppState.capture-notice-tone == 1: AppButton {
-                height: 40px;
+                height: 32px;
+                compact: true;
                 text: "Voir";
+                accessibility-label: "Voir la dernière capture";
                 clicked => { AppState.open-capture-file(AppState.last-capture-path, AppState.last-capture-file-version); }
+            }
+            AppButton {
+                height: 32px;
+                compact: true;
+                quiet: true;
+                text: "×";
+                accessibility-label: "Fermer le message";
+                clicked => { AppState.show-last-capture = false; }
             }
         }
     }

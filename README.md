@@ -76,11 +76,11 @@ La saisie reste volontairement minimale :
 
 Une capture anonyme reste possible sans prénom ni nom. Dès qu'un des deux champs est renseigné, les deux doivent l'être pour choisir un dossier. Aucun autre renseignement personnel n'est demandé.
 
-Pendant la saisie, IrisScope propose les dossiers dont les noms correspondent. L'utilisateur choisit **Utiliser** pour retrouver une personne déjà enregistrée ou **Créer une autre personne** pour un homonyme. Deux dossiers peuvent donc porter exactement les mêmes prénom et nom : chacun reçoit un numéro stable, par exemple `D-000042`. La date de dernière capture apparaît dans les résultats lorsqu'elle est disponible. L'application ne choisit et ne fusionne jamais deux homonymes automatiquement. Le numéro du dossier sélectionné reste visible pendant la session et les nouvelles captures lui sont associées ; il suffit de choisir une fois le dossier pour une série de prises de vue.
+Pendant la saisie, IrisScope propose les dossiers dont les noms correspondent. L'utilisateur choisit **Choisir** pour retrouver une personne déjà enregistrée ou **Créer une autre personne** pour un homonyme. Deux dossiers peuvent donc porter exactement les mêmes prénom et nom : chacun reçoit un numéro stable, par exemple `D-000042`. La date de dernière capture apparaît dans les résultats lorsqu'elle est disponible. L'application ne choisit et ne fusionne jamais deux homonymes automatiquement. Le numéro du dossier sélectionné reste visible pendant la session et les nouvelles captures lui sont associées ; il suffit de choisir une fois le dossier pour une série de prises de vue.
 
-Pour revoir un patient, saisir son prénom et son nom puis sélectionner le bon numéro, ou saisir directement son numéro dans le champ « Retrouver par n° de dossier ». Cette recherche directe reste disponible même s'il existe de nombreux homonymes. En cas de doute, consulter ses captures dans la bibliothèque avant d'enregistrer de nouvelles images. Le numéro de dossier est l'identifiant fiable : les noms servent à la recherche. Les captures anciennes qui n'ont pas de numéro restent sans dossier jusqu'à une attribution explicite.
+Pour revoir un patient, saisir son prénom et son nom puis sélectionner le bon numéro, ou saisir directement son numéro dans le champ « Numéro de dossier ». Cette recherche directe reste disponible même s'il existe de nombreux homonymes. En cas de doute, consulter ses captures dans la bibliothèque avant d'enregistrer de nouvelles images. Le numéro de dossier est l'identifiant fiable : les noms servent à la recherche. Les captures anciennes qui n'ont pas de numéro restent sans dossier jusqu'à une attribution explicite.
 
-Le dossier et l'œil restent actifs jusqu'à ce que l'utilisateur les change afin de pouvoir réaliser plusieurs captures successives rapidement. Utiliser **Terminer** avant de commencer avec une autre personne.
+Le dossier et l'œil restent actifs jusqu'à ce que l'utilisateur les change afin de pouvoir réaliser plusieurs captures successives rapidement. Utiliser **Terminer session** avant de commencer avec une autre personne.
 
 Les fichiers sont automatiquement nommés avec, lorsqu'ils sont renseignés :
 
@@ -98,7 +98,7 @@ La bibliothèque propose actuellement :
 - photos et vidéos réunies au même endroit ;
 - miniatures pour les photos et pour les vidéos AVI à partir de leur première image ;
 - affichage au choix en grille ou en liste, avec sélection puis ouverture dans la visionneuse ;
-- filtres Tous / Photos / Vidéos / Dossier sélectionné ;
+- filtres Tous / Photos / Vidéos / Dossier actif ;
 - ouverture initiale sur toutes les captures, puis conservation du filtre et de la page entre les onglets ;
 - masquage du nom dans le titre des captures appartenant à d'autres personnes ; les noms de fichiers et les miniatures restent visibles dans le dossier de stockage ;
 - index local caché de métadonnées et de numéros de dossier, indépendant du modèle de nom de fichier ;
@@ -158,11 +158,11 @@ IrisScope propose un accès rapide à deux images choisies par l'utilisateur :
 - planche de signes / symboles ;
 - zoom et déplacement dans les images.
 
-Aucune image de référence n'est livrée avec le logiciel : la recherche n'a pas trouvé de paire cartographie/symboles offrant à la fois une qualité adaptée et une autorisation explicite de redistribution. Chacun peut choisir dans **Réglages** des images qu'il est autorisé à utiliser. Ces éléments sont uniquement des aides visuelles de consultation.
+Aucune image de référence n'est livrée avec le logiciel : la recherche n'a pas trouvé de paire cartographie/symboles offrant à la fois une qualité adaptée et une autorisation explicite de redistribution. Chacun peut choisir dans **Paramètres** des images qu'il est autorisé à utiliser. Ces éléments sont uniquement des aides visuelles de consultation.
 
 ### Réglages généraux
 
-La page **Réglages** permet notamment de consulter ou modifier :
+La page **Paramètres** permet notamment de consulter ou modifier :
 
 - état de connexion et diagnostic du DE400 ;
 - dossier d'enregistrement ;
@@ -182,7 +182,7 @@ L'application comporte trois espaces principaux :
 2. **Bibliothèque**
 3. **Paramètres et diagnostic**
 
-Le panneau patient est à gauche de l'image et peut être masqué pour agrandir l'aperçu. Les réglages d'image s'ouvrent au-dessus du direct et la carte d'iridologie s'ouvre depuis la bibliothèque.
+Le panneau patient est à gauche de l'image et peut être masqué pour agrandir l'aperçu. Le formulaire défile séparément et le bouton de capture reste accessible en bas. Les outils d'image sont regroupés sous le direct, sur une ou deux lignes selon la largeur ; **Réglages** ouvre les contrôles de la caméra. Les images de référence s'ouvrent depuis **Références** dans la bibliothèque. Les paramètres et leur diagnostic s'empilent dans les fenêtres étroites. La taille minimale est de 800 × 600 pixels.
 
 ### Raccourcis clavier
 
@@ -196,9 +196,11 @@ Le panneau patient est à gauche de l'image et peut être masqué pour agrandir 
 | `Ctrl+P` | Prendre une photo depuis l'onglet Caméra |
 | `Ctrl+R` | Démarrer ou arrêter l'enregistrement vidéo depuis l'onglet Caméra |
 | `Ctrl+F` | Figer ou reprendre l'aperçu caméra |
-| `Échap` | Fermer la visionneuse, la carte ou les réglages d'image |
+| `Échap` | Fermer la visionneuse, la carte, les réglages d'image ou quitter le plein écran |
 
-Les raccourcis de capture exigent un flux actif et un œil sélectionné. Les captures sans nom sont autorisées et reçoivent un nom de fichier commençant par `Iris`. Les raccourcis sont désactivés pendant la saisie dans un champ de texte et lorsque la visionneuse est ouverte. La navigation au clavier avec `Tab` reste disponible pour les contrôles.
+Les raccourcis numériques acceptent aussi `Ctrl+Maj+1` à `Ctrl+Maj+5`, notamment sur les claviers AZERTY. Les raccourcis de capture exigent un flux actif et un œil sélectionné. Les captures sans nom sont autorisées et reçoivent un nom de fichier commençant par `Iris`. Les raccourcis sont désactivés pendant la saisie dans un champ de texte et lorsque la visionneuse ou les références sont ouvertes. Une opération patient bloque une nouvelle capture, tout en permettant d'arrêter une vidéo en cours.
+
+`Tab` parcourt les contrôles avec un focus visible. `Espace` ou `Entrée` sélectionne une capture de la bibliothèque. Après un clic sur une image agrandie, les flèches déplacent la vue ; **Ajuster** recentre l'image à 100 %.
 
 IrisScope n'a pas vocation à devenir un logiciel de cabinet médical complet. Le projet évite volontairement les fonctions qui compliqueraient inutilement l'usage : comptes utilisateurs, cloud obligatoire, agenda, facturation, dossiers médicaux complexes, diagnostic automatique ou IA médicale.
 

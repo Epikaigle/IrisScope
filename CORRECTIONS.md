@@ -1,6 +1,6 @@
 # Suivi des corrections et de la structure
 
-Suivi du travail des 30 septembre et 1er octobre 2026. Les modifications sont dans le répertoire de travail ; ce document distingue les corrections de code et leur validation sur du matériel réel.
+Suivi du travail des 30 septembre, 1er et 2 octobre 2026. Ce document distingue les corrections de code et leur validation sur du matériel réel.
 
 | # | Sujet | Correction et limite |
 |---|---|---|
@@ -101,6 +101,63 @@ Le budget commun de cinq secondes s'applique ensuite aux autres workers. Les
 opérations OS bloquantes, la reprise d'un journal et les commits atomiques ne
 sont pas interrompus au milieu de leur protocole. Tous les builds locaux sont
 séquentiels, avec un seul job Cargo.
+
+## Refonte de l'interface du 2 octobre 2026
+
+### Résultat de la revue visuelle
+
+Les écrans Caméra, Bibliothèque, Paramètres et leurs overlays utilisent une
+hiérarchie commune : une action principale de capture, des sélections explicites
+et des outils secondaires plus discrets. L'image reste le centre de l'écran.
+Les panneaux correspondent à des fonctions identifiées, sans cartes décoratives
+ni effets de verre. Aucun chevauchement bloquant n'a été trouvé dans la revue
+finale à 800 × 600 et 1360 × 860 sous Linux.
+
+La refonte conserve les thèmes clair, sombre et système. Les overlays disposent
+de leurs propres couleurs lisibles, indépendamment du thème choisi. Les tailles
+et espacements communs sont regroupés dans `ui/theme.slint`.
+
+### Défauts identifiés et corrigés
+
+| Sévérité | Catégorie et emplacement | Effet et correction |
+|---|---|---|
+| Élevée | Clavier — `ui/controls.slint` | Une touche maintenue pouvait répéter une activation. Les boutons déclenchent une seule action et annulent l'appui lors de la perte du focus. |
+| Élevée | Capture — panneau patient et contrôleurs | Une capture pouvait démarrer pendant une ouverture de dossier. L'interface et les callbacks bloquent le démarrage, en conservant l'arrêt d'une vidéo déjà en cours. |
+| Moyenne | Disposition — `ui/camera-preview.slint` | Le centrage implicite de l'image produisait une bande vide et un recouvrement par les outils. L'image est ancrée en haut et réserve la hauteur de la barre permanente. |
+| Moyenne | Thème — overlays et composants communs | Du texte dépendant du thème clair devenait sombre sur les fonds noirs. Les couleurs des overlays sont partagées et indépendantes du thème. |
+| Moyenne | Focus — `ui/main.slint` | Fermer un panneau pouvait laisser les raccourcis sans focus. Celui-ci revient au scope principal après fermeture. |
+| Moyenne | Zoom — aperçu, visionneuse et références | Un déplacement pouvait sortir du cadre après redimensionnement. Le pan est borné et recalculé ; les flèches déplacent l'image agrandie au clavier. |
+| Moyenne | Sauvegarde — paramètres et contrôleur | Resélectionner une valeur après une erreur disque ne relançait pas toujours la sauvegarde. Le même dossier, thème ou niveau de qualité peut être réessayé ; une qualité inchangée ne redémarre pas le flux. |
+| Moyenne | Capture — `capture_controller.rs` | Une file pleine pour le son facultatif pouvait annoncer l'échec d'une photo déjà acceptée. L'absence de son ne transforme plus cette capture en échec. |
+| Moyenne | Clavier — `ui/library.slint` | Les cartes n'étaient sélectionnables qu'à la souris. Elles ont un libellé accessible, un focus visible et une activation par Espace ou Entrée. |
+| Moyenne | Rattachement — `ui/library.slint` | La confirmation n'était liée qu'au patient. Elle suit maintenant le patient, le chemin et la version de la capture, et se ferme si la sélection change. |
+| Moyenne | Retours — `ui/settings.slint` | Les messages pouvaient disparaître pendant le défilement. Ils restent hors du formulaire et reviennent à la ligne. |
+| Moyenne | Images — `ui/library.slint` | Le recadrage des miniatures pouvait couper le bord de l'iris. L'image complète est conservée avec `contain`. |
+| Moyenne | AZERTY — `ui/main.slint` | Les raccourcis numériques refusaient Maj, nécessaire pour produire les chiffres. Ctrl+Maj+1 à 5 est accepté avec les mêmes gardes de saisie et d'overlay. |
+| Faible | Hiérarchie — navigation, bibliothèque et paramètres | Les boutons de sélection utilisaient le même traitement que l'action principale. Les états sélectionnés sont distincts et les actions secondaires sont plus discrètes. |
+| Faible | Alignement — liste de bibliothèque | Miniatures, badges et boutons avaient des alignements verticaux différents. Ils sont centrés dans les lignes de 92 pixels. |
+
+Les points conservés sont la capture toujours accessible en bas du panneau
+patient, les formulaires et réglages défilants, les noms longs tronqués sans
+élargir la fenêtre, les états vides avec une action de récupération, et la pause
+du décodage du direct lorsqu'une autre page ou un overlay le masque.
+
+### Validation finale
+
+- `xvfb-run -a cargo test --workspace --locked --offline -j1` : **176 tests réussis**, aucun échec ; les deux essais matériels sont séparés.
+- Les tests de l'interface couvrent les vrais clics, l'appui clavier maintenu, la perte de focus, les pas natifs des contrôles caméra, les raccourcis AZERTY, les gardes patient, le zoom après redimensionnement et la sélection clavier des cartes. Les tests des callbacks vérifient la reprise du décodage, les sauvegardes réessayées et une capture acceptée malgré la saturation de la file du son.
+- Clippy strict sur tous les targets, avec `--locked --offline -j1 -- -D warnings` : réussi en natif Linux et sur `x86_64-pc-windows-msvc`, `x86_64-apple-darwin`, `aarch64-apple-darwin`.
+- Les deux essais matériels DE400 passent à nouveau : modes et contrôles lisibles ; séquence 1 vers 18 après 1,044 seconde pour le test de faible latence.
+- `cargo fmt --all --check` et `git diff --check` : réussis. Le binaire Linux optimisé est construit avec `cargo build --release -p iriscope-app --locked --offline -j1` ; son diagnostic ouvre le DE400 en MJPEG 1280 × 1024 et décode trois images avant fermeture du flux. L'archive Linux est reconstruite avec `scripts/package-release.py`.
+- Essais de l'application avec le DE400 sous Linux : direct, nouvelles prises photo et vidéo, finalisation et présence dans l'index ; création d'un dossier fictif et photo associée à son numéro stable.
+- Sauvegarde réellement empêchée dans le profil de test, puis stockage restauré : le bouton du dossier inchangé relance l'écriture et conserve le nouveau thème. Le profil utilisateur n'est pas utilisé pour cet essai.
+- Revue visuelle des pages et overlays à 800 × 600 et 1360 × 860, en thèmes clair et sombre ; grille/liste, lecteur vidéo, zoom, timeline, référence chargée et déplacement à la souris et au clavier. Les imports utilisent des images de test, sans ajouter de planche tierce à la distribution.
+
+Les essais natifs de caméra Windows/macOS, le bouton physique et le matériel
+multi-plane restent les validations prioritaires sur les systèmes et appareils
+correspondants. La compilation croisée vérifie les API et les tests compilés,
+sans les exécuter sur ces systèmes. La revue Linux ne constitue pas un audit
+complet avec lecteur d'écran ou facteur d'échelle élevé.
 
 ## Repères dans le code
 

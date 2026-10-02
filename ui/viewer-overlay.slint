@@ -1,5 +1,4 @@
 import { AppButton, AppSlider } from "./controls.slint";
-import { VerticalBox, HorizontalBox } from "std-widgets.slint";
 import { AppState } from "./state.slint";
 import { Design } from "./theme.slint";
 
@@ -8,182 +7,216 @@ export component ViewerOverlay inherits Rectangle {
     accessible-label: "Visionneuse de capture";
     forward-focus: viewer-close-button;
     init => { viewer-close-button.focus(); }
-    Rectangle {
-        x: 0px;
-        y: 0px;
-        width: 100%;
-        height: 100%;
-        background: Design.overlay-surface;
+    private property <float> zoom-factor: AppState.viewer-zoom == 200 ? 2 : AppState.viewer-zoom == 150 ? 1.5 : 1;
+    private property <length> pan-limit-x: max(0px, viewer-frame.width * (root.zoom-factor - 1) / 2);
+    private property <length> pan-limit-y: max(0px, viewer-frame.height * (root.zoom-factor - 1) / 2);
+    changed pan-limit-x => { AppState.viewer-pan-x = clamp(AppState.viewer-pan-x, -root.pan-limit-x, root.pan-limit-x); }
+    changed pan-limit-y => { AppState.viewer-pan-y = clamp(AppState.viewer-pan-y, -root.pan-limit-y, root.pan-limit-y); }
+    background: Design.overlay-surface;
 
-        TouchArea {
-            width: 100%;
-            height: 100%;
-            clicked => {}
+    // Consume backdrop clicks while keeping controls and pan interactions independent.
+    TouchArea { clicked => {} }
 
-            VerticalBox {
-                padding: 24px;
-                spacing: 12px;
+    VerticalLayout {
+        padding: root.width < 900px ? 16px : 24px;
+        spacing: 12px;
 
-                HorizontalBox {
-                    height: 44px;
-                    vertical-stretch: 0;
-                    alignment: space-between;
+        HorizontalLayout {
+            height: 48px;
+            vertical-stretch: 0;
+            spacing: 24px;
+            Text {
+                min-width: 0px;
+                horizontal-stretch: 1;
+                text: AppState.viewer-loading ? "Ouverture de la capture" : AppState.viewer-is-video ? "Vidéo de l'iris" : "Photo de l'iris";
+                color: Design.overlay-text;
+                font-family: Design.font-ui;
+                font-size: 24px;
+                font-weight: 600;
+                overflow: elide;
+                vertical-alignment: center;
+            }
+            HorizontalLayout {
+                height: 32px;
+                vertical-stretch: 0;
+                spacing: 4px;
+                AppButton {
+                    compact: true;
+                    overlay: true;
+                    text: "Ajuster";
+                    accessibility-label: "Afficher la capture entière";
+                    checkable: true;
+                    selected: AppState.viewer-zoom == 100;
+                    enabled: !AppState.viewer-loading;
+                    clicked => { AppState.viewer-zoom = 100; AppState.viewer-pan-x = 0px; AppState.viewer-pan-y = 0px; }
+                }
+                AppButton {
+                    compact: true;
+                    overlay: true;
+                    text: "150 %";
+                    accessibility-label: "Agrandir à 150 pour cent";
+                    checkable: true;
+                    selected: AppState.viewer-zoom == 150;
+                    enabled: !AppState.viewer-loading;
+                    clicked => { AppState.viewer-zoom = 150; AppState.viewer-pan-x = 0px; AppState.viewer-pan-y = 0px; }
+                }
+                AppButton {
+                    compact: true;
+                    overlay: true;
+                    text: "200 %";
+                    accessibility-label: "Agrandir à 200 pour cent";
+                    checkable: true;
+                    selected: AppState.viewer-zoom == 200;
+                    enabled: !AppState.viewer-loading;
+                    clicked => { AppState.viewer-zoom = 200; AppState.viewer-pan-x = 0px; AppState.viewer-pan-y = 0px; }
+                }
+            }
+            viewer-close-button := AppButton {
+                compact: true;
+                overlay: true;
+                text: "Fermer";
+                accessibility-label: "Fermer la visionneuse, touche Échap";
+                clicked => { AppState.dismiss-viewer(); }
+            }
+        }
 
-                    Text {
-                        text: AppState.viewer-loading ? "Ouverture de la capture" : AppState.viewer-is-video ? "Vidéo de l'iris" : "Photo de l'iris";
-                        color: Design.overlay-text;
-                        font-family: Design.font-display;
-                        font-size: 26px;
-                        font-weight: 400;
-                    }
+        viewer-frame := Rectangle {
+            min-height: 0px;
+            vertical-stretch: 1;
+            clip: true;
+            background: Design.preview;
+            border-radius: Design.card-radius;
+            border-width: 1px;
+            border-color: Design.overlay-border;
+            forward-focus: pan-focus;
+            accessible-role: groupbox;
+            accessible-label: AppState.viewer-is-video ? "Aperçu vidéo de l’iris" : "Aperçu photo de l’iris";
+            accessible-description: AppState.viewer-zoom > 100 ? "Utilisez les flèches ou faites glisser l’image pour parcourir la capture agrandie." : "La capture entière est affichée. Agrandissez pour examiner les détails.";
 
-                    HorizontalBox {
-                        spacing: 6px;
+            if !AppState.viewer-loading: Image {
+                source: AppState.viewer-image;
+                x: (parent.width - self.width) / 2 + AppState.viewer-pan-x;
+                y: (parent.height - self.height) / 2 + AppState.viewer-pan-y;
+                width: parent.width * root.zoom-factor;
+                height: parent.height * root.zoom-factor;
+                image-fit: contain;
+            }
 
-                        AppButton {
-                            height: 40px;
-                            text: "Ajuster";
-                            primary: AppState.viewer-zoom == 100;
-                            selected: AppState.viewer-zoom == 100;
-                            enabled: !AppState.viewer-loading;
-                            clicked => {
-                                AppState.viewer-zoom = 100;
-                                AppState.viewer-pan-x = 0px;
-                                AppState.viewer-pan-y = 0px;
-                            }
-                        }
-                        AppButton {
-                            height: 40px;
-                            text: "150%";
-                            primary: AppState.viewer-zoom == 150;
-                            selected: AppState.viewer-zoom == 150;
-                            enabled: !AppState.viewer-loading;
-                            clicked => {
-                                AppState.viewer-zoom = 150;
-                                AppState.viewer-pan-x = 0px;
-                                AppState.viewer-pan-y = 0px;
-                            }
-                        }
-                        AppButton {
-                            height: 40px;
-                            text: "200%";
-                            primary: AppState.viewer-zoom == 200;
-                            selected: AppState.viewer-zoom == 200;
-                            enabled: !AppState.viewer-loading;
-                            clicked => {
-                                AppState.viewer-zoom = 200;
-                                AppState.viewer-pan-x = 0px;
-                                AppState.viewer-pan-y = 0px;
-                            }
-                        }
-                        if AppState.viewer-is-video && !AppState.viewer-loading: AppButton {
-                            height: 40px;
-                            text: AppState.viewer-video-playing ? "Pause" : "Lecture";
-                            clicked => { AppState.toggle-viewer-video(); }
-                        }
-
-                        viewer-close-button := AppButton {
-                            height: 40px;
-                            text: "Fermer";
-                            clicked => { AppState.dismiss-viewer(); }
-                        }
+            viewer-pan := TouchArea {
+                enabled: !AppState.viewer-loading && AppState.viewer-zoom > 100;
+                private property <length> pan-start-x;
+                private property <length> pan-start-y;
+                changed pressed => {
+                    if self.pressed {
+                        pan-focus.focus();
+                        self.pan-start-x = AppState.viewer-pan-x;
+                        self.pan-start-y = AppState.viewer-pan-y;
                     }
                 }
-
-                viewer-frame := Rectangle {
-                    clip: true;
-                    background: #000000;
-                    border-radius: Design.card-radius;
-
-                    if !AppState.viewer-loading: Image {
-                        source: AppState.viewer-image;
-                        x: (parent.width - self.width) / 2 + AppState.viewer-pan-x;
-                        y: (parent.height - self.height) / 2 + AppState.viewer-pan-y;
-                        width: AppState.viewer-zoom == 200
-                            ? parent.width * 2
-                            : AppState.viewer-zoom == 150
-                                ? parent.width * 1.5
-                                : parent.width;
-                        height: AppState.viewer-zoom == 200
-                            ? parent.height * 2
-                            : AppState.viewer-zoom == 150
-                                ? parent.height * 1.5
-                                : parent.height;
-                        image-fit: contain;
-                    }
-
-                    viewer-pan := TouchArea {
-                        enabled: !AppState.viewer-loading && AppState.viewer-zoom > 100;
-                        private property <length> pan-start-x;
-                        private property <length> pan-start-y;
-
-                        changed pressed => {
-                            if self.pressed {
-                                self.pan-start-x = AppState.viewer-pan-x;
-                                self.pan-start-y = AppState.viewer-pan-y;
-                            }
-                        }
-
-                        moved => {
-                            if self.pressed {
-                                AppState.viewer-pan-x =
-                                    self.pan-start-x + self.mouse-x - self.pressed-x;
-                                AppState.viewer-pan-y =
-                                    self.pan-start-y + self.mouse-y - self.pressed-y;
-                            }
-                        }
-                    }
-
-                    if AppState.viewer-loading: Text {
-                        width: 100%;
-                        height: 100%;
-                        text: "Chargement de la capture…";
-                        color: Design.overlay-text-secondary;
-                        font-size: 16px;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
+                moved => {
+                    if self.pressed {
+                        AppState.viewer-pan-x = clamp(self.pan-start-x + self.mouse-x - self.pressed-x, -root.pan-limit-x, root.pan-limit-x);
+                        AppState.viewer-pan-y = clamp(self.pan-start-y + self.mouse-y - self.pressed-y, -root.pan-limit-y, root.pan-limit-y);
                     }
                 }
+            }
 
-                if !AppState.viewer-loading: Text {
-                    text: AppState.viewer-zoom > 100 ? "Glisser l'image pour la déplacer" : "Zoomer pour examiner les détails";
-                    color: Design.overlay-text-muted;
-                    font-size: 12px;
-                    horizontal-alignment: center;
+            pan-focus := FocusScope {
+                width: 0px;
+                enabled: !AppState.viewer-loading && AppState.viewer-zoom > 100;
+                key-pressed(event) => {
+                    if event.text == Key.LeftArrow {
+                        AppState.viewer-pan-x = clamp(AppState.viewer-pan-x + 24px, -root.pan-limit-x, root.pan-limit-x);
+                        return accept;
+                    }
+                    if event.text == Key.RightArrow {
+                        AppState.viewer-pan-x = clamp(AppState.viewer-pan-x - 24px, -root.pan-limit-x, root.pan-limit-x);
+                        return accept;
+                    }
+                    if event.text == Key.UpArrow {
+                        AppState.viewer-pan-y = clamp(AppState.viewer-pan-y + 24px, -root.pan-limit-y, root.pan-limit-y);
+                        return accept;
+                    }
+                    if event.text == Key.DownArrow {
+                        AppState.viewer-pan-y = clamp(AppState.viewer-pan-y - 24px, -root.pan-limit-y, root.pan-limit-y);
+                        return accept;
+                    }
+                    return reject;
                 }
+            }
 
-                if AppState.viewer-is-video && !AppState.viewer-loading: HorizontalBox {
-                    height: 36px;
-                    vertical-stretch: 0;
-                    spacing: 12px;
+            if AppState.viewer-loading: Text {
+                width: 100%;
+                height: 100%;
+                text: "Chargement de la capture…";
+                color: Design.overlay-text-secondary;
+                font-size: 15px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            if pan-focus.has-focus: Rectangle {
+                width: 100%;
+                height: 100%;
+                border-radius: Design.card-radius;
+                border-width: 2px;
+                border-color: Design.overlay-accent;
+                background: transparent;
+            }
+        }
 
-                    Text {
-                        width: 56px;
-                        text: AppState.viewer-video-position;
-                        color: Design.overlay-text-secondary;
-                        font-size: 12px;
-                        vertical-alignment: center;
-                    }
+        if AppState.viewer-is-video && !AppState.viewer-loading: HorizontalLayout {
+            height: 36px;
+            vertical-stretch: 0;
+            spacing: 12px;
+            AppButton {
+                compact: true;
+                overlay: true;
+                text: AppState.viewer-video-playing ? "Pause" : "Lecture";
+                accessibility-label: AppState.viewer-video-playing ? "Mettre la vidéo en pause" : "Lire la vidéo";
+                clicked => { AppState.toggle-viewer-video(); }
+            }
+            Text {
+                width: 48px;
+                text: AppState.viewer-video-position;
+                color: Design.overlay-text-secondary;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+            AppSlider {
+                overlay: true;
+                label: "Position dans la vidéo";
+                minimum: 0;
+                maximum: 1000;
+                value: AppState.viewer-video-progress;
+                released(value) => { AppState.seek-viewer-video(value); }
+            }
+            Text {
+                width: 48px;
+                text: AppState.viewer-video-duration;
+                color: Design.overlay-text-secondary;
+                font-size: 12px;
+                horizontal-alignment: right;
+                vertical-alignment: center;
+            }
+        }
 
-                    AppSlider {
-                        label: "Position dans la vidéo";
-                        minimum: 0;
-                        maximum: 1000;
-                        value: AppState.viewer-video-progress;
-                        released(value) => {
-                            AppState.seek-viewer-video(value);
-                        }
-                    }
-
-                    Text {
-                        width: 56px;
-                        text: AppState.viewer-video-duration;
-                        color: Design.overlay-text-muted;
-                        font-size: 12px;
-                        horizontal-alignment: right;
-                        vertical-alignment: center;
-                    }
-                }
+        if !AppState.viewer-loading: HorizontalLayout {
+            height: 20px;
+            vertical-stretch: 0;
+            Text {
+                min-width: 0px;
+                horizontal-stretch: 1;
+                text: AppState.viewer-zoom > 100 ? "Glisser l'image ou utiliser les flèches pour la déplacer" : "Agrandir pour examiner les détails";
+                color: Design.overlay-text-muted;
+                font-size: 12px;
+                overflow: elide;
+                vertical-alignment: center;
+            }
+            Text {
+                text: "Échap pour fermer";
+                color: Design.overlay-text-muted;
+                font-size: 12px;
+                vertical-alignment: center;
             }
         }
     }

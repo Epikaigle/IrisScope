@@ -4,6 +4,7 @@ use crate::camera_queue::run_camera_settings_save_worker;
 use crate::ui::{CameraControlUiData, MainWindow};
 use iriscope_core::capabilities::{
     CameraControlDescriptor, CameraControlId, CameraControlKind, CameraControlValue,
+    StandardCameraControl,
 };
 use iriscope_core::settings::{AppSettings, SavedCameraControlValue};
 use slint::{Model, ModelRc, VecModel};
@@ -108,12 +109,32 @@ pub(super) fn remember_camera_control_value(
 
 #[allow(clippy::cast_precision_loss)]
 pub(super) fn camera_control_ui_data(state: &CameraControlRuntimeState) -> CameraControlUiData {
+    let name = match &state.descriptor.id {
+        CameraControlId::Standard(control) => match control {
+            StandardCameraControl::Brightness => "Luminosité",
+            StandardCameraControl::Contrast => "Contraste",
+            StandardCameraControl::Saturation => "Saturation",
+            StandardCameraControl::Hue => "Teinte",
+            StandardCameraControl::WhiteBalanceAutomatic => "Balance des blancs auto",
+            StandardCameraControl::WhiteBalanceManual => "Température des blancs",
+            StandardCameraControl::Gamma => "Gamma",
+            StandardCameraControl::PowerLineFrequency => "Anti-scintillement",
+            StandardCameraControl::Sharpness => "Netteté",
+            StandardCameraControl::ExposureMode => "Mode d'exposition",
+            StandardCameraControl::Exposure => "Exposition",
+            StandardCameraControl::Focus => "Mise au point",
+            StandardCameraControl::Illumination => "Éclairage",
+            _ => &state.descriptor.name,
+        },
+        _ => &state.descriptor.name,
+    };
     let mut data = CameraControlUiData {
         key: state.key.clone().into(),
-        name: state.descriptor.name.clone().into(),
+        name: name.into(),
         kind: 0,
         minimum: 0.0,
         maximum: 1.0,
+        step: 1.0,
         value: 0.0,
         value_label: "".into(),
         boolean_value: false,
@@ -126,6 +147,7 @@ pub(super) fn camera_control_ui_data(state: &CameraControlRuntimeState) -> Camer
             CameraControlKind::Integer {
                 minimum,
                 maximum,
+                step,
                 default,
                 ..
             },
@@ -142,6 +164,7 @@ pub(super) fn camera_control_ui_data(state: &CameraControlRuntimeState) -> Camer
             };
             data.minimum = *minimum as f32;
             data.maximum = *maximum as f32;
+            data.step = (*step).max(1) as f32;
             data.value = *value as f32;
             data.value_label = value.to_string().into();
             if !data.value.is_finite() {
@@ -248,9 +271,34 @@ mod camera_control_settings_tests {
     };
 
     use super::{
-        CameraSettingsSaveMailbox, compatible_saved_camera_control_value,
-        remember_camera_control_value, run_camera_settings_save_worker, snap_integer_control_value,
+        CameraControlRuntimeState, CameraSettingsSaveMailbox, camera_control_ui_data,
+        compatible_saved_camera_control_value, remember_camera_control_value,
+        run_camera_settings_save_worker, snap_integer_control_value,
     };
+
+    #[test]
+    #[allow(clippy::float_cmp)] // Camera limits and steps are exactly represented integers.
+    pub(super) fn camera_control_model_preserves_native_step_and_localized_label() {
+        let row = camera_control_ui_data(&CameraControlRuntimeState {
+            key: "standard:Contrast".to_owned(),
+            descriptor: CameraControlDescriptor {
+                id: CameraControlId::Standard(StandardCameraControl::Contrast),
+                name: "Contrast".to_owned(),
+                kind: CameraControlKind::Integer {
+                    minimum: 10,
+                    maximum: 30,
+                    step: 5,
+                    default: 20,
+                    unit: None,
+                },
+                read_only: false,
+            },
+            value: CameraControlValue::Integer(20),
+        });
+        assert_eq!(row.name.as_str(), "Contraste");
+        assert_eq!(row.step, 5.0);
+        assert_eq!((row.minimum, row.maximum, row.value), (10.0, 30.0, 20.0));
+    }
 
     #[test]
     pub(super) fn saved_control_must_match_current_camera_capabilities() {

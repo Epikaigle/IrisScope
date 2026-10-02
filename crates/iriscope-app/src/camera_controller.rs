@@ -22,6 +22,13 @@ use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::{Duration, Instant};
 
+fn live_preview_is_visible(win: &MainWindow) -> bool {
+    win.get_current_tab() == 0
+        && !win.get_is_frozen()
+        && !win.get_viewer_open()
+        && !win.get_library_map_open()
+}
+
 #[allow(clippy::too_many_lines)]
 pub(super) fn install(main_window: &MainWindow, runtime: &AppRuntime) {
     let latest_frame = Arc::clone(&runtime.latest_frame);
@@ -42,10 +49,10 @@ pub(super) fn install(main_window: &MainWindow, runtime: &AppRuntime) {
     main_window
         .global::<AppState>()
         .on_preview_tab_changed(move |visible| {
-            let frozen = weak_preview
-                .upgrade()
-                .is_some_and(|win| win.get_is_frozen());
-            let active = visible && !frozen;
+            let active = visible
+                && weak_preview
+                    .upgrade()
+                    .is_some_and(|win| live_preview_is_visible(&win));
             preview_active_tab.store(active, Ordering::Release);
             if !active {
                 decode_mailbox_tab.clear();
@@ -71,7 +78,7 @@ pub(super) fn install(main_window: &MainWindow, runtime: &AppRuntime) {
         let was_frozen = win.get_is_frozen();
         let new_frozen = !was_frozen;
         win.set_is_frozen(new_frozen);
-        preview_active_freeze.store(!new_frozen && win.get_current_tab() == 0, Ordering::Release);
+        preview_active_freeze.store(live_preview_is_visible(&win), Ordering::Release);
         if new_frozen {
             decode_mailbox_freeze.clear();
             if let Ok(mut frame) = latest_decoded_frame_freeze.lock() {
@@ -310,12 +317,13 @@ fn start_decoder_worker(main_window: &MainWindow, runtime: &AppRuntime) -> threa
             let latest = Arc::clone(&latest_decoded_frame_worker);
             let pending = Arc::clone(&decoded_frame_update_pending_worker);
             let generation = Arc::clone(&stream_generation_decoder);
+            let preview_active = Arc::clone(&preview_active_decoder);
             let update_result = decode_weak.upgrade_in_event_loop(move |win| {
                 // Clear the gate before taking the slot. A concurrent publisher can
                 // queue one follow-up update, while the queue remains strictly bounded.
                 pending.store(false, Ordering::Release);
                 let decoded = latest.lock().ok().and_then(|mut slot| slot.take());
-                if win.get_is_frozen() || win.get_current_tab() != 0 {
+                if !preview_active.load(Ordering::Acquire) || !live_preview_is_visible(&win) {
                     return;
                 }
                 let Some((job_generation, (width, height, raw_rgb))) = decoded else {

@@ -1,5 +1,5 @@
-use crate::app_helpers::{settings_error, settings_snapshot};
-use crate::config::NOTICE_SUCCESS;
+use crate::app_helpers::settings_snapshot;
+use crate::config::{NOTICE_ERROR, NOTICE_SUCCESS};
 use crate::library_ui::clear_library_view;
 use crate::library_worker::refresh_library_in_background;
 use crate::patient_ui::{PatientSearchRequest, clear_patient_candidates};
@@ -11,6 +11,10 @@ use iriscope_core::session::{CaptureSession, Eye};
 use slint::ComponentHandle;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
+
+fn patient_error(win: &MainWindow, message: &str) {
+    show_capture_notice(win, message, NOTICE_ERROR);
+}
 
 fn select_patient_in_window(win: &MainWindow, record: PatientRecord) {
     win.set_patient_first_name(record.first_name.into());
@@ -72,7 +76,7 @@ pub(super) fn install(main_window: &MainWindow, runtime: &AppRuntime) {
                 return;
             };
             let Ok(id) = raw_id.parse::<u64>() else {
-                settings_error(&win, "Numéro de dossier invalide.");
+                patient_error(&win, "Numéro de dossier invalide.");
                 return;
             };
             if closing_select.load(Ordering::Acquire)
@@ -106,10 +110,10 @@ pub(super) fn install(main_window: &MainWindow, runtime: &AppRuntime) {
                                 select_patient_in_window(&win, record);
                             }
                             Ok(None) => {
-                                settings_error(&win, "Ce dossier ne correspond plus au nom saisi.");
+                                patient_error(&win, "Ce dossier ne correspond plus au nom saisi.");
                                 win.global::<AppState>().invoke_patient_name_edited();
                             }
-                            Err(error) => settings_error(
+                            Err(error) => patient_error(
                                 &win,
                                 &format!("Impossible d'ouvrir ce dossier patient : {error}"),
                             ),
@@ -142,7 +146,7 @@ pub(super) fn install(main_window: &MainWindow, runtime: &AppRuntime) {
         let first_name = win.get_patient_first_name().trim().to_owned();
         let last_name = win.get_patient_last_name().trim().to_owned();
         if first_name.is_empty() || last_name.is_empty() {
-            settings_error(&win, "Renseignez le prénom et le nom du patient.");
+            patient_error(&win, "Renseignez le prénom et le nom du patient.");
             return;
         }
         if closing_create.load(Ordering::Acquire)
@@ -182,7 +186,7 @@ pub(super) fn install(main_window: &MainWindow, runtime: &AppRuntime) {
                                 NOTICE_SUCCESS,
                             );
                         }
-                        Err(error) => settings_error(
+                        Err(error) => patient_error(
                             &win,
                             &format!("Impossible de créer le dossier patient : {error}"),
                         ),
@@ -220,7 +224,7 @@ pub(super) fn install(main_window: &MainWindow, runtime: &AppRuntime) {
                 .or_else(|| raw_number.strip_prefix("d-"))
                 .unwrap_or(raw_number);
             let Ok(id) = digits.parse::<u64>() else {
-                settings_error(&win, "Numéro de dossier invalide (exemple : D-000123).");
+                patient_error(&win, "Numéro de dossier invalide (exemple : D-000123).");
                 return;
             };
             if closing_lookup.load(Ordering::Acquire)
@@ -245,8 +249,8 @@ pub(super) fn install(main_window: &MainWindow, runtime: &AppRuntime) {
                         }
                         match result {
                             Ok(Some(record)) => select_patient_in_window(&win, record),
-                            Ok(None) => settings_error(&win, "Aucun dossier ne porte ce numéro."),
-                            Err(error) => settings_error(
+                            Ok(None) => patient_error(&win, "Aucun dossier ne porte ce numéro."),
+                            Err(error) => patient_error(
                                 &win,
                                 &format!("Ouverture du dossier impossible : {error}"),
                             ),

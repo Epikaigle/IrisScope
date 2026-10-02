@@ -6,10 +6,10 @@ use crate::gui::install_controllers;
 use crate::recording_worker::RecordingRequest;
 use crate::runtime::AppRuntime;
 use crate::ui::{AppState, MainWindow};
-use iriscope_core::camera::CapturedFrame;
+use iriscope_core::camera::{CapturedFrame, StreamConfiguration};
 use iriscope_core::capabilities::{FrameRate, PixelFormat, Resolution};
 use iriscope_core::session::{CaptureSession, Eye};
-use iriscope_core::settings::AppSettings;
+use iriscope_core::settings::{AppSettings, AppTheme, VideoQualityPreference};
 use iriscope_core::storage::CaptureTimestamp;
 use slint::ComponentHandle;
 use std::path::PathBuf;
@@ -43,6 +43,12 @@ pub struct SettingsObservation {
     pub displayed_filename_template: String,
     pub save_dirty: bool,
     pub save_generation: u64,
+    pub theme: AppTheme,
+    pub displayed_theme: i32,
+    pub video_quality: VideoQualityPreference,
+    pub displayed_video_quality: i32,
+    pub displayed_save_error: bool,
+    pub stream_restart_requested: bool,
 }
 
 /// Observable state of the playback controller and the Slint window.
@@ -97,9 +103,68 @@ impl ControllerHarness {
         });
     }
 
+    /// Makes the published synthetic frame available to the recording callback.
+    pub fn seed_active_stream(&self) {
+        *self
+            .runtime
+            .active_stream_configuration
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(StreamConfiguration {
+            pixel_format: PixelFormat::Mjpeg,
+            resolution: Resolution::new(640, 480),
+            frame_rate: FrameRate::new(30, 1).expect("valid test frame rate"),
+        });
+        self.window.set_is_streaming(true);
+    }
+
+    /// Mirrors the controller's in-flight patient action guard.
+    pub fn set_patient_action_pending(&self, pending: bool) {
+        self.runtime
+            .patient_action_pending
+            .store(pending, Ordering::Release);
+        self.window.set_patient_action_pending(pending);
+    }
+
+    /// Sets visible pages and overlays before invoking the preview callback.
+    pub fn set_preview_context(&self, tab: i32, viewer_open: bool, map_open: bool) {
+        self.window.set_current_tab(tab);
+        self.window.set_viewer_open(viewer_open);
+        self.window.set_library_map_open(map_open);
+        self.window
+            .global::<AppState>()
+            .invoke_preview_tab_changed(tab == 0);
+    }
+
+    /// Invokes the production freeze callback, including its decode gate.
+    pub fn toggle_freeze(&self) {
+        self.window.global::<AppState>().invoke_toggle_freeze();
+    }
+
+    /// Whether the decoder can accept new preview work.
+    #[must_use]
+    pub fn preview_is_active(&self) -> bool {
+        self.runtime.preview_active.load(Ordering::Acquire)
+    }
+
     /// Invokes the actual capture binding installed on the Slint global.
     pub fn trigger_capture(&self) {
         self.window.global::<AppState>().invoke_trigger_capture();
+    }
+
+    /// Saturates the optional disk job queue without starting any worker.
+    pub fn saturate_background_jobs(&self) {
+        while self.runtime.background_jobs.submit(|| {}) {}
+    }
+
+    /// Invokes the production recording callback used by the physical camera button.
+    pub fn toggle_recording(&self) {
+        self.window.global::<AppState>().invoke_toggle_recording();
+    }
+
+    /// Returns the mailbox generation of an active synthetic recording.
+    #[must_use]
+    pub fn active_recording_generation(&self) -> Option<u64> {
+        self.runtime.recording_mailbox.active_generation()
     }
 
     /// Reads the request without consuming it or waiting for a worker.
@@ -130,15 +195,57 @@ impl ControllerHarness {
             .invoke_update_filename_template(value.into());
     }
 
+    /// Invokes the production theme selector without running its save worker.
+    pub fn select_theme(&self, index: i32) {
+        self.window.global::<AppState>().invoke_select_theme(index);
+    }
+
+    /// Invokes the production quality selector without restarting a camera.
+    pub fn update_video_quality(&self, index: i32) {
+        self.window
+            .global::<AppState>()
+            .invoke_update_video_quality(index);
+    }
+
+    /// Simulates the settings worker reporting a failed save in the UI.
+    pub fn report_settings_save_error(&self) {
+        self.window.set_settings_feedback_is_error(true);
+        self.window
+            .set_settings_feedback("Échec de sauvegarde de test".into());
+    }
+
+    /// Simulates the camera worker consuming a requested stream restart.
+    pub fn acknowledge_stream_restart(&self) {
+        self.runtime
+            .stream_restart_requested
+            .store(false, Ordering::Release);
+    }
+
+    /// Invokes the dossier form's production lookup callback.
+    pub fn lookup_patient_by_dossier(&self, value: &str) {
+        self.window
+            .global::<AppState>()
+            .invoke_lookup_patient_by_dossier(value.into());
+    }
+
+    /// Returns the notification displayed on the camera page.
+    #[must_use]
+    pub fn capture_notice(&self) -> (bool, i32, String) {
+        (
+            self.window.get_show_last_capture(),
+            self.window.get_capture_notice_tone(),
+            self.window.get_last_capture_message().to_string(),
+        )
+    }
+
     /// Reads the setting and the save mailbox without running its disk worker.
     #[must_use]
     pub fn settings_observation(&self) -> SettingsObservation {
-        let filename_template = self
+        let settings = self
             .runtime
             .settings
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .filename_template
             .clone();
         let state = self
             .runtime
@@ -147,10 +254,19 @@ impl ControllerHarness {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         SettingsObservation {
-            filename_template,
+            filename_template: settings.filename_template,
             displayed_filename_template: self.window.get_settings_filename_template().to_string(),
             save_dirty: state.dirty,
             save_generation: state.generation,
+            theme: settings.theme,
+            displayed_theme: self.window.get_settings_theme(),
+            video_quality: settings.video_quality,
+            displayed_video_quality: self.window.get_settings_video_quality(),
+            displayed_save_error: self.window.get_settings_feedback_is_error(),
+            stream_restart_requested: self
+                .runtime
+                .stream_restart_requested
+                .load(Ordering::Acquire),
         }
     }
 
@@ -272,6 +388,10 @@ impl ControllerHarness {
         self.runtime
             .recording_mailbox
             .finish_finalization(generation);
+        self.window
+            .set_recording_finalizing(self.runtime.recording_mailbox.is_finalizing());
+        self.window
+            .set_is_recording(self.runtime.recording_mailbox.active_generation().is_some());
     }
 
     /// Simulates completion of one queued photo without writing a test image.
