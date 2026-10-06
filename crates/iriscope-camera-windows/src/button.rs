@@ -1,10 +1,14 @@
-//! Optional standard UVC trigger notification on the existing MF source.
+//! Optional trigger subscription probe on the already-open MF source.
 //!
 //! <https://learn.microsoft.com/en-us/windows-hardware/drivers/stream/ksevent-vidcaptosti-ext-trigger>
 //! <https://learn.microsoft.com/en-us/windows-hardware/drivers/stream/sample-user-mode-code-for-methods-and-events>
 //!
-//! Registration can be rejected by the driver. No second camera, USB interface
-//! or replacement driver is opened. Native DE400 verification is still required.
+//! KSIDENTIFIER is the ABI alias of KSEVENT. This probe uses source scope;
+//! Microsoft's EXT_TRIGGER page describes a pin target and KSE_NODE descriptor.
+//! A driver requiring a separate pin or topology route may reject this probe.
+//! That route is not discovered here, and no node or pin ID is guessed.
+//! No second camera, USB interface or replacement driver is opened.
+//! Native DE400 verification is still required.
 
 use std::{mem::size_of, ptr};
 use windows::{

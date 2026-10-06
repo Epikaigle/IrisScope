@@ -6,6 +6,10 @@ L'objectif est de remplacer l'ancien logiciel FireflyPro par une application mod
 
 > IrisScope est un logiciel de capture, de visualisation et d'organisation d'images. L'utilisateur peut ajouter ses propres images de référence d'iridologie ; aucune planche n'est fournie avec l'application. Ces images sont uniquement des références visuelles et ne constituent pas un outil de diagnostic médical.
 
+Le [site de présentation](https://github.com/Epikaigle/IrisScope/tree/main/site) contient une vue 3D du DE400 et des
+captures de l’interface. Le [guide GitHub Pages](https://github.com/Epikaigle/IrisScope/blob/main/docs/SITE.md) explique comment
+le publier manuellement depuis `main`, sans branche supplémentaire.
+
 ## Expérience utilisateur visée
 
 L'écran **Caméra** est l'écran principal et doit suffire pour la grande majorité de l'utilisation.

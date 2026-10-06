@@ -10,6 +10,8 @@ Cette version permet d’adapter l’espace de travail pour la capture, l’exam
 - Miniatures petites, moyennes ou grandes en grille et en liste, avec largeur personnalisable de 80 à 480 pixels logiques.
 - Rotation précise de 0 à 359°, zoom immédiat et molette synchronisée dans le direct et les références.
 - Calendriers contextuels, bibliothèque compacte et menus alignés qui ne changent plus de sélection à la molette.
+- Ajouts et suppressions externes détectés même lorsque le système retarde la mise à jour de la date du dossier, notamment sous Windows.
+- Site de présentation avec modèle 3D du DE400, captures de l’interface et publication GitHub Pages manuelle depuis `main`.
 - Bouton physique DE400 validé sous Linux avec une passerelle locale ; récepteurs Windows et macOS intégrés, à confirmer sur les appareils réels.
 
 Les options sont regroupées dans **Paramètres → Interface et affichage**. **Réinitialiser la disposition** conserve le thème, le stockage, les dossiers, les notes et les images. Aucun réglage supplémentaire ne masque l’aide existante.

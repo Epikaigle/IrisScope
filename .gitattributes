@@ -1,0 +1,3 @@
+# Third-party bundle; keep source reviews focused on maintained application code.
+site/vendor/** linguist-vendored
+site/vendor/three.module.js linguist-generated -diff

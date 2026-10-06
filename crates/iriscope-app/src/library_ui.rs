@@ -154,6 +154,7 @@ impl LibraryFileVersion {
 struct LibraryDirectoryVersion {
     directory: Option<LibraryFileVersion>,
     index: Option<iriscope_core::library::CaptureFileVersion>,
+    names: Vec<std::ffi::OsString>,
 }
 
 impl LibraryDirectoryVersion {
@@ -175,9 +176,30 @@ impl LibraryDirectoryVersion {
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => return Err(error),
             Err(_) => None,
         };
+        // Directory mtime can be delayed on Windows or coarse on removable
+        // filesystems. Compare names as well so additions and removals are
+        // visible immediately, without rereading every capture's contents.
+        let mut names = Vec::new();
+        match std::fs::read_dir(directory) {
+            Ok(entries) => {
+                for entry in entries {
+                    if !is_current() {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::Interrupted,
+                            "library request cancelled",
+                        ));
+                    }
+                    names.push(entry?.file_name());
+                }
+                names.sort_unstable();
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
         Ok(Self {
             directory: LibraryFileVersion::read(directory),
             index,
+            names,
         })
     }
 }
@@ -1135,7 +1157,14 @@ mod photo_library_tests {
         assert_eq!(entries[0].patient_id, None);
 
         let added = directory.0.join("external.jpg");
+        #[cfg(unix)]
+        let directory_mtime = std::fs::metadata(&directory.0).unwrap().modified().unwrap();
         std::fs::write(&added, b"external").expect("add capture");
+        #[cfg(unix)]
+        std::fs::File::open(&directory.0)
+            .unwrap()
+            .set_modified(directory_mtime)
+            .expect("simulate delayed directory timestamp");
         assert_eq!(
             cache
                 .library_page(&directory.0, None, 0, 0, &|| true)
@@ -1144,6 +1173,11 @@ mod photo_library_tests {
             2
         );
         std::fs::remove_file(added).expect("delete capture");
+        #[cfg(unix)]
+        std::fs::File::open(&directory.0)
+            .unwrap()
+            .set_modified(directory_mtime)
+            .expect("simulate delayed directory timestamp");
         assert_eq!(
             cache
                 .library_page(&directory.0, None, 0, 0, &|| true)

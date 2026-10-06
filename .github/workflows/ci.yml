@@ -2,7 +2,9 @@ name: CI
 
 'on':
   push:
+    paths-ignore: ['site/**', 'docs/SITE.md', 'scripts/check-site.py', '.github/workflows/site.yml', '.github/workflows/pages.yml']
   pull_request:
+    paths-ignore: ['site/**', 'docs/SITE.md', 'scripts/check-site.py', '.github/workflows/site.yml', '.github/workflows/pages.yml']
 
 permissions:
   contents: read
@@ -35,6 +37,10 @@ jobs:
         with:
           toolchain: 1.89.0
           components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: native-${{ matrix.os }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -112,6 +118,10 @@ jobs:
           toolchain: 1.89.0
           targets: ${{ matrix.target }}
           components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: cross-${{ matrix.target }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install Linux build dependencies
         run: sudo apt-get update && sudo apt-get install -y libudev-dev libfontconfig1-dev
       - name: Lint target compilation

@@ -55,6 +55,7 @@ def main():
         destination.mkdir(parents=True, exist_ok=True)
         env = dict(os.environ, SLINT_BACKEND="winit-software", SLINT_STYLE="fluent", SLINT_SCALE_FACTOR=scale)
         env.pop("IRISCOPE_SNAPSHOT_SCENES", None)
+        env.pop("IRISCOPE_SNAPSHOT_IMAGE", None)
         if args.scenes:
             env["IRISCOPE_SNAPSHOT_SCENES"] = args.scenes
         if not args.compare_only:

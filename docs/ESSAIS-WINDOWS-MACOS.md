@@ -6,8 +6,10 @@ nécessaires pour ces essais.
 
 ## Choisir et installer le paquet
 
-Sur GitHub, ouvrir **Actions → CI**, puis le dernier passage réussi de la branche
-contenant les corrections. Télécharger l’artefact correspondant et extraire son ZIP :
+Sur GitHub, ouvrir [**Actions → CI**](https://github.com/Epikaigle/IrisScope/actions/workflows/ci.yml?query=branch%3Amain),
+puis le dernier passage réussi de **main**. Une connexion à GitHub est nécessaire
+pour télécharger les artefacts, dans la rubrique **Artifacts** en bas de
+l’exécution. Télécharger celui de la machine concernée et extraire son ZIP :
 
 | Machine | Artefact | Installation |
 | --- | --- | --- |
@@ -16,9 +18,15 @@ contenant les corrections. Télécharger l’artefact correspondant et extraire 
 | Mac Intel | `iriscope-macOS-X64` | Ouvrir le DMG, glisser IrisScope dans Applications |
 
 Sur Mac, **menu Apple → À propos de ce Mac** indique la puce ou le processeur.
-Les archives portables sont également présentes. L’application est personnelle et
-non signée : le système peut demander une ouverture explicite. Autoriser la caméra
-lorsque le système le demande. Les captures et paramètres restent hors du programme.
+Les deux paquets Mac ont le même nom de DMG ; choisir d’abord le bon artefact
+**ARM64** ou **X64**. Les archives portables sont également présentes.
+
+Les paquets d’essai ne sont pas signés. Sur macOS, tenter une première ouverture
+depuis Applications. Si le développeur n’est pas reconnu, ouvrir **Réglages
+Système → Confidentialité et sécurité**, puis **Ouvrir quand même** pour cette
+application : c’est la [procédure décrite par Apple](https://support.apple.com/fr-fr/102445).
+Autoriser ensuite la caméra lorsque le système le demande. Les captures et
+paramètres restent hors du programme.
 
 ## Essai normal
 
@@ -43,6 +51,12 @@ fictifs et conserve les résultats pour inspection ; les paramètres habituels r
 & "$env:LOCALAPPDATA\Programs\IrisScope\IrisScope.exe" --diagnose
 & "$env:LOCALAPPDATA\Programs\IrisScope\IrisScope.exe" --validate-button "$env:USERPROFILE\Desktop\IrisScope-test-bouton"
 ```
+
+La réception Windows tente un abonnement sur la source Media Foundation ouverte.
+Si le pilote exige une cible KS distincte (pin ou nœud), cet abonnement peut être
+refusé : le récepteur actuel ne découvre pas cette autre route. Conserver l’erreur
+exacte du diagnostic pour poursuivre le port depuis Linux. Les captures à l’écran
+restent disponibles.
 
 ### macOS — Terminal
 

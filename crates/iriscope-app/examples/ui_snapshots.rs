@@ -18,6 +18,10 @@ use slint::{
 use std::{cell::Cell, path::Path, rc::Rc};
 
 fn fixture_image() -> Image {
+    // Optional showcase photos never change the default regression fixtures.
+    if let Some(path) = std::env::var_os("IRISCOPE_SNAPSHOT_IMAGE") {
+        return Image::load_from_path(Path::new(&path)).expect("showcase image");
+    }
     let mut pixels = SharedPixelBuffer::<Rgb8Pixel>::new(640, 480);
     for (index, pixel) in pixels.make_mut_slice().iter_mut().enumerate() {
         let x = index % 640;
