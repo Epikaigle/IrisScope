@@ -176,7 +176,7 @@ fn read_verified_photo(
     read_verified_photo_cancellable(path, expected, &|| false)
 }
 
-fn read_verified_photo_cancellable(
+pub(super) fn read_verified_photo_cancellable(
     path: &Path,
     expected: &CaptureFileVersion,
     is_cancelled: &dyn Fn() -> bool,
@@ -242,7 +242,7 @@ pub(super) struct ViewerSeekState {
 pub(super) struct ViewerDisplayFrame {
     pub(super) generation: u64,
     pub(super) seek_epoch: u64,
-    pub(super) pixels: DecodedFrame,
+    pub(super) pixels: SharedPixelBuffer<Rgb8Pixel>,
     pub(super) progress: f32,
     pub(super) position: String,
 }
@@ -479,6 +479,14 @@ impl ViewerRuntime {
         if self.generation.load(Ordering::Acquire) != generation {
             return;
         }
+        let review = iriscope_core::library::load_photo_review(
+            &request.path,
+            &request.expected_version,
+            &|| self.generation.load(Ordering::Acquire) != generation,
+        );
+        let pixels = decoded.map(|(width, height, rgb)| {
+            SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(&rgb, width, height)
+        });
         let generation_state = Arc::clone(&self.generation);
         let _ = self.weak.upgrade_in_event_loop(move |viewer| {
             if generation_state.load(Ordering::Acquire) != generation {
@@ -486,9 +494,9 @@ impl ViewerRuntime {
             }
             // `decoded` is the verified snapshot read by the worker. The UI
             // only checks cancellation; filesystem hashing stays off this thread.
-            if let Some((width, height, rgb)) = decoded {
-                let pixels = SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(&rgb, width, height);
+            if let Some(pixels) = pixels {
                 viewer.set_viewer_image(slint::Image::from_rgb8(pixels));
+                crate::photo_tools::loaded(&viewer, review);
                 viewer.set_viewer_loading(false);
                 viewer.set_viewer_is_video(false);
                 viewer.set_viewer_video_playing(false);
@@ -498,6 +506,7 @@ impl ViewerRuntime {
                 viewer.set_viewer_open(true);
             } else {
                 viewer.set_viewer_loading(false);
+                viewer.global::<AppState>().invoke_close_viewer();
                 viewer.set_viewer_open(false);
                 show_capture_notice(&viewer, "Image illisible ou indisponible.", NOTICE_ERROR);
             }
@@ -566,10 +575,15 @@ impl ViewerRuntime {
         self.publish_video_frame(ViewerDisplayFrame {
             generation,
             seek_epoch: initial_seek_epoch,
-            pixels: first_frame,
+            pixels: SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(
+                &first_frame.2,
+                first_frame.0,
+                first_frame.1,
+            ),
             progress: 0.0,
             position: "00:00".to_owned(),
         });
+        drop(first_frame);
 
         let frame_duration = Duration::from_secs_f64(1.0 / fps);
         let mut frame_index = 1 % frame_count;
@@ -620,7 +634,7 @@ impl ViewerRuntime {
                 let frame = ViewerDisplayFrame {
                     generation,
                     seek_epoch,
-                    pixels: (width, height, rgb),
+                    pixels: SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(&rgb, width, height),
                     progress: video_progress(frame_index, frame_count),
                     position: format_playback_time(video_time_seconds(frame_index, fps)),
                 };
@@ -749,9 +763,7 @@ impl ViewerRuntime {
             }
             // Pixels were verified in the worker before publication. Displaying
             // that immutable snapshot cannot load a replacement from the path.
-            let (width, height, rgb) = frame.pixels;
-            let pixels = SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(&rgb, width, height);
-            viewer.set_viewer_image(slint::Image::from_rgb8(pixels));
+            viewer.set_viewer_image(slint::Image::from_rgb8(frame.pixels));
             viewer.set_viewer_video_progress(frame.progress);
             viewer.set_viewer_video_position(frame.position.into());
         });
@@ -815,7 +827,7 @@ mod playback_tests {
         ViewerDisplayFrame {
             generation: 7,
             seek_epoch: 11,
-            pixels: (1, 1, vec![0, 0, 0]),
+            pixels: slint::SharedPixelBuffer::<slint::Rgb8Pixel>::new(1, 1),
             progress: 0.0,
             position: position.to_owned(),
         }

@@ -136,7 +136,7 @@ pub fn try_scan_library_directory_metadata_cancellable(
             Err(error) => return Err(error),
         };
         candidates.push(LibraryScanCandidate {
-            file_path: path,
+            file_path: path.clone(),
             kind,
             file_size: file_metadata.len(),
             modified_time,
@@ -145,6 +145,16 @@ pub fn try_scan_library_directory_metadata_cancellable(
             patient_id_hint: stored_metadata
                 .and_then(|stored| stored.patient_id)
                 .filter(|id| index.patients.contains_key(id)),
+            eye_hint: stored_metadata.map_or_else(
+                || {
+                    let stem = path
+                        .file_stem()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("");
+                    parse_filename(stem).2
+                },
+                |stored| stored.eye,
+            ),
             native_version,
         });
     }
@@ -323,7 +333,7 @@ pub(super) fn indexed_capture_matches(
     Ok(legacy_matches)
 }
 
-fn sort_time(date: &str, time: &str, modified_time: SystemTime) -> NaiveDateTime {
+pub(super) fn sort_time(date: &str, time: &str, modified_time: SystemTime) -> NaiveDateTime {
     NaiveDateTime::parse_from_str(&format!("{date} {time}"), "%Y-%m-%d %H:%M:%S")
         .unwrap_or_else(|_| DateTime::<Utc>::from(modified_time).naive_utc())
 }

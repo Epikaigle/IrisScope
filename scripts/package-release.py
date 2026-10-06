@@ -8,9 +8,11 @@ Only Python's standard library is required.
 import argparse
 import hashlib
 import io
+import json
 import platform
 import plistlib
 import shutil
+import subprocess
 import sys
 import tarfile
 import tomllib
@@ -76,27 +78,68 @@ def shared_files() -> list[tuple[str, bytes]]:
     return [
         ("README.md", (ROOT / "README.md").read_bytes()),
         ("CORRECTIONS.md", (ROOT / "CORRECTIONS.md").read_bytes()),
+        ("VERSION.txt", (release_version() + "\n").encode("ascii")),
+        ("docs/RELEASE-0.2.0.md", (ROOT / "docs/RELEASE-0.2.0.md").read_bytes()),
+        ("docs/RELEASE-0.3.0.md", (ROOT / "docs/RELEASE-0.3.0.md").read_bytes()),
+        ("docs/RELEASE-0.4.0.md", (ROOT / "docs/RELEASE-0.4.0.md").read_bytes()),
+        ("docs/VISIONNEUSE.md", (ROOT / "docs/VISIONNEUSE.md").read_bytes()),
+        ("docs/VALIDATION-MATERIELLE.md", (ROOT / "docs/VALIDATION-MATERIELLE.md").read_bytes()),
         ("scripts/diagnose-de400-button.py", (ROOT / "scripts/diagnose-de400-button.py").read_bytes()),
     ] + [
         (f"licenses/{path.name}", path.read_bytes()) for path in FONT_LICENSES
     ]
 
 
-def package_windows(output: Path, binary: Path, folder: str) -> None:
+def release_version() -> str:
+    return tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"]
+
+
+def validate_binary_version(binary: Path, version: str) -> None:
+    result = subprocess.run([str(binary.resolve()), "--version"], capture_output=True, text=True, timeout=10, check=True)
+    if result.stdout.strip() != f"IrisScope {version}":
+        raise SystemExit(f"Executable version does not match {version}: {result.stdout.strip()}")
+
+
+def validate_encoder(ffmpeg: Path | None, license_path: Path | None) -> None:
+    if bool(ffmpeg) != bool(license_path):
+        raise SystemExit("Bundling FFmpeg requires both --ffmpeg and --ffmpeg-license")
+    for path in [ffmpeg, license_path]:
+        if path is not None and not path.is_file():
+            raise SystemExit(f"Required FFmpeg resource not found: {path}")
+
+
+def release_info(binary: Path, system: str, version: str, ffmpeg: Path | None = None) -> bytes:
+    with binary.open("rb") as source:
+        digest = hashlib.file_digest(source, "sha256").hexdigest()
+    data = {"application": "IrisScope", "version": version, "platform": system,
+            "architecture": host_architecture(), "input_executable_sha256": digest,
+            "mp4_export": "bundled-ffmpeg" if ffmpeg else "optional-system-ffmpeg"}
+    return (json.dumps(data, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+
+
+def package_windows(output: Path, binary: Path, folder: str, ffmpeg: Path | None = None, license_path: Path | None = None) -> None:
     with zipfile.ZipFile(output, "w") as archive:
         add_zip_file(archive, f"{folder}/IrisScope.exe", binary)
         for name, data in shared_files():
             add_zip_bytes(archive, f"{folder}/{name}", data)
+        add_zip_bytes(archive, f"{folder}/release-info.json", release_info(binary, "windows", release_version(), ffmpeg))
+        if ffmpeg:
+            add_zip_file(archive, f"{folder}/ffmpeg.exe", ffmpeg)
+            add_zip_bytes(archive, f"{folder}/licenses/FFmpeg-COPYING.txt", license_path.read_bytes())
 
 
-def package_linux(output: Path, binary: Path, folder: str) -> None:
+def package_linux(output: Path, binary: Path, folder: str, ffmpeg: Path | None = None, license_path: Path | None = None) -> None:
     with tarfile.open(output, "w:gz") as archive:
         add_tar_file(archive, f"{folder}/iriscope-app", binary)
         for name, data in shared_files():
             add_tar_bytes(archive, f"{folder}/{name}", data)
+        add_tar_bytes(archive, f"{folder}/release-info.json", release_info(binary, "linux", release_version(), ffmpeg))
+        if ffmpeg:
+            add_tar_file(archive, f"{folder}/ffmpeg", ffmpeg)
+            add_tar_bytes(archive, f"{folder}/licenses/FFmpeg-COPYING.txt", license_path.read_bytes())
 
 
-def package_macos(output: Path, binary: Path, version: str) -> None:
+def package_macos(output: Path, binary: Path, version: str, ffmpeg: Path | None = None, license_path: Path | None = None) -> None:
     bundle = "IrisScope.app/Contents"
     info = {
         "CFBundleDevelopmentRegion": "fr",
@@ -117,6 +160,10 @@ def package_macos(output: Path, binary: Path, version: str) -> None:
         add_zip_file(archive, f"{bundle}/MacOS/IrisScope", binary)
         for name, data in shared_files():
             add_zip_bytes(archive, f"{bundle}/Resources/{name}", data)
+        add_zip_bytes(archive, f"{bundle}/Resources/release-info.json", release_info(binary, "macos", version, ffmpeg))
+        if ffmpeg:
+            add_zip_file(archive, f"{bundle}/MacOS/ffmpeg", ffmpeg)
+            add_zip_bytes(archive, f"{bundle}/Resources/licenses/FFmpeg-COPYING.txt", license_path.read_bytes())
 
 
 def main() -> None:
@@ -134,9 +181,13 @@ def main() -> None:
         help="Path to the executable built on this operating system",
     )
     parser.add_argument("--output-dir", type=Path, default=ROOT / "dist")
+    parser.add_argument("--ffmpeg", type=Path, help="Optional standalone native FFmpeg executable with libx264")
+    parser.add_argument("--ffmpeg-license", type=Path, help="License and attribution file for the provided FFmpeg build")
     args = parser.parse_args()
     if not args.binary.is_file():
         parser.error(f"release executable not found: {args.binary}")
+    validate_binary_version(args.binary, version)
+    validate_encoder(args.ffmpeg, args.ffmpeg_license)
 
     architecture = host_architecture()
     folder = f"IrisScope-{version}-{system}-{architecture}"
@@ -144,11 +195,11 @@ def main() -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     output = args.output_dir / f"{folder}{suffix}"
     if system == "linux":
-        package_linux(output, args.binary, folder)
+        package_linux(output, args.binary, folder, args.ffmpeg, args.ffmpeg_license)
     elif system == "windows":
-        package_windows(output, args.binary, folder)
+        package_windows(output, args.binary, folder, args.ffmpeg, args.ffmpeg_license)
     else:
-        package_macos(output, args.binary, version)
+        package_macos(output, args.binary, version, args.ffmpeg, args.ffmpeg_license)
 
     with output.open("rb") as archive:
         digest = hashlib.file_digest(archive, "sha256").hexdigest()

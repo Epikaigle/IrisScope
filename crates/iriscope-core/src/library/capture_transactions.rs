@@ -60,6 +60,23 @@ pub(super) fn lock_transaction_serial(directory: &Path) -> io::Result<Transactio
     })
 }
 
+pub(super) fn lock_transaction_serial_cancellable(
+    directory: &Path,
+    cancel: &dyn Fn() -> bool,
+) -> io::Result<TransactionGuard> {
+    let thread = super::locks::mutex(&TRANSACTION_WRITE_LOCK, cancel)?;
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let file = options.open(directory.join(TRANSACTION_LOCK_FILE))?;
+    super::locks::file(&file, cancel)?;
+    Ok(TransactionGuard {
+        _thread: thread,
+        _file: file,
+    })
+}
+
 /// Result of publishing a capture. The media exists even if its index update
 /// needs to be retried; a durable journal retains its explicitly selected dossier.
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -165,6 +165,19 @@ pub(super) fn lock_library_index(directory: &Path) -> io::Result<File> {
     Ok(file)
 }
 
+pub(super) fn lock_library_index_cancellable(
+    directory: &Path,
+    cancel: &dyn Fn() -> bool,
+) -> io::Result<File> {
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let file = options.open(directory.join(LIBRARY_INDEX_LOCK_FILE))?;
+    super::locks::file(&file, cancel)?;
+    Ok(file)
+}
+
 pub(super) fn load_library_index(directory: &Path) -> io::Result<LibraryIndex> {
     let path = directory.join(LIBRARY_INDEX_FILE);
     let backup = directory.join(LIBRARY_INDEX_BACKUP_FILE);
@@ -226,7 +239,7 @@ pub fn recover_library_index(directory: &Path) -> io::Result<bool> {
 /// Cancellation stops between legacy entries and SHA blocks, before committing
 /// their upgraded index. Journal replay and atomic index writes run to completion
 /// once started so an interrupted publication retains its durable recovery state.
-/// Waiting for publication and index locks is also not interruptible.
+/// Waiting for publication and index locks remains cancellable.
 ///
 /// # Errors
 ///
@@ -239,12 +252,11 @@ pub fn recover_library_index_cancellable(
     if !directory.exists() {
         return Ok(false);
     }
-    let _publication_guard = capture_transactions::lock_transaction_serial(directory)?;
+    let _publication_guard =
+        capture_transactions::lock_transaction_serial_cancellable(directory, is_cancelled)?;
     check_recovery_cancelled(is_cancelled)?;
-    let _write_guard = LIBRARY_INDEX_WRITE_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let _file_lock = lock_library_index(directory)?;
+    let _write_guard = super::locks::mutex(&LIBRARY_INDEX_WRITE_LOCK, is_cancelled)?;
+    let _file_lock = lock_library_index_cancellable(directory, is_cancelled)?;
     check_recovery_cancelled(is_cancelled)?;
     let restored = recover_library_index_locked(directory)?;
     let mut index = load_library_index(directory)?;

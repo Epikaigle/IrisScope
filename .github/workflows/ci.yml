@@ -34,7 +34,7 @@ jobs:
           python-version: '3.12'
       - name: Install Linux build and headless test dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libudev-dev libfontconfig1-dev libxkbcommon-x11-dev xvfb xauth
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev libfontconfig1-dev libxkbcommon-x11-dev xvfb xauth ffmpeg
       - name: Check formatting
         if: runner.os == 'Linux'
         run: cargo fmt --all --check
@@ -43,6 +43,19 @@ jobs:
       - name: Test full workspace in a virtual display
         if: runner.os == 'Linux'
         run: xvfb-run -a cargo test --workspace --locked
+      - name: Install visual comparison dependency
+        if: runner.os == 'Linux'
+        run: python -m pip install 'Pillow>=11.3,<13'
+      - name: Compare UI images and scaling
+        if: runner.os == 'Linux'
+        run: xvfb-run -a -s '-screen 0 4096x2304x24 -nolisten tcp' python scripts/check-ui-visuals.py --release
+      - name: Upload visual captures for review
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: iriscope-ui-visuals
+          path: target/ui-visuals/
+          if-no-files-found: ignore
       - name: Test portable crates and native camera backend
         if: runner.os != 'Linux'
         run: cargo test -p iriscope-core -p iriscope-imaging -p ${{ matrix.camera }} --locked
@@ -51,8 +64,20 @@ jobs:
         run: cargo test -p iriscope-app --lib --locked
       - name: Build native release executable
         run: cargo build --release -p iriscope-app --locked
+      - name: Verify package layout and upgrade identifiers
+        if: runner.os == 'Linux'
+        run: python -m unittest discover -s tests -p 'test_packaging.py' -v
       - name: Package portable application
         run: python scripts/package-release.py
+      - name: Package Linux installer
+        if: runner.os == 'Linux'
+        run: python scripts/package-installer.py
+      - name: Package macOS installer
+        if: runner.os == 'macOS'
+        run: python scripts/package-installer.py
+      - name: Package Windows installer
+        if: runner.os == 'Windows'
+        run: python scripts/package-installer.py --iscc "C:/Program Files (x86)/Inno Setup 6/ISCC.exe"
       - name: Upload portable application and checksum
         uses: actions/upload-artifact@v4
         with:

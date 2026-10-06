@@ -196,6 +196,7 @@ impl LibrarySnapshot {
         filter: i32,
         patient_id: Option<u64>,
         requested_page: usize,
+        query: &iriscope_core::library::LibraryQuery,
     ) -> (
         Vec<iriscope_core::library::LibraryScanCandidate>,
         usize,
@@ -220,9 +221,13 @@ impl LibrarySnapshot {
                         3 => selected_patient.is_some_and(|id| entry.patient_id_hint == Some(id)),
                         _ => true,
                     };
-                    matches.then_some(index)
+                    (matches && query.matches(entry)).then_some(index)
                 })
                 .collect();
+            let mut indices: Vec<usize> = indices;
+            if query.oldest_first {
+                indices.reverse();
+            }
             self.selection = Some((filter, selected_patient, indices));
         }
         let indices = &self
@@ -248,9 +253,18 @@ pub(super) struct ThumbnailCache {
     pub(super) bytes: usize,
     pub(super) clock: u64,
     snapshot: Option<LibrarySnapshot>,
+    query: iriscope_core::library::LibraryQuery,
 }
 
 impl ThumbnailCache {
+    pub(super) fn set_query(&mut self, query: iriscope_core::library::LibraryQuery) {
+        if self.query != query {
+            self.query = query;
+            if let Some(snapshot) = self.snapshot.as_mut() {
+                snapshot.selection = None;
+            }
+        }
+    }
     pub(super) fn invalidate(&mut self) {
         self.entries.clear();
         self.bytes = 0;
@@ -304,7 +318,7 @@ impl ThumbnailCache {
                 });
             }
             let snapshot = self.snapshot.as_mut().expect("snapshot was initialized");
-            let result = snapshot.page(filter, patient_id, requested_page);
+            let result = snapshot.page(filter, patient_id, requested_page, &self.query);
             let entries = match iriscope_core::library::resolve_library_candidates_cancellable(
                 directory,
                 &result.0,
@@ -330,20 +344,26 @@ impl ThumbnailCache {
                     .entries
                     .iter_mut()
                     .find(|candidate| candidate.file_path == entry.file_path)
-                    && candidate.patient_id_hint != entry.patient_id
+                    && (candidate.patient_id_hint != entry.patient_id
+                        || candidate.eye_hint != entry.eye
+                        || candidate.date_str != entry.date_str
+                        || candidate.time_str != entry.time_str)
                 {
                     candidate.patient_id_hint = entry.patient_id;
+                    candidate.eye_hint = entry.eye;
+                    candidate.date_str.clone_from(&entry.date_str);
+                    candidate.time_str.clone_from(&entry.time_str);
                     corrected_hint = true;
                 }
             }
             if corrected_hint {
+                snapshot
+                    .entries
+                    .sort_by_key(|candidate| std::cmp::Reverse(candidate.timestamp()));
                 snapshot.selection = None;
-                if filter == 3 {
-                    // Each corrected selected hint removes at least one stale
-                    // candidate. Progress is finite and does not consume the
-                    // retry allowance reserved for concurrent filesystem edits.
-                    continue;
-                }
+                // A verified row may move out of the applied date/eye/dossier filter.
+                // Rebuild this page from the corrected hints before displaying it.
+                continue;
             }
             let unchanged = entries
                 .iter()
@@ -459,6 +479,7 @@ pub(super) struct LibraryPagePayloads {
     pub(super) error: Option<String>,
 }
 
+#[cfg(test)]
 pub(super) fn load_library_payloads(
     dir: &std::path::Path,
     active_session: &CaptureSession,
@@ -466,6 +487,45 @@ pub(super) fn load_library_payloads(
     requested_page: usize,
     cache: &mut ThumbnailCache,
     is_current: impl Fn() -> bool,
+) -> Option<LibraryPagePayloads> {
+    load_library_payloads_inner(
+        dir,
+        active_session,
+        filter,
+        requested_page,
+        cache,
+        is_current,
+        true,
+    )
+}
+
+pub(super) fn load_library_metadata(
+    dir: &std::path::Path,
+    active_session: &CaptureSession,
+    filter: i32,
+    requested_page: usize,
+    cache: &mut ThumbnailCache,
+    is_current: impl Fn() -> bool,
+) -> Option<LibraryPagePayloads> {
+    load_library_payloads_inner(
+        dir,
+        active_session,
+        filter,
+        requested_page,
+        cache,
+        is_current,
+        false,
+    )
+}
+
+pub(super) fn load_library_payloads_inner(
+    dir: &std::path::Path,
+    active_session: &CaptureSession,
+    filter: i32,
+    requested_page: usize,
+    cache: &mut ThumbnailCache,
+    is_current: impl Fn() -> bool,
+    load_thumbnails: bool,
 ) -> Option<LibraryPagePayloads> {
     if !is_current() {
         return None;
@@ -503,20 +563,10 @@ pub(super) fn load_library_payloads(
         if !is_current() {
             return None;
         }
-        let thumbnail = match item.kind {
-            CaptureKind::Photo => cache.get_or_load_cancellable(
-                &item.file_path,
-                |path| {
-                    let (width, height, rgb) = load_reference_cancellable(path, &is_current)?;
-                    resize_rgb8_to_fit(&rgb, width, height, 240).ok()
-                },
-                &is_current,
-            ),
-            CaptureKind::Video => cache.get_or_load_cancellable(
-                &item.file_path,
-                |path| load_video_thumbnail_cancellable(path, &is_current),
-                &is_current,
-            ),
+        let thumbnail = if load_thumbnails {
+            load_library_thumbnail(item.kind, &item.file_path, cache, &is_current)
+        } else {
+            None
         };
 
         payloads.push(LibraryItemPayload {
@@ -568,6 +618,48 @@ pub(super) fn load_library_payloads(
         page,
         error: None,
     })
+}
+
+fn load_library_thumbnail(
+    kind: CaptureKind,
+    path: &std::path::Path,
+    cache: &mut ThumbnailCache,
+    is_current: &dyn Fn() -> bool,
+) -> Option<SharedPixelBuffer<Rgb8Pixel>> {
+    cache.get_or_load_cancellable(
+        path,
+        |path| match kind {
+            CaptureKind::Video => load_video_thumbnail_cancellable(path, is_current),
+            CaptureKind::Photo => {
+                let (width, height, rgb) = load_reference_cancellable(path, is_current)?;
+                resize_rgb8_to_fit(&rgb, width, height, 240).ok()
+            }
+        },
+        is_current,
+    )
+}
+
+pub(super) fn load_payload_thumbnail(
+    item: &LibraryItemPayload,
+    cache: &mut ThumbnailCache,
+    is_current: &dyn Fn() -> bool,
+) -> Option<SharedPixelBuffer<Rgb8Pixel>> {
+    let path = std::path::Path::new(&item.file_path);
+    let matches = || {
+        is_current()
+            && iriscope_core::library::capture_file_version_cancellable(path, &|| !is_current())
+                .is_ok_and(|version| version.token() == item.file_version)
+    };
+    if !matches() {
+        return None;
+    }
+    let kind = if item.is_video {
+        CaptureKind::Video
+    } else {
+        CaptureKind::Photo
+    };
+    let pixels = load_library_thumbnail(kind, path, cache, is_current)?;
+    matches().then_some(pixels)
 }
 
 pub(super) fn present_library_payloads(payloads: Vec<LibraryItemPayload>) -> Vec<LibraryItemData> {
@@ -678,6 +770,35 @@ mod photo_library_tests {
             },
             context_generation: 0,
         }
+    }
+
+    #[test]
+    fn metadata_is_presented_without_decoding_and_thumbnail_rejects_replacement() {
+        let directory = TestDirectory::new();
+        let path = directory.0.join("photo.jpg");
+        std::fs::write(&path, encode_rgb8_jpeg(&[80; 12], 2, 2, 90).unwrap()).unwrap();
+        let mut cache = ThumbnailCache::default();
+        let page = super::load_library_metadata(
+            &directory.0,
+            &CaptureSession::default(),
+            0,
+            0,
+            &mut cache,
+            || true,
+        )
+        .unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert!(page.items[0].thumbnail.is_none());
+        assert_eq!(
+            cache.bytes, 0,
+            "metadata loading must not decode offscreen images"
+        );
+        assert!(super::load_payload_thumbnail(&page.items[0], &mut cache, &|| true).is_some());
+        std::fs::write(&path, encode_rgb8_jpeg(&[160; 12], 2, 2, 90).unwrap()).unwrap();
+        assert!(
+            super::load_payload_thumbnail(&page.items[0], &mut cache, &|| true).is_none(),
+            "a replacement must never appear under the previous dossier metadata"
+        );
     }
 
     #[test]
@@ -907,6 +1028,69 @@ mod photo_library_tests {
         assert_eq!(
             cache.snapshot.as_ref().expect("snapshot").scanned_at,
             first_scan
+        );
+    }
+
+    #[test]
+    fn date_eye_and_dossier_query_reorders_cached_pages_and_rejects_replaced_media() {
+        use iriscope_core::library::{CaptureKind, LibraryQuery, save_indexed_capture};
+        let directory = TestDirectory::new();
+        let patient =
+            iriscope_core::library::create_patient(&directory.0, "Ada", "Lovelace").unwrap();
+        let mut session = CaptureSession::new("Ada", "Lovelace", Eye::Left);
+        session.set_patient_id(Some(patient.id));
+        for day in 1..=3 {
+            let mut timestamp = CaptureTimestamp::now();
+            timestamp.year = 2026;
+            timestamp.month = 10;
+            timestamp.day = day;
+            save_indexed_capture(
+                &directory.0,
+                &format!("Iris_Gauche_2020-01-0{day}_00-00-00.jpg"),
+                b"original media",
+                &session,
+                CaptureKind::Photo,
+                timestamp,
+            )
+            .unwrap();
+        }
+        let mut cache = ThumbnailCache::default();
+        cache.set_query(
+            LibraryQuery::parse(&patient.dossier_number, "2026-10-01", "2026-10-03", 1, 1).unwrap(),
+        );
+        let (entries, total, _) = cache
+            .library_page(&directory.0, None, 0, 0, &|| true)
+            .unwrap();
+        assert_eq!(total, 3);
+        assert_eq!(entries[0].date_str, "2026-10-01");
+        assert_eq!(entries[2].date_str, "2026-10-03");
+        let original_scan = cache.snapshot.as_ref().unwrap().scanned_at;
+        cache.set_query(LibraryQuery::parse("", "2026-10-01", "2026-10-03", 1, 0).unwrap());
+        let (entries, _, _) = cache
+            .library_page(&directory.0, None, 0, 0, &|| true)
+            .unwrap();
+        assert_eq!(entries[0].date_str, "2026-10-03");
+        assert_eq!(cache.snapshot.as_ref().unwrap().scanned_at, original_scan);
+        std::fs::write(&entries[0].file_path, b"replaced content").unwrap();
+        let (entries, total, _) = cache
+            .library_page(&directory.0, None, 0, 0, &|| true)
+            .unwrap();
+        assert_eq!(
+            total, 2,
+            "replacement loses its trusted date and falls outside the applied period"
+        );
+        assert!(
+            entries
+                .iter()
+                .all(|entry| entry.date_str.as_str() >= "2026-10-01")
+        );
+        cache.set_query(LibraryQuery::parse("", "", "", 2, 0).unwrap());
+        assert_eq!(
+            cache
+                .library_page(&directory.0, None, 0, 0, &|| true)
+                .unwrap()
+                .1,
+            0
         );
     }
 

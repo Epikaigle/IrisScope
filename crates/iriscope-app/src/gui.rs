@@ -41,7 +41,13 @@ pub(crate) fn install_controllers(main_window: &MainWindow, runtime: &AppRuntime
     library_controller::install(main_window, runtime);
     capture_controller::install(main_window, runtime);
     viewer_controller::install(main_window, runtime);
+    crate::photo_tools::install(main_window, runtime);
+    crate::workflow_controller::install(main_window, runtime);
+    crate::date_controller::install(main_window);
     camera_controller::install(main_window, runtime);
     settings_controller::install(main_window, runtime);
+    crate::interface_controller::install(main_window, runtime);
+    crate::storage_controller::install(main_window, runtime);
+    crate::export_controller::install(main_window, runtime);
     runtime.install_close_guard(main_window);
 }

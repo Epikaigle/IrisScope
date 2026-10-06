@@ -4,7 +4,6 @@ use crate::camera_queue::{
     CameraSettingsSaveMailbox, ControlCommandMailbox, DecodeMailbox,
     run_camera_settings_save_worker,
 };
-use crate::config::DecodedFrame;
 use crate::controls_ui::CameraControlRuntimeState;
 use crate::library_worker::{LibraryRefreshMailbox, run_library_worker};
 use crate::patient_ui::{PatientSearchMailbox, run_patient_search_worker};
@@ -17,10 +16,14 @@ use iriscope_core::capture::LatestFrame;
 use iriscope_core::session::CaptureSession;
 use iriscope_core::settings::AppSettings;
 use slint::ComponentHandle;
+use slint::{Rgb8Pixel, SharedPixelBuffer};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
+
+type DecodedPreview = (u64, SharedPixelBuffer<Rgb8Pixel>);
+type PreviewFrameSlot = Arc<Mutex<Option<DecodedPreview>>>;
 
 #[derive(Default)]
 pub(super) struct WorkerOwner {
@@ -53,6 +56,8 @@ pub(super) struct AppRuntime {
     pub(super) directory_generation: Arc<AtomicU64>,
     pub(super) closing: Arc<AtomicBool>,
     pub(super) background_jobs: Arc<crate::background::BackgroundJobs>,
+    pub(super) storage_operation: Arc<crate::operation_progress::OperationControl>,
+    pub(super) export_operation: Arc<crate::operation_progress::OperationControl>,
     pub(super) reference_mailbox: Arc<crate::reference_worker::ReferenceMailbox>,
     pub(super) settings: Arc<Mutex<AppSettings>>,
     pub(super) settings_path: std::path::PathBuf,
@@ -62,7 +67,7 @@ pub(super) struct AppRuntime {
     pub(super) decode_mailbox: Arc<DecodeMailbox>,
     pub(super) stream_generation: Arc<AtomicU64>,
     pub(super) stream_restart_requested: Arc<AtomicBool>,
-    pub(super) latest_decoded_frame: Arc<Mutex<Option<(u64, DecodedFrame)>>>,
+    pub(super) latest_decoded_frame: PreviewFrameSlot,
     pub(super) decoded_frame_update_pending: Arc<AtomicBool>,
     pub(super) preview_active: Arc<AtomicBool>,
     pub(super) decode_time_micros: Arc<AtomicU64>,
@@ -91,6 +96,7 @@ pub(super) struct AppRuntime {
     workers: WorkerOwner,
     recording_duration_timer: slint::Timer,
     close_poll_timer: slint::Timer,
+    storage_timer: slint::Timer,
 }
 impl AppRuntime {
     pub(super) fn new(settings_value: AppSettings, settings_path: std::path::PathBuf) -> Self {
@@ -101,8 +107,7 @@ impl AppRuntime {
         let decode_mailbox = Arc::new(DecodeMailbox::default());
         let stream_generation = Arc::new(AtomicU64::new(0));
         let stream_restart_requested = Arc::new(AtomicBool::new(false));
-        let latest_decoded_frame: Arc<Mutex<Option<(u64, DecodedFrame)>>> =
-            Arc::new(Mutex::new(None));
+        let latest_decoded_frame: PreviewFrameSlot = Arc::new(Mutex::new(None));
         let decoded_frame_update_pending = Arc::new(AtomicBool::new(false));
         let preview_active = Arc::new(AtomicBool::new(true));
         let decode_time_micros = Arc::new(AtomicU64::new(0));
@@ -138,6 +143,8 @@ impl AppRuntime {
             directory_generation: Arc::new(AtomicU64::new(0)),
             closing: Arc::new(AtomicBool::new(false)),
             background_jobs: Arc::new(crate::background::BackgroundJobs::default()),
+            storage_operation: Arc::new(crate::operation_progress::OperationControl::default()),
+            export_operation: Arc::new(crate::operation_progress::OperationControl::default()),
             reference_mailbox: Arc::new(crate::reference_worker::ReferenceMailbox::default()),
             settings,
             settings_path,
@@ -176,10 +183,12 @@ impl AppRuntime {
             workers: WorkerOwner::default(),
             recording_duration_timer: slint::Timer::default(),
             close_poll_timer: slint::Timer::default(),
+            storage_timer: slint::Timer::default(),
         }
     }
     pub(super) fn start_workers(&mut self, main_window: &MainWindow) {
         self.start_auxiliary_workers(main_window);
+        self.start_storage_timer(main_window);
         let settings = Arc::clone(&self.settings);
         let settings_path = self.settings_path.clone();
         let recording_mailbox = Arc::clone(&self.recording_mailbox);
@@ -303,6 +312,74 @@ impl AppRuntime {
         );
     }
 
+    fn start_storage_timer(&self, window: &MainWindow) {
+        let weak = window.as_weak();
+        let settings = Arc::clone(&self.settings);
+        let jobs = Arc::clone(&self.background_jobs);
+        let pending = Arc::new(AtomicBool::new(false));
+        self.storage_timer.start(
+            slint::TimerMode::Repeated,
+            Duration::from_secs(5),
+            move || {
+                if pending.swap(true, Ordering::AcqRel) {
+                    return;
+                }
+                let weak = weak.clone();
+                let directory = settings_snapshot(&settings).capture_directory;
+                let settings = Arc::clone(&settings);
+                let completed = Arc::clone(&pending);
+                if !jobs.submit(move || {
+                    let result = iriscope_core::disk_space::available_space(&directory);
+                    completed.store(false, Ordering::Release);
+                    let _ = weak.upgrade_in_event_loop(move |win| {
+                        if settings_snapshot(&settings).capture_directory != directory {
+                            return;
+                        }
+                        let state = win.global::<crate::ui::AppState>();
+                        crate::storage_controller::refresh_backup_status(
+                            &win,
+                            &settings_snapshot(&settings),
+                        );
+                        match result {
+                            Ok(bytes) => {
+                                state.set_storage_low(
+                                    bytes < iriscope_core::disk_space::LOW_SPACE_THRESHOLD,
+                                );
+                                state.set_storage_critical(
+                                    bytes < iriscope_core::disk_space::MIN_CAPTURE_RESERVE,
+                                );
+                                state.set_storage_status(
+                                    format!(
+                                        "Espace disponible : {}.{} Gio{}",
+                                        bytes / 1_073_741_824,
+                                        (bytes % 1_073_741_824) * 10 / 1_073_741_824,
+                                        if state.get_storage_low() {
+                                            " · espace faible"
+                                        } else {
+                                            ""
+                                        }
+                                    )
+                                    .into(),
+                                );
+                                if state.get_storage_critical() && win.get_is_recording() {
+                                    state.invoke_toggle_recording();
+                                }
+                            }
+                            Err(error) => {
+                                state.set_storage_status(
+                                    format!("Espace disque non vérifié : {error}").into(),
+                                );
+                                state.set_storage_low(false);
+                                state.set_storage_critical(false);
+                            }
+                        }
+                    });
+                }) {
+                    pending.store(false, Ordering::Release);
+                }
+            },
+        );
+    }
     fn start_recording_timer(&self, main_window: &MainWindow) {
         self.recording_duration_timer
             .start(slint::TimerMode::Repeated, Duration::from_secs(1), {
@@ -357,6 +434,8 @@ impl AppRuntime {
         let recording = Arc::clone(&self.recording_mailbox);
         let patient_action = Arc::clone(&self.patient_action_pending);
         let recovery = Arc::clone(&self.recovery_pending);
+        let storage_operation = Arc::clone(&self.storage_operation);
+        let export_operation = Arc::clone(&self.export_operation);
         let weak = main_window.as_weak();
         let started = Arc::new(Mutex::new(None::<Instant>));
         let started_request = Arc::clone(&started);
@@ -364,6 +443,11 @@ impl AppRuntime {
         let preview_active = Arc::clone(&self.preview_active);
         let decode = Arc::clone(&self.decode_mailbox);
         main_window.window().on_close_requested(move || {
+            storage_operation.cancel();
+            export_operation.cancel();
+            if weak.upgrade().is_some_and(|win| save_pending_notes(&win)) {
+                return slint::CloseRequestResponse::KeepWindowShown;
+            }
             closing.store(true, Ordering::Release);
             controls.stop();
             preview_active.store(false, Ordering::Release);
@@ -374,6 +458,8 @@ impl AppRuntime {
                 && !recording.is_finalizing()
                 && !patient_action.load(Ordering::Acquire)
                 && !recovery.load(Ordering::Acquire)
+                && !storage_operation.is_running()
+                && !export_operation.is_running()
             {
                 return slint::CloseRequestResponse::HideWindow;
             }
@@ -392,6 +478,8 @@ impl AppRuntime {
         let recording = Arc::clone(&self.recording_mailbox);
         let patient_action = Arc::clone(&self.patient_action_pending);
         let recovery = Arc::clone(&self.recovery_pending);
+        let storage_operation = Arc::clone(&self.storage_operation);
+        let export_operation = Arc::clone(&self.export_operation);
         let weak = main_window.as_weak();
         let warned = Arc::new(AtomicBool::new(false));
         self.close_poll_timer.start(
@@ -405,6 +493,8 @@ impl AppRuntime {
                     && !recording.is_finalizing()
                     && !patient_action.load(Ordering::Acquire)
                     && !recovery.load(Ordering::Acquire)
+                    && !storage_operation.is_running()
+                    && !export_operation.is_running()
                 {
                     let _ = slint::quit_event_loop();
                     return;
@@ -427,10 +517,14 @@ impl AppRuntime {
     }
 
     pub(super) fn shutdown(&mut self) {
+        self.closing.store(true, Ordering::Release);
+        self.storage_operation.cancel();
+        self.export_operation.cancel();
         self.background_jobs.close();
         self.reference_mailbox.close();
         self.recording_duration_timer.stop();
         self.close_poll_timer.stop();
+        self.storage_timer.stop();
         self.viewer_generation.fetch_add(1, Ordering::AcqRel);
         self.map_generation.fetch_add(1, Ordering::AcqRel);
         self.symbols_generation.fetch_add(1, Ordering::AcqRel);
@@ -446,4 +540,23 @@ impl AppRuntime {
         self.camera_settings_save.close();
         self.workers.finish(Duration::from_secs(5));
     }
+}
+
+fn save_pending_notes(window: &MainWindow) -> bool {
+    let state = window.global::<crate::ui::AppState>();
+    if state.get_consultation_dirty() || state.get_consultation_saving() {
+        state.set_consultation_close_app_pending(true);
+        if !state.get_consultation_saving() {
+            state.invoke_save_consultation_notes();
+        }
+        return true;
+    }
+    if state.get_viewer_review_dirty() || state.get_viewer_review_busy() {
+        state.set_viewer_close_app_pending(true);
+        if !state.get_viewer_review_busy() {
+            state.invoke_save_viewer_review();
+        }
+        return true;
+    }
+    false
 }

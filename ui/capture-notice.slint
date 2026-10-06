@@ -3,44 +3,74 @@ import { AppState } from "./state.slint";
 import { Design } from "./theme.slint";
 
 export component CaptureNotice inherits Rectangle {
+    private property <bool> on-camera: AppState.current-tab == 0 && !AppState.viewer-open && !AppState.library-map-open && !AppState.patient-edit-open;
+    private property <bool> fullscreen-camera: root.on-camera && AppState.iris-fullscreen;
+    private property <bool> on-viewer: AppState.viewer-open || AppState.library-map-open;
+    private property <bool> has-status: AppState.is-recording || AppState.session-photo-count > 0 || AppState.is-frozen;
+    private property <length> preview-left: AppState.sidebar-visible && !AppState.presentation-mode ? clamp(AppState.camera-panel-width == 0 ? (root.width < 1120px ? 300px : 316px) : AppState.camera-panel-width * 1px,260px,max(260px,min(480px,root.width - 480px))) + 3 * Design.gap + 8px : Design.gap;
+    private property <length> available-width: max(0px, root.width - 2 * Design.inset - (root.on-camera && !root.fullscreen-camera ? root.preview-left + Design.gap : 0px));
     Rectangle {
-        x: (parent.width - self.width) / 2;
-        y: AppState.iris-fullscreen ? 16px : 72px;
-        width: min(max(0px, root.width - 32px), 600px);
-        height: max(56px, notice-content.preferred-height);
-        border-radius: Design.card-radius;
-        background: AppState.capture-notice-tone == 2 ? Design.error-surface : AppState.capture-notice-tone == 1 ? Design.success-surface : Design.info-surface;
+        x: root.fullscreen-camera ? Design.inset : root.on-camera ? root.preview-left + Design.inset : root.on-viewer ? (root.width < 900px ? Design.inset : 24px) : (parent.width - self.width) / 2;
+        y: root.fullscreen-camera ? Design.inset + (root.has-status ? 2 : 1) * (Design.control-height + Design.gap-small)
+            : root.on-camera ? 60px + Design.gap + Design.inset + (root.has-status ? Design.control-height + Design.gap-small : 0px) + (!AppState.sidebar-visible ? Design.control-height + Design.gap-small : 0px) : root.on-viewer ? 200px : 72px;
+        width: min(root.available-width, 600px, notice-content.preferred-width);
+        height: max(Design.control-height + 2 * Design.gap-small, notice-content.preferred-height);
+        border-radius: Design.control-radius;
+        background: Design.overlay-control;
         border-width: 1px;
-        border-color: AppState.capture-notice-tone == 2 ? Design.danger : AppState.capture-notice-tone == 1 ? Design.success : Design.accent;
+        border-color: AppState.capture-notice-tone == 2 ? Design.overlay-danger : Design.overlay-border;
+
+        Rectangle {
+            x: Design.overlay-padding;
+            y: (parent.height - self.height) / 2;
+            width: 6px;
+            height: 6px;
+            border-radius: 3px;
+            background: AppState.capture-notice-tone == 2 ? Design.overlay-danger : AppState.capture-notice-tone == 1 ? Design.overlay-success : Design.overlay-accent;
+        }
 
         notice-content := HorizontalLayout {
-            padding: 12px;
-            spacing: 12px;
+            padding-left: Design.overlay-padding + 14px;
+            padding-right: Design.overlay-padding;
+            padding-top: Design.gap-small;
+            padding-bottom: Design.gap-small;
+            spacing: Design.gap-small;
             Text {
                 min-width: 0px;
                 horizontal-stretch: 1;
-                text: AppState.last-capture-message;
-                color: Design.text;
-                font-size: 13px;
-                font-weight: 600;
+                text: AppState.presentation-mode ? (AppState.capture-notice-tone == 2 ? "La capture a échoué. Quittez la présentation pour consulter les détails." : AppState.capture-notice-tone == 1 ? "Capture enregistrée" : "Capture en cours…") : AppState.last-capture-message;
+                color: Design.overlay-text;
+                font-family: Design.font-ui;
+                font-size: Design.control-font-size;
+                font-weight: Design.control-font-weight;
+                letter-spacing: 0.1px;
                 vertical-alignment: center;
                 wrap: word-wrap;
                 vertical-stretch: 0;
             }
-            if AppState.has-last-capture && AppState.capture-notice-tone == 1: AppButton {
-                height: 32px;
-                compact: true;
-                text: "Voir";
-                accessibility-label: "Voir la dernière capture";
-                clicked => { AppState.open-capture-file(AppState.last-capture-path, AppState.last-capture-file-version); }
-            }
-            AppButton {
-                height: 32px;
-                compact: true;
-                quiet: true;
-                text: "×";
-                accessibility-label: "Fermer le message";
-                clicked => { AppState.show-last-capture = false; }
+            VerticalLayout {
+                horizontal-stretch: 0;
+                alignment: center;
+                HorizontalLayout {
+                    height: Design.control-height;
+                    vertical-stretch: 0;
+                    spacing: Design.gap-small;
+                    if AppState.has-last-capture && AppState.capture-notice-tone == 1: AppButton {
+                        height: Design.control-height;
+                        overlay: true;
+                        text: "Voir";
+                        accessibility-label: "Voir la dernière capture";
+                        clicked => { AppState.show-last-capture = false; AppState.open-capture-file(AppState.last-capture-path, AppState.last-capture-file-version); }
+                    }
+                    AppButton {
+                        width: Design.control-height;
+                        height: Design.control-height;
+                        overlay: true;
+                        text: "×";
+                        accessibility-label: "Fermer le message";
+                        clicked => { AppState.show-last-capture = false; }
+                    }
+                }
             }
         }
     }

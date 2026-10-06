@@ -1,7 +1,7 @@
 //! Small public harness for integration tests of the real Slint callbacks.
 //!
 //! It installs the same controllers as the application, but deliberately does
-//! not start camera, disk, or playback workers.
+//! not start workers by default. File-operation tests can opt into disk workers.
 use crate::gui::install_controllers;
 use crate::recording_worker::RecordingRequest;
 use crate::runtime::AppRuntime;
@@ -18,10 +18,11 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-/// A window wired to production controllers, with no native workers running.
+/// A window wired to production controllers, with optional file workers and no camera.
 pub struct ControllerHarness {
     window: MainWindow,
     runtime: AppRuntime,
+    file_workers: Vec<std::thread::JoinHandle<()>>,
 }
 
 /// Data copied from a photo request queued by the capture callback.
@@ -64,21 +65,104 @@ pub struct ViewerObservation {
 }
 
 impl ControllerHarness {
+    /// Access to the production window for interaction tests.
+    #[must_use]
+    pub fn window(&self) -> &MainWindow {
+        &self.window
+    }
+    /// Query currently applied to the library worker, independent of edited fields.
+    #[must_use]
+    pub fn applied_library_query(&self) -> iriscope_core::library::LibraryQuery {
+        self.runtime
+            .library_mailbox
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .query
+            .clone()
+    }
+
     /// Installs the production bindings without opening a camera or starting workers.
     ///
     /// # Errors
     ///
     /// Returns a Slint platform error when the test display cannot create a window.
     pub fn new(capture_directory: PathBuf) -> Result<Self, slint::PlatformError> {
-        let window = MainWindow::new()?;
         let settings_path = capture_directory.join("test-settings.json");
         let settings = AppSettings {
             capture_directory,
             ..AppSettings::default()
         };
+        Self::with_settings(settings, settings_path)
+    }
+
+    /// Uses an isolated configuration path for file-operation and upgrade tests.
+    /// # Errors
+    /// Returns interface initialization errors.
+    pub fn with_settings(
+        settings: AppSettings,
+        settings_path: PathBuf,
+    ) -> Result<Self, slint::PlatformError> {
+        let window = MainWindow::new()?;
+        window.set_settings_capture_directory(
+            settings
+                .capture_directory
+                .to_string_lossy()
+                .into_owned()
+                .into(),
+        );
         let runtime = AppRuntime::new(settings, settings_path);
         install_controllers(&window, &runtime);
-        Ok(Self { window, runtime })
+        Ok(Self {
+            window,
+            runtime,
+            file_workers: Vec::new(),
+        })
+    }
+
+    /// Starts production file jobs and settings persistence, without a camera.
+    /// # Panics
+    /// Panics if the file workers have already been started.
+    pub fn start_file_workers(&mut self) {
+        assert!(self.file_workers.is_empty());
+        for _ in 0..2 {
+            let jobs = Arc::clone(&self.runtime.background_jobs);
+            self.file_workers
+                .push(std::thread::spawn(move || jobs.run()));
+        }
+        let mailbox = Arc::clone(&self.runtime.camera_settings_save);
+        let settings = Arc::clone(&self.runtime.settings);
+        let path = self.runtime.settings_path.clone();
+        let weak = self.window.as_weak();
+        self.file_workers.push(std::thread::spawn(move || {
+            crate::camera_queue::run_camera_settings_save_worker(
+                &mailbox,
+                &settings,
+                &path,
+                Some(&weak),
+            );
+        }));
+    }
+
+    /// Starts the verified photo/video reader without a camera.
+    pub fn start_viewer_worker(&mut self) {
+        let mailbox = Arc::clone(&self.runtime.viewer_open_mailbox);
+        let runtime = crate::playback::ViewerRuntime {
+            weak: self.window.as_weak(),
+            generation: Arc::clone(&self.runtime.viewer_generation),
+            playing: Arc::clone(&self.runtime.viewer_video_playing),
+            frame_count: Arc::clone(&self.runtime.viewer_video_frame_count),
+            seek: Arc::clone(&self.runtime.viewer_video_seek_request),
+            display: Arc::clone(&self.runtime.viewer_display_mailbox),
+        };
+        self.file_workers
+            .push(std::thread::spawn(move || runtime.run(&mailbox)));
+    }
+
+    /// Current production settings for persistence and directory-association checks.
+    #[must_use]
+    pub fn current_settings(&self) -> AppSettings {
+        crate::app_helpers::settings_snapshot(&self.runtime.settings)
     }
 
     /// Sets the patient fields exactly as the Slint form would expose them.
@@ -436,5 +520,8 @@ impl ControllerHarness {
 impl Drop for ControllerHarness {
     fn drop(&mut self) {
         self.runtime.shutdown();
+        for worker in self.file_workers.drain(..) {
+            worker.join().expect("file worker");
+        }
     }
 }

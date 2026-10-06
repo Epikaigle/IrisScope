@@ -1,7 +1,7 @@
 use std::{cell::Cell, rc::Rc, thread, time::Duration};
 
 use slint::{
-    ComponentHandle, LogicalPosition, PhysicalSize,
+    ComponentHandle, LogicalPosition, LogicalSize, PhysicalSize,
     platform::{Key, PointerEventButton, WindowEvent},
 };
 
@@ -27,8 +27,15 @@ fn wait_for_controls_timeout(window: &MainWindow) {
     window.window().dispatch_event(WindowEvent::PointerMoved {
         position: LogicalPosition::new(700.0, 350.0),
     });
-    // The headless backend needs an explicit timer pump after elapsed wall time.
+    // Give users time to reach a command before the inactivity timer fires.
     thread::sleep(Duration::from_millis(1100));
+    slint::platform::update_timers_and_animations();
+    assert!(
+        window.global::<AppState>().get_viewport_controls_visible(),
+        "controls must allow more than one second to reach a command"
+    );
+    // The headless backend needs an explicit timer pump after elapsed wall time.
+    thread::sleep(Duration::from_millis(2000));
     slint::platform::update_timers_and_animations();
     assert!(
         !window.global::<AppState>().get_viewport_controls_visible(),
@@ -69,7 +76,7 @@ fn fullscreen_keyboard_controls_remain_visible_and_reappear_on_tab(window: &Main
                 .global::<AppState>()
                 .get_viewport_controls_interacting()
         );
-        thread::sleep(Duration::from_millis(1100));
+        thread::sleep(Duration::from_millis(3100));
         slint::platform::update_timers_and_animations();
         assert!(
             window.global::<AppState>().get_viewport_controls_visible(),
@@ -114,6 +121,48 @@ fn permanent_toolbar_and_fullscreen_exit_follow_overlay_visibility(window: &Main
         !window.get_iris_fullscreen(),
         "moving over the image should reveal the fullscreen exit control"
     );
+}
+
+fn fullscreen_pointer_commands_stay_visible_while_hovered_or_pressed(window: &MainWindow) {
+    window.set_iris_fullscreen(true);
+    window.window().dispatch_event(WindowEvent::PointerMoved {
+        position: LogicalPosition::new(700.0, 350.0),
+    });
+    let exit_position = LogicalPosition::new(930.0, 35.0);
+    window.window().dispatch_event(WindowEvent::PointerMoved {
+        position: exit_position,
+    });
+    thread::sleep(Duration::from_millis(3100));
+    slint::platform::update_timers_and_animations();
+    assert!(
+        window.global::<AppState>().get_viewport_controls_visible(),
+        "hovering a fullscreen command must suspend auto-hide"
+    );
+    window.window().dispatch_event(WindowEvent::PointerPressed {
+        position: exit_position,
+        button: PointerEventButton::Left,
+    });
+    let away = LogicalPosition::new(700.0, 350.0);
+    window
+        .window()
+        .dispatch_event(WindowEvent::PointerMoved { position: away });
+    thread::sleep(Duration::from_millis(3100));
+    slint::platform::update_timers_and_animations();
+    assert!(
+        window.global::<AppState>().get_viewport_controls_visible(),
+        "holding a command must suspend auto-hide after moving away"
+    );
+    window
+        .window()
+        .dispatch_event(WindowEvent::PointerReleased {
+            position: away,
+            button: PointerEventButton::Left,
+        });
+    assert!(
+        window.get_iris_fullscreen(),
+        "release outside cancels the action"
+    );
+    escape(window);
 }
 
 fn wheel_zoom_and_resize_keep_image_pan_bounded(window: &MainWindow) {
@@ -285,8 +334,12 @@ fn fullscreen_recording_can_stop_during_patient_actions(window: &MainWindow) {
 
 fn fullscreen_exit_stays_available_after_stream_loss(window: &MainWindow) {
     let image_position = LogicalPosition::new(700.0, 350.0);
-    click(window, 930.0, 35.0);
-    assert!(!window.get_iris_fullscreen());
+    click(window, 700.0, 350.0);
+    escape(window);
+    assert!(
+        !window.get_iris_fullscreen(),
+        "Escape must exit fullscreen after focusing the image"
+    );
     click(window, 955.0, 688.0);
     assert!(window.get_iris_fullscreen());
 
@@ -312,21 +365,51 @@ fn fullscreen_exit_stays_available_after_stream_loss(window: &MainWindow) {
 fn toolbar_and_hidden_panel_capture_remain_usable_after_resizing(window: &MainWindow) {
     window.set_is_streaming(true);
     window.set_sidebar_visible(true);
-    for (width, height) in [(800, 600), (1024, 720), (1360, 860), (1920, 1080)] {
-        window.window().set_size(PhysicalSize::new(width, height));
-        #[allow(clippy::cast_precision_loss)] // These small display sizes are exact f32 integers.
-        let (x, y) = (width as f32 - 70.0, height as f32 - 36.0);
-        click(window, x, y);
-        assert!(
-            window.get_iris_fullscreen(),
-            "toolbar is reachable at {width}×{height}"
-        );
-        click(window, x, 35.0);
-        assert!(
-            !window.get_iris_fullscreen(),
-            "fullscreen exit fits its label"
-        );
+    window.set_has_last_capture(true);
+    window.set_last_capture_message("Photo enregistrée.".into());
+    for scale in [1.0, 1.25, 1.5, 2.0] {
+        window
+            .window()
+            .dispatch_event(WindowEvent::ScaleFactorChanged {
+                scale_factor: scale,
+            });
+        for (width, height) in [
+            (800.0, 600.0),
+            (1024.0, 720.0),
+            (1360.0, 860.0),
+            (1920.0, 1080.0),
+        ] {
+            window.window().set_size(LogicalSize::new(width, height));
+            click(window, width - 70.0, height - 36.0);
+            assert!(
+                window.get_iris_fullscreen(),
+                "toolbar is reachable at {width}×{height}, scale {scale}"
+            );
+            for (x, y) in [
+                (width - 8.0, 35.0),
+                (width - 70.0, 8.0),
+                (width - 70.0, 60.0),
+                (width - 300.0, 35.0),
+            ] {
+                click(window, x, y);
+                assert!(
+                    window.get_iris_fullscreen(),
+                    "exit must have bounded dimensions and inset margins"
+                );
+            }
+            window.set_show_last_capture(true);
+            click(window, width - 140.0, 35.0);
+            assert!(
+                !window.get_iris_fullscreen(),
+                "the capture notice must leave fullscreen exit accessible"
+            );
+            window.set_show_last_capture(false);
+        }
     }
+    window.set_has_last_capture(false);
+    window
+        .window()
+        .dispatch_event(WindowEvent::ScaleFactorChanged { scale_factor: 1.0 });
 
     window.window().set_size(PhysicalSize::new(800, 600));
     window.set_sidebar_visible(false);
@@ -381,6 +464,7 @@ fn permanent_toolbar_zoom_and_guarded_fullscreen_capture_work_from_the_live_view
 
     permanent_toolbar_and_fullscreen_exit_follow_overlay_visibility(&window);
     fullscreen_keyboard_controls_remain_visible_and_reappear_on_tab(&window);
+    fullscreen_pointer_commands_stay_visible_while_hovered_or_pressed(&window);
     wheel_zoom_and_resize_keep_image_pan_bounded(&window);
     arrow_keys_move_the_focused_zoomed_image(&window);
     fullscreen_photo_capture_respects_patient_and_finalization_guards(&window);

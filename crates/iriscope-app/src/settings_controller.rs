@@ -47,6 +47,7 @@ pub(super) fn load_settings(
     {
         DEFAULT_FILENAME_TEMPLATE.clone_into(&mut loaded_settings.filename_template);
     }
+    loaded_settings.interface.normalize();
     let initial_save = loaded_settings.save_to_file(&settings_path);
     match (recovered_settings, initial_save) {
         (Some(backup), Ok(())) => settings_error(
@@ -105,6 +106,7 @@ pub(super) fn load_settings(
 
 #[allow(clippy::too_many_lines)]
 pub(super) fn install(main_window: &MainWindow, runtime: &AppRuntime) {
+    crate::file_dialogs::install(main_window, runtime);
     let settings = Arc::clone(&runtime.settings);
     let stream_restart_requested = Arc::clone(&runtime.stream_restart_requested);
     let camera_settings_save = Arc::clone(&runtime.camera_settings_save);
@@ -321,7 +323,7 @@ fn bind_capture_directory(main_window: &MainWindow, runtime: &AppRuntime) {
             let Some(win) = weak_directory.upgrade() else {
                 return;
             };
-            if closing.load(Ordering::Acquire) {
+            if closing.load(Ordering::Acquire) || win.global::<AppState>().get_storage_busy() {
                 return;
             }
             if win.get_is_recording()
@@ -388,6 +390,10 @@ fn bind_capture_directory(main_window: &MainWindow, runtime: &AppRuntime) {
                     win.set_settings_capture_directory(
                         directory.to_string_lossy().to_string().into(),
                     );
+                    crate::storage_controller::refresh_backup_status(
+                        &win,
+                        &settings_snapshot(&settings_directory),
+                    );
                     queue_settings_save(
                         &win,
                         &save_directory,
@@ -395,6 +401,8 @@ fn bind_capture_directory(main_window: &MainWindow, runtime: &AppRuntime) {
                     );
                     if changed {
                         photo_generation_directory.fetch_add(1, Ordering::AcqRel);
+                        win.global::<AppState>().invoke_clear_comparison_image();
+                        win.global::<AppState>().set_viewer_path("".into());
                         win.set_patient_id("".into());
                         win.set_patient_dossier_number("".into());
                         clear_patient_candidates(&win);

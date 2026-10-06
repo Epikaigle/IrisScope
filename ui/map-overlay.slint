@@ -259,6 +259,7 @@ export component MapOverlay inherits Rectangle {
                         width: 0px;
                         height: 0px;
                         enabled: root.reference-loaded && AppState.iridology-reference-zoom > 100;
+                        KeyBinding { keys: @keys(Escape); activated => { AppState.dismiss-top-overlay(); } }
                         key-pressed(event) => {
                             if event.text == Key.LeftArrow {
                                 AppState.iridology-reference-pan-x = clamp(

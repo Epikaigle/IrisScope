@@ -476,13 +476,16 @@ pub(super) fn run_recording_worker(
     while let Some(command) = mailbox.receive() {
         match command {
             RecordingCommand::Start(generation, request) => {
-                match AviMjpegWriter::create_unique(
-                    &request.directory,
-                    ".iriscope-recording.part",
-                    request.width,
-                    request.height,
-                    request.frame_rate,
-                ) {
+                match iriscope_core::disk_space::ensure_available_space(&request.directory, 0)
+                    .and_then(|()| {
+                        AviMjpegWriter::create_unique(
+                            &request.directory,
+                            ".iriscope-recording.part",
+                            request.width,
+                            request.height,
+                            request.frame_rate,
+                        )
+                    }) {
                     Ok((writer, pending_path)) => {
                         active = Some(ActiveRecording {
                             generation,

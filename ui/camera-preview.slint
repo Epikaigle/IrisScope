@@ -1,5 +1,5 @@
-import { AppButton, AppSlider } from "./controls.slint";
-import { ScrollView } from "std-widgets.slint";
+import { AppButton, AppSlider, HelpText, OverlayBadge } from "./controls.slint";
+import { ScrollView, ComboBox } from "std-widgets.slint";
 import { AppState } from "./state.slint";
 import { Design } from "./theme.slint";
 
@@ -92,6 +92,7 @@ export component CameraPreview inherits Rectangle {
             width: 0px;
             height: 0px;
             focus-on-tab-navigation: AppState.is-streaming && AppState.zoom-level > 100;
+            KeyBinding { keys: @keys(Escape); activated => { AppState.dismiss-top-overlay(); } }
             key-pressed(event) => {
                 if !AppState.is-streaming || AppState.zoom-level <= 100 { return reject; }
                 if event.text == Key.LeftArrow {
@@ -123,12 +124,13 @@ export component CameraPreview inherits Rectangle {
 
         fullscreen-exit := AppButton {
             width: self.preferred-width;
-            x: parent.width - self.width - 16px;
-            y: AppState.is-frozen ? 56px : 16px;
-            height: 36px;
+            x: parent.width - self.width - Design.inset;
+            y: Design.inset;
+            height: Design.control-height;
             overlay: true;
             visible: AppState.iris-fullscreen && AppState.viewport-controls-visible;
             text: AppState.iris-fullscreen ? "Quitter le plein écran" : "Plein écran";
+            tooltip: "Revenir à la vue caméra · Échap";
             clicked => {
                 AppState.image-controls-open = false;
                 AppState.iris-fullscreen = !AppState.iris-fullscreen;
@@ -136,11 +138,11 @@ export component CameraPreview inherits Rectangle {
             }
         }
 
-        if !AppState.sidebar-visible && !AppState.iris-fullscreen: AppButton {
+        if !AppState.sidebar-visible && !AppState.iris-fullscreen && !AppState.presentation-mode: AppButton {
             width: self.preferred-width;
-            x: 12px;
-            y: AppState.is-recording || AppState.session-photo-count > 0 ? 56px : 16px;
-            height: 40px;
+            x: Design.inset;
+            y: AppState.is-recording || AppState.session-photo-count > 0 || AppState.is-frozen ? Design.inset + Design.control-height + Design.gap-small : Design.inset;
+            height: Design.control-height;
             text: "Afficher le panneau";
             overlay: true;
             compact: true;
@@ -152,16 +154,36 @@ export component CameraPreview inherits Rectangle {
         viewport-capture := AppButton {
             width: self.preferred-width;
             x: (parent.width - self.width) / 2;
-            y: parent.height - self.height - (AppState.iris-fullscreen ? 20px : 40px);
-            height: AppState.iris-fullscreen ? 48px : Design.capture-height;
-            visible: (AppState.iris-fullscreen || !AppState.sidebar-visible)
-                && (!AppState.iris-fullscreen || AppState.viewport-controls-visible);
+            y: parent.height - self.height - (AppState.iris-fullscreen ? Design.inset : 40px);
+            height: Design.capture-height;
+            visible: (AppState.iris-fullscreen || !AppState.sidebar-visible || AppState.presentation-mode)
+                && (!AppState.iris-fullscreen || AppState.viewport-controls-visible || AppState.is-recording || AppState.recording-busy);
             text: AppState.capture-label;
             primary: !AppState.is-recording;
             danger: AppState.is-recording;
             overlay: true;
             enabled: self.visible && AppState.capture-enabled;
             clicked => { AppState.capture(); }
+        }
+        if AppState.iris-fullscreen && AppState.viewport-controls-visible && !AppState.capture-enabled: Rectangle {
+            width: min(360px, parent.width - 32px);
+            height: capture-reason.preferred-height + 16px;
+            x: (parent.width - self.width) / 2;
+            y: viewport-capture.y - self.height - 8px;
+            background: Design.overlay-panel;
+            border-radius: Design.control-radius;
+            capture-reason := Text {
+                x: 12px;
+                y: 8px;
+                width: parent.width - 24px;
+                text: AppState.capture-hint;
+                color: Design.overlay-text;
+                font-family: Design.font-ui;
+                font-size: Design.control-font-size;
+                font-weight: Design.control-font-weight;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+            }
         }
         if !AppState.sidebar-visible && !AppState.iris-fullscreen: Text {
             x: 16px;
@@ -259,88 +281,57 @@ export component CameraPreview inherits Rectangle {
             animate opacity { duration: 180ms; easing: ease-out; }
         }
 
-        // Recording overlay indicator
-        if AppState.is-recording: Rectangle {
-            x: 16px;
-            y: 16px;
-            width: 120px;
-            height: 32px;
-            border-radius: 16px;
-            background: Design.overlay-danger-surface;
-
-            HorizontalLayout {
-                alignment: center;
-                spacing: 6px;
-
-                Rectangle {
-                    width: 10px;
-                    height: 10px;
-                    border-radius: 5px;
-                    background: Design.overlay-danger;
-                }
-
-                Text {
-                    text: "REC " + AppState.recording-duration;
-                    color: Design.overlay-text;
-                    font-size: 14px;
-                    font-weight: 700;
-                }
-            }
+        if AppState.iris-fullscreen: OverlayBadge {
+            x: Design.inset;
+            y: Design.inset;
+            width: min(self.preferred-width, parent.width - 2 * Design.inset - fullscreen-exit.width - Design.gap-small);
+            text: (AppState.presentation-mode ? "Présentation" : AppState.patient-dossier-number == "" ? "Sans dossier patient" : "Dossier " + AppState.patient-dossier-number)
+                    + " · " + (AppState.selected-eye == 1 ? "Œil gauche" : AppState.selected-eye == 2 ? "Œil droit" : "Œil à choisir")
+                    + " · " + (AppState.is-video-mode ? "Vidéo" : "Photo");
         }
 
-        // Session photo count badge
-        if AppState.session-photo-count > 0: Rectangle {
-            x: AppState.is-recording ? 148px : 16px;
-            y: 16px;
-            width: 130px;
-            height: 32px;
-            border-radius: 16px;
-            background: Design.overlay-control;
-            border-width: 1.5px;
-            border-color: Design.overlay-border;
-
-            HorizontalLayout {
-                padding-left: 12px;
-                padding-right: 12px;
-                alignment: center;
-                spacing: 6px;
-
-                Text {
-                    text: AppState.session-photo-count + (AppState.session-photo-count > 1 ? " photos" : " photo");
-                    color: Design.overlay-accent;
-                    font-size: 13px;
-                    font-weight: 700;
-                }
+        if AppState.presentation-mode: HorizontalLayout {
+            x: Design.inset; y: Design.inset + (AppState.iris-fullscreen ? 2 : 1) * (Design.control-height + Design.gap-small);
+            width: self.preferred-width; height: Design.control-height; spacing: 4px;
+            if AppState.recording-busy: OverlayBadge {text:AppState.selected-eye == 1 ? "Œil gauche" : AppState.selected-eye == 2 ? "Œil droit" : "Œil à choisir";}
+            if !AppState.recording-busy: HorizontalLayout { spacing: 4px;
+            for eye in [{id:1,label:"Gauche"},{id:2,label:"Droit"}]: AppButton {
+                compact: true; overlay: true; text: eye.label; checkable: true; selected: AppState.selected-eye == eye.id;
+                enabled: !AppState.recording-busy;
+                clicked => {AppState.selected-eye=eye.id; AppState.session-changed();}
             }
+            }
+            if AppState.iris-fullscreen: AppButton {compact:true; overlay:true; text:"Fin présentation"; clicked=>{AppState.toggle-presentation();}}
         }
 
-        // Frozen image indicator
-        if AppState.is-frozen: Rectangle {
-            x: parent.width - 144px;
-            y: 16px;
-            width: 128px;
-            height: 32px;
-            border-radius: 16px;
-            background: Design.overlay-control;
-            border-width: 1px;
-            border-color: Design.overlay-border;
+        recording-badge := OverlayBadge {
+            visible: AppState.is-recording;
+            x: Design.inset;
+            y: AppState.iris-fullscreen ? Design.inset + Design.control-height + Design.gap-small : Design.inset;
+            recording: true;
+            text: "REC " + AppState.recording-duration;
+        }
 
-            HorizontalLayout {
-                alignment: center;
-                Text {
-                    text: "Image figée";
-                    color: Design.overlay-text;
-                    font-size: 13px;
-                    font-weight: 700;
-                }
-            }
+        OverlayBadge {
+            visible: AppState.session-photo-count > 0;
+            x: AppState.is-recording ? recording-badge.x + recording-badge.width + Design.gap-small : Design.inset;
+            y: recording-badge.y;
+            text: AppState.session-photo-count + (AppState.session-photo-count > 1 ? " photos" : " photo");
+        }
+
+        OverlayBadge {
+            visible: AppState.is-frozen;
+            x: parent.width - self.width - Design.inset;
+            y: recording-badge.y;
+            text: "Image figée";
         }
 
         if AppState.image-controls-open: Rectangle {
             forward-focus: image-controls-close;
             init => { image-controls-close.focus(); }
-            x: 16px;
-            y: AppState.is-recording || AppState.session-photo-count > 0 ? 56px : 16px;
+            x: Design.inset;
+            y: Design.inset + (AppState.is-recording || AppState.session-photo-count > 0 || AppState.is-frozen ? 1 : 0) * (Design.control-height + Design.gap-small)
+                + (AppState.iris-fullscreen ? Design.control-height + Design.gap-small : 0px);
             width: min(360px, parent.width - 32px);
             height: min(parent.height - self.y - 16px, AppState.camera-controls.length == 0 ? 200px : 488px);
             border-radius: Design.card-radius;
@@ -415,12 +406,13 @@ export component CameraPreview inherits Rectangle {
                                     height: 20px;
                                     vertical-stretch: 0;
                                     alignment: space-between;
-                                    Text {
+                                    HelpText {
                                         height: 20px;
                                         min-width: 0px;
                                         horizontal-stretch: 1;
                                         overflow: elide;
                                         text: control.name;
+                                        full-text: control.kind == 2 ? control.name + "\n" + control.menu-label : control.name;
                                         color: Design.overlay-text;
                                         font-size: 12px;
                                         font-weight: 600;
@@ -501,17 +493,15 @@ export component CameraPreview inherits Rectangle {
                                     enabled: !control.read-only;
                                     clicked => { AppState.set-camera-control-bool(control.key, !control.boolean-value); }
                                 }
-                                if control.kind == 2: AppButton {
-                                    overlay: true;
-                                    compact: true;
+                                if control.kind == 2: menu := ComboBox {
                                     height: 32px;
+                                    min-width: 0px;
                                     vertical-stretch: 0;
-                                    text: control.menu-label;
-                                    elide-text: true;
-                                    horizontal-stretch: 1;
-                                    accessibility-label: control.name + " : " + control.menu-label;
-                                    enabled: !control.read-only;
-                                    clicked => { AppState.cycle-camera-control-menu(control.key); }
+                                    model: control.menu-options;
+                                    current-index: control.menu-index;
+                                    enabled: !control.read-only && control.menu-options.length > 0;
+                                    accessible-label: control.name;
+                                    selected => { AppState.select-camera-control-menu(control.key, self.current-index); }
                                 }
                             }
                         }
@@ -536,7 +526,7 @@ export component CameraPreview inherits Rectangle {
         width: 100%;
         height: root.tools-height;
         background: Design.surface;
-        Rectangle { width: 100%; height: 1px; background: Design.border; }
+        Rectangle { y: 0px; width: 100%; height: 1px; background: Design.border; }
         GridLayout {
             padding: 8px;
             spacing: root.compact-tools ? 12px : 8px;
@@ -596,6 +586,7 @@ export component CameraPreview inherits Rectangle {
                     height: 32px; compact: true; quiet: true;
                     text: AppState.rotation-angle + "°";
                     accessibility-label: "Faire pivoter l'image de 90 degrés";
+                    tooltip: "Faire pivoter l’image de 90°";
                     enabled: AppState.is-streaming;
                     clicked => { AppState.rotation-angle = Math.mod(AppState.rotation-angle + 90, 360); AppState.zoom-pan-x = 0px; AppState.zoom-pan-y = 0px; }
                 }
@@ -603,6 +594,7 @@ export component CameraPreview inherits Rectangle {
                     height: 32px; compact: true; quiet: true;
                     text: "Miroir H";
                     accessibility-label: "Miroir horizontal";
+                    tooltip: "Miroir horizontal";
                     checkable: true;
                     selected: AppState.mirror-horizontal;
                     enabled: AppState.is-streaming;
@@ -612,6 +604,7 @@ export component CameraPreview inherits Rectangle {
                     height: 32px; compact: true; quiet: true;
                     text: "Miroir V";
                     accessibility-label: "Miroir vertical";
+                    tooltip: "Miroir vertical";
                     checkable: true;
                     selected: AppState.mirror-vertical;
                     enabled: AppState.is-streaming;
@@ -628,6 +621,7 @@ export component CameraPreview inherits Rectangle {
                 AppButton {
                     height: 32px; compact: true;
                     text: "Plein écran";
+                    tooltip: "Agrandir l’aperçu · Échap pour revenir";
                     clicked => { AppState.image-controls-open = false; AppState.iris-fullscreen = true; AppState.show-viewport-controls(); }
                 }
             }

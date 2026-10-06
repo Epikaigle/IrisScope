@@ -1,0 +1,33 @@
+import { AppState } from "./state.slint";
+import { Design } from "./theme.slint";
+import { AppButton } from "./controls.slint";
+import { LineEdit } from "std-widgets.slint";
+export component PatientEdit inherits Rectangle {
+    background: Design.overlay-surface;
+    forward-focus: corrected-first-name;
+    init => { corrected-first-name.focus(); }
+    TouchArea { clicked => {} }
+    Rectangle {
+        width: min(460px, parent.width - 32px); height: content.preferred-height;
+        x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+        background: Design.surface; border-radius: Design.card-radius;
+        content := VerticalLayout {
+            padding: 20px; spacing: 12px;
+            Text { text: "Corriger le dossier " + AppState.patient-dossier-number; color: Design.text; font-size: 18px; font-weight: 600; wrap: word-wrap; }
+            Text { text: "Le numéro du dossier et ses captures seront conservés. Les fichiers existants garderont leur nom."; color: Design.text-secondary; font-size: 12px; wrap: word-wrap; }
+            corrected-first-name := LineEdit { height: 36px; text <=> AppState.patient-edit-first; placeholder-text: "Prénom"; accessible-label: "Prénom corrigé"; enabled: !AppState.patient-action-pending;
+                changed has-focus => { AppState.focused-text-fields = max(0, AppState.focused-text-fields + (self.has-focus ? 1 : -1)); }
+            }
+            LineEdit { height: 36px; text <=> AppState.patient-edit-last; placeholder-text: "Nom"; accessible-label: "Nom corrigé"; enabled: !AppState.patient-action-pending;
+                changed has-focus => { AppState.focused-text-fields = max(0, AppState.focused-text-fields + (self.has-focus ? 1 : -1)); }
+            }
+            HorizontalLayout { height: 36px; spacing: 8px;
+                AppButton { text: "Annuler"; quiet: true; enabled: !AppState.patient-action-pending; clicked => { AppState.dismiss-top-overlay(); } }
+                AppButton { text: AppState.patient-action-pending ? "Enregistrement…" : "Enregistrer"; primary: true;
+                    enabled: AppState.patient-edit-first != "" && AppState.patient-edit-last != "" && !AppState.patient-action-pending;
+                    clicked => { AppState.edit-patient(AppState.patient-edit-first, AppState.patient-edit-last); }
+                }
+            }
+        }
+    }
+}

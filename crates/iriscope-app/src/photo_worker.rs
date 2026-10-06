@@ -14,7 +14,7 @@ use iriscope_core::storage::{CaptureNamingPolicy, CaptureTimestamp};
 use iriscope_imaging::{
     decode_mjpeg_to_rgb8, encode_rgb8_png, ensure_jpeg_has_dht, resize_rgb8_to_fit,
 };
-use slint::{Rgb8Pixel, SharedPixelBuffer};
+use slint::{ComponentHandle, Rgb8Pixel, SharedPixelBuffer};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -141,6 +141,8 @@ pub(super) fn save_photo(request: &PhotoRequest) -> Result<SavedPhoto, String> {
         }
         _ => return Err("Le format caméra actif ne peut pas être enregistré en photo.".to_owned()),
     };
+    iriscope_core::disk_space::ensure_available_space(&request.directory, bytes.len() as u64)
+        .map_err(|error| error.to_string())?;
     let policy = CaptureNamingPolicy::new(&request.filename_template);
     let file_name = policy.filename(&request.session, request.timestamp, extension);
     let committed = save_indexed_capture(
@@ -210,6 +212,12 @@ pub(super) fn run_photo_worker(
                 Ok(photo) => {
                     let count = win.get_session_photo_count() + 1;
                     win.set_session_photo_count(count);
+                    let progress = win.global::<crate::ui::AppState>();
+                    if win.get_selected_eye() == 1 {
+                        progress.set_session_left_count(progress.get_session_left_count() + 1);
+                    } else if win.get_selected_eye() == 2 {
+                        progress.set_session_right_count(progress.get_session_right_count() + 1);
+                    }
                     let display_name = photo
                         .path
                         .file_name()

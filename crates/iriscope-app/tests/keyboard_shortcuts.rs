@@ -158,23 +158,39 @@ fn library_modes_open_capture_and_close_map() {
     click(&window, 974.0, 168.0);
     assert_eq!(window.get_library_view(), 1);
     // Focus the card through its thumbnail, away from the open action buttons.
-    click(&window, 40.0, 210.0);
+    click(&window, 40.0, 326.0);
     card_keyboard_selection_preserves_capture_identity(&window, " ");
     assert_eq!((opens.get(), external_opens.get()), (0, 0));
-    click(&window, 875.0, 246.0);
+    click(&window, 875.0, 362.0);
     assert_eq!(opens.get(), 1);
-    click(&window, 950.0, 246.0);
+    click(&window, 950.0, 362.0);
     assert_eq!(external_opens.get(), 1);
 
     click(&window, 924.0, 168.0);
     assert_eq!(window.get_library_view(), 0);
-    click(&window, 200.0, 300.0);
+    click(&window, 200.0, 416.0);
     card_keyboard_selection_preserves_capture_identity(&window, "\n");
     assert_eq!((opens.get(), external_opens.get()), (1, 1));
     click(&window, 760.0, 112.0);
     assert!(window.get_library_map_open());
     click(&window, 960.0, 50.0);
     assert!(!window.get_library_map_open());
+    click(&window, 760.0, 112.0);
+    window.global::<AppState>().set_has_iridology_map(true);
+    window
+        .global::<AppState>()
+        .set_iridology_reference_zoom(200);
+    click(&window, 500.0, 400.0);
+    window.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::Escape.into(),
+    });
+    window.window().dispatch_event(WindowEvent::KeyReleased {
+        text: Key::Escape.into(),
+    });
+    assert!(
+        !window.get_library_map_open(),
+        "Escape must close a focused reference image"
+    );
 }
 
 fn card_keyboard_selection_preserves_capture_identity(window: &MainWindow, key: &str) {
@@ -348,6 +364,8 @@ fn shortcuts_follow_active_page_capture_guards_and_viewer() {
     assert!(!window.get_viewer_open());
     assert_eq!(viewer_closes.get(), 1);
     window.set_viewer_open(true);
+    window.set_viewer_zoom(200);
+    click(&window, 700.0, 350.0);
     control_key(&window, "1");
     assert_eq!(window.get_current_tab(), 2);
     window.window().dispatch_event(WindowEvent::KeyPressed {

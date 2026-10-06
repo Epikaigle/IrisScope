@@ -46,7 +46,11 @@ pub(super) fn install(main_window: &MainWindow, runtime: &AppRuntime) {
         .global::<AppState>()
         .on_trigger_capture(move || {
             let Some(win) = weak.upgrade() else { return };
-            if closing_photo.load(Ordering::Acquire) {
+            if closing_photo.load(Ordering::Acquire)
+                || win.global::<AppState>().get_storage_busy()
+                || win.global::<AppState>().get_storage_critical()
+                || win.global::<AppState>().get_patient_edit_open()
+            {
                 return;
             }
             if win.get_recording_finalizing() {
@@ -161,6 +165,13 @@ pub(super) fn install(main_window: &MainWindow, runtime: &AppRuntime) {
                 return;
             }
             let currently_recording = recording_mailbox_rec.active_generation().is_some();
+            if !currently_recording
+                && (win.global::<AppState>().get_storage_busy()
+                    || win.global::<AppState>().get_storage_critical()
+                    || win.global::<AppState>().get_patient_edit_open())
+            {
+                return;
+            }
             let recording_settings = settings_snapshot(&settings_rec);
 
             if currently_recording {

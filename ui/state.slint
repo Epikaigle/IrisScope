@@ -1,6 +1,52 @@
-import { DiagnosticData, LibraryItemData, CameraControlUiData, PatientCandidateData } from "./models.slint";
+import { DiagnosticData, LibraryItemData, CameraControlUiData, PatientCandidateData, AnnotationData, ComparisonCandidateData, CalendarDayData, ConsultationDayData, SessionPhotoData } from "./models.slint";
 
 export global AppState {
+    in-out property <int> session-left-count: 0;
+    in-out property <int> session-right-count: 0;
+    in-out property <bool> viewer-retained: false;
+    in-out property <string> viewer-saved-at: "";
+    out property <string> viewer-review-status: viewer-review-load-error ? "Notes indisponibles" : viewer-autosave-paused ? "Échec · brouillon conservé" : viewer-review-busy ? "Enregistrement…" : viewer-review-dirty ? "Modifications en attente" : viewer-saved-at == "" ? "Aucune modification" : "Enregistré · " + viewer-saved-at;
+    in-out property <bool> calendar-open: false;
+    in-out property <int> calendar-target: 0;
+    in-out property <string> calendar-month: "";
+    in-out property <string> calendar-selection: "";
+    in-out property <string> calendar-caption: "";
+    in-out property <[CalendarDayData]> calendar-days: [];
+    callback open-calendar(int);
+    callback calendar-step(int);
+    callback select-calendar-date(string);
+    in-out property <bool> consultation-open: false;
+    in-out property <string> dossier-search: "";
+    in-out property <bool> dossier-search-busy: false;
+    in-out property <[PatientCandidateData]> dossier-candidates: [];
+    in-out property <string> consultation-title: "";
+    in-out property <string> consultation-patient-id: "";
+    in-out property <string> consultation-directory: "";
+    in-out property <[ConsultationDayData]> consultation-days: [];
+    in-out property <[SessionPhotoData]> consultation-photos: [];
+    in-out property <[SessionPhotoData]> consultation-left-photos: [];
+    in-out property <[SessionPhotoData]> consultation-right-photos: [];
+    in-out property <string> consultation-day: "";
+    in-out property <string> consultation-notes: "";
+    in-out property <string> consultation-saved-at: "";
+    in-out property <string> consultation-feedback: "";
+    in-out property <bool> consultation-loading: false;
+    in-out property <bool> consultation-load-error: false;
+    in-out property <bool> consultation-dirty: false;
+    in-out property <bool> consultation-saving: false;
+    in-out property <bool> consultation-paused: false;
+    in-out property <int> consultation-revision: 0;
+    in-out property <bool> consultation-close-app-pending: false;
+    in-out property <bool> consultation-pending-close: false;
+    in-out property <string> consultation-pending-day: "";
+    callback open-consultation();
+    callback close-consultation();
+    callback search-dossiers();
+    callback select-dossier(string);
+    callback select-consultation-day(string);
+    callback consultation-edited();
+    callback save-consultation-notes();
+
     in-out property <int> focused-text-fields: 0;
     in-out property <image> live-frame;
     in-out property <string> status-text: "Recherche de l'iridoscope...";
@@ -13,6 +59,11 @@ export global AppState {
     in-out property <[PatientCandidateData]> patient-candidates: [];
     in-out property <bool> patient-search-pending: false;
     in-out property <bool> patient-action-pending: false;
+    in-out property <bool> patient-edit-open: false;
+    in-out property <string> patient-edit-first: "";
+    in-out property <string> patient-edit-last: "";
+    callback edit-patient(string, string);
+    callback focus-main-controls();
     in-out property <int> selected-eye: 0;
     in-out property <bool> is-video-mode: false;
     in-out property <bool> is-recording: false;
@@ -27,6 +78,43 @@ export global AppState {
     in-out property <bool> mirror-vertical: false;
     in-out property <int> current-tab: 0;
     in-out property <bool> sidebar-visible: true;
+    in-out property <bool> interface-ready: false;
+    in-out property <bool> remember-layout: true;
+    in-out property <int> camera-panel-width: 0;
+    in-out property <int> viewer-panel-width: 0;
+    in-out property <int> consultation-panel-width: 0;
+    in-out property <int> preferred-photo-panel: 0;
+    in-out property <int> thumbnail-size: 1;
+    in-out property <bool> advanced-settings-expanded: false;
+    in-out property <bool> presentation-mode: false;
+    in-out property <int> presentation-return-tab: 0;
+    in-out property <bool> image-only: false;
+    in-out property <bool> photo-controls-visible: true;
+    in-out property <bool> photo-controls-interacting: false;
+    in-out property <int> photo-controls-revision: 0;
+    callback interface-edited();
+    callback reset-interface();
+    callback toggle-presentation();
+
+    public function select-photo-panel(panel: int) {
+        if panel > 0 && AppState.image-only { AppState.image-only = false; AppState.show-photo-controls(); }
+        AppState.viewer-panel = panel;
+        AppState.preferred-photo-panel = panel;
+        AppState.viewer-tool = 0;
+        AppState.interface-edited();
+    }
+    public function show-photo-controls() {
+        AppState.photo-controls-visible = true;
+        AppState.photo-controls-revision += 1;
+    }
+    public function toggle-image-only() {
+        AppState.image-only = !AppState.image-only;
+        AppState.viewer-tool = 0;
+        AppState.viewer-loupe = false;
+        AppState.show-photo-controls();
+        AppState.interface-edited();
+    }
+
     in-out property <bool> iris-fullscreen: false;
     in-out property <bool> image-controls-open: false;
     in-out property <bool> viewport-controls-visible: true;
@@ -64,6 +152,14 @@ export global AppState {
     in-out property <length> iridology-reference-pan-x: 0px;
     in-out property <length> iridology-reference-pan-y: 0px;
     in-out property <[LibraryItemData]> library-items: [];
+    in-out property <string> library-query-dossier: "";
+    in-out property <string> library-query-from: "";
+    in-out property <string> library-query-to: "";
+    in-out property <int> library-query-eye: 0;
+    in-out property <int> library-query-sort: 0;
+    in-out property <bool> library-query-active: false;
+    in-out property <string> library-query-error: "";
+    callback apply-library-query();
     in-out property <int> library-filter: 0;
     in-out property <int> library-page: 0;
     in-out property <int> library-total-count: 0;
@@ -77,10 +173,82 @@ export global AppState {
     in-out property <string> selected-library-file-version: "";
     in-out property <string> selected-library-dossier-number: "";
     in-out property <bool> show-iridology-grid: false;
+    in-out property <string> viewer-path: "";
+    in-out property <string> viewer-file-version: "";
+    in-out property <string> viewer-caption: "";
+    in-out property <int> viewer-navigation-direction: 0;
+    in-out property <image> comparison-image;
+    in-out property <string> comparison-caption: "";
+    in-out property <string> comparison-path: "";
+    in-out property <bool> comparison-available: false;
+    in-out property <bool> comparison-enabled: false;
+    callback navigate-viewer(int);
+    callback keep-comparison-image();
+    callback clear-comparison-image();
     in-out property <bool> viewer-open: false;
     in-out property <bool> viewer-loading: false;
     in-out property <image> viewer-image;
     in-out property <int> viewer-zoom: 100;
+    in-out property <bool> viewer-fit: true;
+    in-out property <float> viewer-device-scale: 1;
+    in-out property <bool> viewer-fullscreen: false;
+    in-out property <bool> viewer-return-fullscreen: false;
+    in-out property <int> viewer-panel: 0; // 0 hidden, 1 observations, 2 references, 3 display, 4 comparison, 5 export
+    in-out property <bool> viewer-loupe: false;
+    in-out property <image> viewer-original;
+    in-out property <int> viewer-brightness: 0;
+    in-out property <int> viewer-contrast: 0;
+    in-out property <int> viewer-rotation: 0;
+    in-out property <bool> viewer-mirror: false;
+    in-out property <bool> viewer-show-original: false;
+    in-out property <bool> viewer-adjusting: false;
+    in-out property <bool> viewer-guides: false;
+    in-out property <float> viewer-guide-x: 0.5;
+    in-out property <float> viewer-guide-y: 0.5;
+    in-out property <float> viewer-guide-radius: 0.3;
+    in-out property <bool> viewer-annotations-visible: true;
+    in-out property <bool> viewer-can-undo: false;
+    in-out property <[AnnotationData]> viewer-annotations: [];
+    in-out property <int> viewer-tool: 0; // move, circle, arrow, point, text, guide center
+    in-out property <string> viewer-annotation-text: "";
+    in-out property <string> viewer-notes: "";
+    in-out property <bool> viewer-review-dirty: false;
+    in-out property <int> viewer-review-revision: 0;
+    in-out property <bool> viewer-review-busy: false;
+    in-out property <bool> viewer-review-load-error: false;
+    in-out property <bool> viewer-autosave-paused: false;
+    in-out property <string> viewer-feedback: "";
+    in-out property <bool> viewer-feedback-error: false;
+    in-out property <int> viewer-pending-action: 0;
+    in-out property <string> viewer-pending-path: "";
+    in-out property <string> viewer-pending-version: "";
+    in-out property <bool> viewer-close-app-pending: false;
+    in-out property <string> viewer-dossier: "";
+    in-out property <string> viewer-eye-label: "";
+    in-out property <bool> comparison-linked: true;
+    in-out property <float> comparison-zoom-ratio: 1;
+    in-out property <length> comparison-offset-x: 0px;
+    in-out property <length> comparison-offset-y: 0px;
+    in-out property <float> viewer-effective-zoom: 100;
+    in-out property <float> comparison-effective-zoom: 100;
+    in-out property <bool> comparison-fit: true;
+    in-out property <int> comparison-zoom: 100;
+    in-out property <length> comparison-pan-x: 0px;
+    in-out property <length> comparison-pan-y: 0px;
+    in-out property <bool> comparison-loading: false;
+    in-out property <string> comparison-from: "";
+    in-out property <string> comparison-to: "";
+    in-out property <[ComparisonCandidateData]> comparison-candidates: [];
+    callback refresh-viewer-scale();
+    callback viewer-display-changed();
+    callback viewer-review-edited();
+    callback save-viewer-review();
+    callback add-viewer-annotation(int, float, float, float, float);
+    callback undo-viewer-annotation();
+    callback delete-viewer-annotation(int);
+    callback find-comparison-photos();
+    callback select-comparison-photo(string, string, string);
+    callback export-viewer-photo(int); // PNG copy, PDF observations
     in-out property <length> viewer-pan-x: 0px;
     in-out property <length> viewer-pan-y: 0px;
     in-out property <bool> viewer-is-video: false;
@@ -88,9 +256,17 @@ export global AppState {
     in-out property <float> viewer-video-progress: 0;
     in-out property <string> viewer-video-position: "00:00";
     in-out property <string> viewer-video-duration: "00:00";
+    in-out property <bool> export-busy: false;
+    in-out property <bool> export-cancelling: false;
+    in-out property <bool> export-progress-known: false;
+    in-out property <int> export-progress: 0;
+    in-out property <string> export-feedback: "";
+    in-out property <bool> export-feedback-error: false;
+    callback export-viewer-mp4();
+    callback cancel-video-export();
     in-out property <bool> text-field-focused: AppState.focused-text-fields > 0;
     in-out property <bool> recording-busy: AppState.is-recording || AppState.recording-finalizing;
-    out property <bool> capture-ready: !AppState.patient-action-pending && AppState.is-streaming
+    out property <bool> capture-ready: !consultation-open && !calendar-open && !AppState.patient-action-pending && !AppState.patient-edit-open && !AppState.storage-busy && !AppState.storage-critical && AppState.is-streaming
         && AppState.selected-eye != 0 && (AppState.patient-id != ""
             || (AppState.patient-first-name == "" && AppState.patient-last-name == ""));
     out property <bool> capture-enabled: !AppState.recording-finalizing
@@ -100,10 +276,13 @@ export global AppState {
         : AppState.is-video-mode ? "Démarrer la vidéo" : "Capturer une photo";
     out property <string> capture-hint: AppState.recording-finalizing ? "Finalisation de la vidéo…"
         : AppState.is-recording ? "Enregistrement · " + AppState.recording-duration
+        : AppState.storage-busy ? "Sauvegarde ou restauration en cours…"
+        : AppState.storage-critical ? "Espace disque insuffisant"
         : AppState.patient-action-pending ? "Ouverture du dossier en cours…"
         : !AppState.is-streaming ? "En attente du flux caméra"
         : AppState.patient-id == "" && (AppState.patient-first-name != "" || AppState.patient-last-name != "") ? "Choisissez ou créez le dossier patient"
         : AppState.selected-eye == 0 ? "Choisissez l’œil gauche ou droit"
+        : AppState.storage-low ? "Espace disque faible · vérifiez le dossier des captures"
         : AppState.patient-id == "" ? "Prêt · capture sans patient" : "Prêt pour la capture";
 
     public function capture() {
@@ -117,6 +296,7 @@ export global AppState {
     callback open-capture-externally(string, string);
     callback library-filter-changed(int);
     callback library-page-changed(int);
+    callback library-visible-range-changed(int, int);
     callback session-changed();
     callback patient-name-edited();
     callback select-patient(string);
@@ -131,12 +311,31 @@ export global AppState {
     callback set-camera-control-value(string, float);
     callback step-camera-control(string, int);
     callback set-camera-control-bool(string, bool);
-    callback cycle-camera-control-menu(string);
+    callback select-camera-control-menu(string, int);
     callback refresh-library();
     callback recover-pending-recordings();
     callback assign-selected-capture-to-patient(string, string);
     callback open-capture-directory();
     callback update-capture-directory(string);
+    in-out property <bool> storage-busy: false;
+    in-out property <bool> storage-critical: false;
+    in-out property <bool> storage-low: false;
+    in-out property <string> storage-status: "Vérification de l’espace disque…";
+    in-out property <string> storage-feedback: "";
+    in-out property <bool> storage-feedback-error: false;
+    in-out property <int> storage-progress: 0;
+    in-out property <bool> storage-progress-known: false;
+    in-out property <bool> storage-cancelling: false;
+    in-out property <string> backup-last-status: "Aucune sauvegarde enregistrée pour ce dossier.";
+    in-out property <bool> backup-reminder-enabled: false;
+    in-out property <string> backup-reminder: "";
+    in-out property <string> app-version: "";
+    callback backup-library();
+    callback restore-library();
+    callback cancel-storage-operation();
+    callback set-backup-reminder(bool);
+    in-out property <bool> file-dialog-pending: false;
+    callback browse-settings-path(int); // 0: capture folder, 1: map, 2: symbols
     callback update-filename-template(string);
     callback cycle-physical-button-mode();
     callback select-theme(int);
@@ -148,6 +347,7 @@ export global AppState {
     callback seek-viewer-video(float);
 
     public function navigate-to(tab: int) {
+        if AppState.presentation-mode && tab != 0 { return; }
         if (tab == 0 || tab == 2 || tab == 4) && AppState.current-tab != tab {
             AppState.iris-fullscreen = false;
             AppState.viewport-controls-interacting = false;
@@ -159,15 +359,70 @@ export global AppState {
         }
     }
 
+    public function link-view(reference: bool) {
+        if !AppState.comparison-enabled || !AppState.comparison-linked { return; }
+        let ratio = max(0.01,AppState.comparison-zoom-ratio);
+        if reference {
+            AppState.viewer-fit = AppState.comparison-fit;
+            AppState.viewer-zoom = clamp(round(AppState.comparison-zoom/ratio),10,800);
+            AppState.comparison-zoom = clamp(round(AppState.viewer-zoom*ratio),10,800);
+            AppState.viewer-pan-x = (AppState.comparison-pan-x - AppState.comparison-offset-x*AppState.comparison-zoom/100)/ratio;
+            AppState.viewer-pan-y = (AppState.comparison-pan-y - AppState.comparison-offset-y*AppState.comparison-zoom/100)/ratio;
+        } else {
+            AppState.comparison-fit = AppState.viewer-fit;
+            AppState.comparison-zoom = clamp(round(AppState.viewer-zoom*ratio),10,800);
+            AppState.viewer-zoom = clamp(round(AppState.comparison-zoom/ratio),10,800);
+            AppState.comparison-pan-x = AppState.viewer-pan-x*ratio + AppState.comparison-offset-x*AppState.comparison-zoom/100;
+            AppState.comparison-pan-y = AppState.viewer-pan-y*ratio + AppState.comparison-offset-y*AppState.comparison-zoom/100;
+        }
+    }
+
+    public function fit-viewer() {
+        AppState.viewer-fit = true; AppState.viewer-pan-x = 0px; AppState.viewer-pan-y = 0px;
+        if AppState.comparison-linked {
+            AppState.comparison-zoom-ratio = 1; AppState.comparison-offset-x = 0px; AppState.comparison-offset-y = 0px;
+            AppState.comparison-fit = true; AppState.comparison-pan-x = 0px; AppState.comparison-pan-y = 0px;
+        }
+    }
+
+    public function toggle-comparison-link() {
+        if AppState.comparison-linked { AppState.comparison-linked = false; }
+        else {
+            let current = max(1, AppState.viewer-effective-zoom);
+            let reference = max(1, AppState.comparison-effective-zoom);
+            AppState.comparison-zoom-ratio = reference/current;
+            AppState.comparison-offset-x = (AppState.comparison-pan-x - AppState.viewer-pan-x * AppState.comparison-zoom-ratio)/(reference/100);
+            AppState.comparison-offset-y = (AppState.comparison-pan-y - AppState.viewer-pan-y * AppState.comparison-zoom-ratio)/(reference/100);
+            if !AppState.viewer-fit || !AppState.comparison-fit {
+                AppState.viewer-fit = false; AppState.comparison-fit = false;
+                AppState.viewer-zoom = round(current); AppState.comparison-zoom = round(reference);
+            }
+            AppState.comparison-linked = true;
+        }
+    }
+
     public function dismiss-viewer() {
         if AppState.viewer-open {
-            AppState.viewer-open = false;
-            AppState.viewer-loading = false;
-            AppState.viewer-zoom = 100;
-            AppState.viewer-pan-x = 0px;
-            AppState.viewer-pan-y = 0px;
+            if !AppState.viewer-review-dirty && !AppState.viewer-review-busy {
+                AppState.viewer-open = false; AppState.viewer-loading = false; AppState.viewer-fullscreen = false;
+            }
             AppState.close-viewer();
         }
+    }
+
+    public function dismiss-top-overlay() {
+        if AppState.calendar-open { AppState.calendar-open = false; }
+        else if AppState.consultation-open && !AppState.viewer-open && !AppState.presentation-mode { AppState.close-consultation(); }
+        else if AppState.patient-edit-open {
+            if !AppState.patient-action-pending { AppState.patient-edit-open = false; AppState.focused-text-fields = 0; AppState.focus-main-controls(); }
+        }
+        else if AppState.viewer-open && !AppState.viewer-is-video && AppState.image-only { AppState.toggle-image-only(); }
+        else if AppState.viewer-open && AppState.viewer-fullscreen { AppState.viewer-fullscreen = false; }
+        else if AppState.viewer-open { AppState.dismiss-viewer(); }
+        else if AppState.library-map-open { AppState.library-map-open = false; }
+        else if AppState.image-controls-open { AppState.image-controls-open = false; }
+        else if AppState.iris-fullscreen { AppState.iris-fullscreen = false; }
+        else if AppState.presentation-mode { AppState.toggle-presentation(); }
     }
 
     public function show-viewport-controls() {

@@ -139,6 +139,8 @@ pub(super) fn camera_control_ui_data(state: &CameraControlRuntimeState) -> Camer
         value_label: "".into(),
         boolean_value: false,
         menu_label: "".into(),
+        menu_options: ModelRc::default(),
+        menu_index: -1,
         read_only: state.descriptor.read_only,
     };
 
@@ -178,13 +180,7 @@ pub(super) fn camera_control_ui_data(state: &CameraControlRuntimeState) -> Camer
         }
         (CameraControlKind::Menu { items, default }, CameraControlValue::Menu(value)) => {
             data.kind = 2;
-            let active = items
-                .iter()
-                .find(|item| item.value == *value)
-                .or_else(|| items.iter().find(|item| item.value == *default));
-            data.menu_label = active
-                .map_or_else(|| value.to_string(), |item| item.label.clone())
-                .into();
+            set_menu_ui_data(&mut data, items, *value, *default);
             data.value = *value as f32;
             data.value_label = value.to_string().into();
         }
@@ -201,6 +197,46 @@ pub(super) fn camera_control_ui_data(state: &CameraControlRuntimeState) -> Camer
     }
 
     data
+}
+
+fn set_menu_ui_data(
+    data: &mut CameraControlUiData,
+    items: &[iriscope_core::capabilities::CameraControlMenuItem],
+    value: i64,
+    default: i64,
+) {
+    data.menu_options = ModelRc::new(VecModel::from(
+        items
+            .iter()
+            .map(|item| item.label.clone().into())
+            .collect::<Vec<_>>(),
+    ));
+    data.menu_index = items
+        .iter()
+        .position(|item| item.value == value)
+        .and_then(|index| i32::try_from(index).ok())
+        .unwrap_or(-1);
+    let active = items
+        .iter()
+        .find(|item| item.value == value)
+        .or_else(|| items.iter().find(|item| item.value == default));
+    data.menu_label = active
+        .map_or_else(|| value.to_string(), |item| item.label.clone())
+        .into();
+}
+
+pub(super) fn selected_camera_menu_value(
+    descriptor: &CameraControlDescriptor,
+    index: i32,
+) -> Option<CameraControlValue> {
+    if descriptor.read_only {
+        return None;
+    }
+    let CameraControlKind::Menu { items, .. } = &descriptor.kind else {
+        return None;
+    };
+    let item = items.get(usize::try_from(index).ok()?)?;
+    Some(CameraControlValue::Menu(item.value))
 }
 
 pub(super) fn set_camera_control_model(win: &MainWindow, states: &[CameraControlRuntimeState]) {
@@ -432,5 +468,45 @@ mod camera_control_settings_tests {
             Some(&SavedCameraControlValue::Integer(71))
         );
         fs::remove_file(path).expect("remove settings");
+    }
+}
+
+#[cfg(test)]
+mod menu_tests {
+    use super::*;
+    use iriscope_core::capabilities::CameraControlMenuItem;
+
+    #[test]
+    fn direct_menu_choices_preserve_sparse_native_values_and_read_only_guards() {
+        let mut descriptor = CameraControlDescriptor {
+            id: CameraControlId::Standard(StandardCameraControl::PowerLineFrequency),
+            name: "Fréquence".to_owned(),
+            kind: CameraControlKind::Menu {
+                items: vec![
+                    CameraControlMenuItem {
+                        value: 50,
+                        label: "50 Hz".to_owned(),
+                    },
+                    CameraControlMenuItem {
+                        value: 1_i64 << 40,
+                        label: "Automatique".to_owned(),
+                    },
+                ],
+                default: 50,
+            },
+            read_only: false,
+        };
+        assert_eq!(
+            selected_camera_menu_value(&descriptor, 1),
+            Some(CameraControlValue::Menu(1_i64 << 40))
+        );
+        assert_eq!(
+            selected_camera_menu_value(&descriptor, 0),
+            Some(CameraControlValue::Menu(50))
+        );
+        assert_eq!(selected_camera_menu_value(&descriptor, -1), None);
+        assert_eq!(selected_camera_menu_value(&descriptor, 2), None);
+        descriptor.read_only = true;
+        assert_eq!(selected_camera_menu_value(&descriptor, 0), None);
     }
 }

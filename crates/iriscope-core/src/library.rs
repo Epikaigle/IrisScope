@@ -9,9 +9,25 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+mod backup;
 mod capture_transactions;
+mod consultation;
 mod index;
+mod locks;
 mod patients;
+mod query;
+mod review;
+pub use backup::{
+    BackupPhase, BackupProgress, BackupReport, backup_library, backup_library_with_progress,
+    restore_library, restore_library_with_progress,
+};
+pub use consultation::{
+    ConsultationNotes, consultation_dates, load_consultation_notes, save_consultation_notes,
+    search_dossiers,
+};
+pub use patients::PatientSearchCache;
+pub use query::LibraryQuery;
+pub use review::{Annotation, AnnotationKind, PhotoReview, load_photo_review, save_photo_review};
 mod presentation;
 mod scan;
 pub use crate::file_validation::capture_file_version_fast_from_file as capture_file_version_from_file_fast;
@@ -42,6 +58,10 @@ struct LibraryIndex {
     patients: HashMap<u64, StoredPatient>,
     #[serde(default)]
     next_patient_id: u64,
+    #[serde(default)]
+    reviews: HashMap<String, review::StoredReview>,
+    #[serde(default)]
+    consultations: HashMap<String, ConsultationNotes>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -150,7 +170,17 @@ pub struct LibraryScanCandidate {
     pub date_str: String,
     pub time_str: String,
     pub patient_id_hint: Option<u64>,
+    /// Unverified eye used for filtering before the displayed page is validated.
+    pub eye_hint: Eye,
     native_version: Option<CaptureFileVersion>,
+}
+
+impl LibraryScanCandidate {
+    /// Capture timestamp, falling back to file modification time when unavailable.
+    #[must_use]
+    pub fn timestamp(&self) -> chrono::NaiveDateTime {
+        scan::sort_time(&self.date_str, &self.time_str, self.modified_time)
+    }
 }
 
 /// An entry formatted for presentation in the user interface.
@@ -187,7 +217,7 @@ pub enum LibraryFilter {
 
 pub use patients::{
     assign_capture_to_patient, assign_capture_to_patient_if_unchanged, create_patient, get_patient,
-    search_patients,
+    search_patients, update_patient,
 };
 
 use index::{

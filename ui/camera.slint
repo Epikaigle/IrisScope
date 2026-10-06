@@ -1,9 +1,11 @@
+import { ResizeHandle } from "./resize-handle.slint";
 import { AppState } from "./state.slint";
 import { Design } from "./theme.slint";
 import { PatientPanel } from "./patient-panel.slint";
 import { CameraPreview } from "./camera-preview.slint";
 
 export component CameraPage inherits Rectangle {
+    private property <length> panel-width: clamp(AppState.camera-panel-width == 0 ? (root.width < 1120px ? 300px : 316px) : AppState.camera-panel-width * 1px, 260px, max(260px,min(480px,root.width - 480px)));
     HorizontalLayout {
         min-height: 0px;
         min-width: 0px;
@@ -11,10 +13,16 @@ export component CameraPage inherits Rectangle {
         spacing: AppState.iris-fullscreen ? 0px : Design.gap;
 
         // A fixed instrument sidebar keeps form controls independent of the image.
-        if AppState.sidebar-visible && !AppState.iris-fullscreen: PatientPanel {
-            width: root.width < 1120px ? 300px : 316px;
+        if AppState.sidebar-visible && !AppState.iris-fullscreen && !AppState.presentation-mode: PatientPanel {
+            width: root.panel-width;
             horizontal-stretch: 0;
             min-height: 0px;
+        }
+        if AppState.sidebar-visible && !AppState.iris-fullscreen && !AppState.presentation-mode: ResizeHandle {
+            panel-width: root.panel-width; minimum: 260px; maximum: max(260px,min(480px,root.width - 480px));
+            label: "Largeur du panneau patient · flèches pour ajuster · double-clic pour rétablir";
+            resized(value) => { AppState.camera-panel-width = round(value / 1px); }
+            committed => { AppState.interface-edited(); }
         }
         CameraPreview { horizontal-stretch: 1; min-width: 0px; min-height: 0px; }
     }

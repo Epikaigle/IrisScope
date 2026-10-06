@@ -65,7 +65,7 @@ Jean_Dupont_Droit_2026-09-20_18-42-16.jpg
 - durée préservée malgré les images perdues, en maintenant la dernière image jusqu'au prochain horodatage caméra ;
 - affichage du temps d'enregistrement.
 
-Un enregistrement est limité à une heure. Une interruption trop longue de la caméra arrête l'enregistrement avec un message et conserve le fichier temporaire récupérable.
+Un enregistrement est limité à une heure et à la capacité du conteneur AVI classique (environ 4 Gio). Une interruption trop longue de la caméra arrête l'enregistrement avec un message et conserve le fichier temporaire récupérable.
 
 ### Session et nommage
 
@@ -82,6 +82,8 @@ Pour revoir un patient, saisir son prénom et son nom puis sélectionner le bon 
 
 Le dossier et l'œil restent actifs jusqu'à ce que l'utilisateur les change afin de pouvoir réaliser plusieurs captures successives rapidement. Utiliser **Terminer session** avant de commencer avec une autre personne.
 
+Les compteurs sur les boutons **Gauche / Droit** indiquent séparément les photos prises pendant cette session. Ils sont conservés lors du changement d’œil et remis à zéro avec **Terminer session** ou le changement de personne. Le changement d’œil reste manuel.
+
 Les fichiers sont automatiquement nommés avec, lorsqu'ils sont renseignés :
 
 - le nom de la personne ;
@@ -96,24 +98,54 @@ IrisScope doit permettre de retrouver les captures sans devoir parcourir les dos
 La bibliothèque propose actuellement :
 
 - photos et vidéos réunies au même endroit ;
-- miniatures pour les photos et pour les vidéos AVI à partir de leur première image ;
+- miniatures pour les photos et pour les vidéos AVI à partir de leur première image, chargées progressivement pour les cartes visibles pendant le défilement ;
 - affichage au choix en grille ou en liste, avec sélection puis ouverture dans la visionneuse ;
-- filtres Tous / Photos / Vidéos / Dossier actif ;
+- filtres Tous / Photos / Vidéos / Dossier actif, recherche par numéro de dossier, œil et période inclusive, champs **Du / Au** au format JJ/MM/AAAA avec calendrier ; le format AAAA-MM-JJ reste accepté ; tri des plus récentes ou des plus anciennes ;
 - ouverture initiale sur toutes les captures, puis conservation du filtre et de la page entre les onglets ;
 - masquage du nom dans le titre des captures appartenant à d'autres personnes ; les noms de fichiers et les miniatures restent visibles dans le dossier de stockage ;
 - index local caché de métadonnées et de numéros de dossier, indépendant du modèle de nom de fichier ;
-- visionneuse photo intégrée avec zoom / déplacement ;
+- visionneuse photo intégrée : zoom précis de 10 à 800 %, taille réelle en pixels, loupe, notes et annotations, références et comparaison de photos ;
 - lecteur vidéo MJPEG AVI intégré avec timeline et recherche dans la vidéo ;
 - ouverture des autres vidéos détectées (par exemple MP4 ou MKV) avec l'application associée du système ;
 - accès rapide au dossier de stockage ;
 - pagination de 100 captures, avec réutilisation du tri et des filtres entre les pages ; les fichiers visibles sont revérifiés avant affichage, et **Actualiser** force une relecture complète ;
 - accès à la carte d'iridologie depuis la bibliothèque, dans une fenêtre refermable.
 
+**Dossiers / Séances**, dans la bibliothèque, recherche une personne par nom ou numéro. Choisir explicitement le bon dossier ouvre ses journées de consultation, avec les photos gauche/droite et des notes générales distinctes des notes de chaque photo. La journée actuelle est disponible même avant la première capture ; les journées sont regroupées par date, sans agenda de rendez-vous. **Séances**, dans la zone Patient, ouvre directement le dossier actif. **Utiliser pour la capture** sélectionne le dossier pour de nouvelles prises.
+
+Les notes générales sont sauvegardées automatiquement après une pause de 700 ms, avec un état visible et l’heure du dernier enregistrement. Une erreur garde le brouillon pour réessayer ou le copier. Jusqu’à 200 photos récentes par journée sont affichées avec leurs miniatures ; les vidéos et captures sans œil renseigné restent accessibles dans la bibliothèque. Les notes et les marques **Retenue** font partie de la sauvegarde locale.
+
 Le stockage reste local à l'ordinateur. Aucun compte ou cloud n'est requis. Les
 fichiers, leurs noms, les miniatures affichées et l'index de métadonnées ne
 sont pas chiffrés par IrisScope : les personnes ayant accès au dossier de
 captures peuvent consulter ces informations. Le masquage des titres dans la
 bibliothèque est une aide visuelle, pas une protection d'accès.
+
+Dans la visionneuse photo, **Ajuster** affiche toute l’image et **100 %** affiche un pixel photo par pixel écran, en tenant compte de l’échelle du moniteur. La molette zoome sur le curseur, les boutons −/+ et le curseur règlent le zoom, le glisser et les flèches déplacent l’image. Un double-clic rétablit l’image entière. **Loupe** examine une zone sans changer le cadrage et **Plein écran** agrandit la fenêtre ; Échap quitte d’abord le plein écran, puis ferme la photo.
+
+Les panneaux **Annoter / Notes**, **Références**, **Affichage** et **Comparer** se referment pour rendre la place à la photo. **Exporter…** ouvre séparément les commandes de copie. Les notes et les cercles, flèches, points ou textes sont enregistrés automatiquement après une pause dans la saisie, avec date de modification et empreinte de la photo dans l’index privé de la bibliothèque. Les annotations utilisent les coordonnées de l’original, restent positionnées après une rotation ou un miroir, peuvent être masquées, retirées ou annulées. Navigation et fermeture attendent la fin de l’enregistrement ; en cas d’échec, le brouillon reste ouvert pour réessayer ou le copier avant un abandon explicite. Les sauvegardes/restaurations comprennent ces observations. Une photo remplacée ne récupère pas les annotations de l’ancien contenu.
+
+**Comparer** recherche les photos du même dossier et du même œil, avec des dates facultatives et jusqu’à 200 résultats récents par recherche. Le choix affiche des miniatures, la date, l’œil et les photos marquées **Retenue**. **Retenir**, dans la visionneuse, conserve cette marque entre les ouvertures sans modifier l’original. Les deux vues peuvent être positionnées indépendamment, puis liées en conservant leur alignement. **Garder cette photo pour comparer** conserve aussi l’original comme référence : ouvrir une autre photo ou utiliser **Suivante** l’affiche à côté, avec les dates, yeux et dossiers. **Effacer la comparaison** revient à une seule image. Changer de dossier de stockage efface cette référence.
+
+**Références** affiche la carte ou la planche importée à côté de la photo, avec zoom et déplacement. Les cercles repères facultatifs se centrent manuellement. **Affichage** règle luminosité, contraste, rotation et miroir ; **Original** permet de comparer et **Réinitialiser l’affichage** remet ces réglages à zéro. Ils ne sont pas enregistrés dans la photo et reviennent à l’original à chaque ouverture.
+
+**Copie PNG annotée…** exporte l’affichage avec les annotations. **Fiche PDF et notes…** exporte l’original annoté, sa légende et les notes, avec la deuxième photo lorsque la comparaison est active. Les notes longues continuent sur plusieurs pages. Les exports conservent les sources et refusent de remplacer un fichier existant. Le détail des outils et de leurs limites figure dans [Visionneuse photo](docs/VISIONNEUSE.md).
+
+Les paramètres proposent **Sauvegarder** et **Restaurer…**. La sauvegarde crée un nouveau dossier complet, incluant les fichiers cachés et les vidéos interrompues, à l’extérieur du dossier des captures. Elle vérifie les fichiers pendant la copie et publie le résultat après sa finalisation. La restauration contrôle les empreintes de tous les fichiers puis crée et ouvre un nouveau dossier, sans remplacer les captures actuelles. Les liens symboliques, sauvegardes incomplètes, chemins invalides et versions inconnues sont refusés. Les sauvegardes ne sont pas chiffrées.
+
+La progression indique les fichiers et le volume copiés ; **Annuler** reste accessible
+pendant la copie et l’attente des verrous. Une annulation retire les fichiers temporaires.
+Après une interruption brutale, un dossier caché `.en-cours` peut rester sur le support :
+il est refusé comme sauvegarde restaurable. Une nouvelle sauvegarde reste possible.
+Les paramètres affichent la dernière sauvegarde réussie du dossier actuellement choisi.
+Un rappel facultatif, désactivé par défaut, apparaît après sept jours sans sauvegarde.
+
+Dans la visionneuse vidéo, **Exporter MP4…** crée une copie H.264 pour le partage,
+avec progression et annulation. L’AVI original est conservé et un fichier existant
+n’est jamais remplacé. Cette fonction utilise FFmpeg avec `libx264`, installé sur le
+système ou inclus dans un paquet. Sans FFmpeg, les captures et la lecture AVI restent disponibles.
+
+L’espace disponible est affiché dans les paramètres et revérifié régulièrement. Une alerte apparaît sous 1 Gio ; les nouvelles captures sont bloquées sous la réserve de 64 Mio. Les workers vérifient aussi l’espace avant l’écriture d’une photo ou le démarrage d’une vidéo. Une vidéo reste arrêtable et s’arrête lorsque l’espace devient critique. Cette réserve ne garantit pas qu’un autre programme n’occupera pas le disque entre deux vérifications.
 
 **Sauvegarde :** copier le dossier de captures dans son ensemble, y compris les fichiers cachés comme `.iriscope-index.json`. Les numéros de dossier et les associations entre patients et captures se trouvent dans cet index : sauvegarder uniquement les photos et vidéos ne suffit pas à conserver ces liens. Garder les copies sur un support dont l'accès est maîtrisé. Les captures interrompues peuvent laisser des fichiers cachés `.part`. La bibliothèque signale leur présence et propose **Récupérer les vidéos interrompues** : les images encore lisibles sont publiées sous un nom `Iris_Recuperee_…`, sans dossier patient attribué. Vérifier la vidéo puis la rattacher explicitement au bon dossier. Conserver les fichiers `.part` lors d'une restauration ; ne pas les renommer en `.avi` à la main. L'application ne chiffre ni les sauvegardes ni les supports amovibles.
 
@@ -172,7 +204,16 @@ La page **Paramètres** permet notamment de consulter ou modifier :
 
 Les images de référence sont limitées à 32 Mio sur disque et 16 mégapixels au décodage pour éviter une allocation excessive en mémoire.
 
-Les contrôles image réellement exposés par le backend sont générés dynamiquement dans la fenêtre **Réglages image** de la caméra.
+Les contrôles image réellement exposés par le backend sont générés dynamiquement dans la fenêtre **Réglages image** de la caméra. Les menus permettent de choisir directement une valeur dans une liste. Les libellés tronqués sont consultables au survol.
+
+**Parcourir…** permet de choisir le dossier des captures et les images de référence avec le sélecteur du système. La saisie manuelle du chemin reste disponible.
+Sous Linux, le sélecteur utilise le portail du bureau, ou `zenity` en repli.
+
+## Interface et affichage
+
+**Paramètres → Interface et affichage** regroupe le thème, la mémorisation de la disposition, l’ouverture en **Image seule** et la taille des miniatures. Les panneaux patient, photo et dossiers sont redimensionnables avec des bornes adaptées à la fenêtre. Les préférences retrouvent les panneaux et la vue grille/liste au redémarrage ; **Réinitialiser la disposition** conserve les captures et les notes.
+
+**Présenter** masque les noms, dossiers, fichiers, notes et annotations à l’écran et bloque l’accès aux vues privées jusqu’à **Fin présentation**. L’œil, les erreurs et les commandes de capture restent accessibles. **Image seule** masque les barres photo après trois secondes : mouvement de souris, **Commandes** et Échap assurent le retour. Le diagnostic technique se déplie avec **Détails**. L’aide existante reste disponible.
 
 ## Interface volontairement simple
 
@@ -183,6 +224,19 @@ L'application comporte trois espaces principaux :
 3. **Paramètres et diagnostic**
 
 Le panneau patient est à gauche de l'image et peut être masqué pour agrandir l'aperçu. Le formulaire défile séparément et le bouton de capture reste accessible en bas. Les outils d'image sont regroupés sous le direct, sur une ou deux lignes selon la largeur ; **Réglages** ouvre les contrôles de la caméra. Les images de référence s'ouvrent depuis **Références** dans la bibliothèque. Les paramètres et leur diagnostic s'empilent dans les fenêtres étroites. La taille minimale est de 800 × 600 pixels.
+
+En plein écran, la capture reste en bas et **Quitter le plein écran** en haut à
+droite. Ces commandes réapparaissent au mouvement de la souris ou avec `Tab`,
+puis disparaissent après trois secondes d'inactivité. Elles restent visibles
+pendant le survol, un clic maintenu ou leur utilisation au clavier. Une capture
+indisponible indique la condition manquante. `Échap` permet de revenir, même
+après un clic dans l'image. Les commandes de lecture et la timeline des vidéos
+enregistrées restent sous l'image dans la visionneuse.
+
+Les commandes et informations sur l'image partagent la même police, le même
+fond sombre et les mêmes arrondis. Leur largeur suit le texte et celui-ci reste
+centré. Les messages de capture restent dans la zone vidéo et leurs actions
+s'alignent au centre, même avec un nom de fichier sur plusieurs lignes.
 
 ### Raccourcis clavier
 
@@ -352,7 +406,34 @@ atomique se terminent en conservant leur protocole de durabilité.
 
 ## Validation locale
 
+Les contrôles visuels Linux utilisent des captures synthétiques, deux thèmes et
+quatre tailles de fenêtre, à 100 %, 125 %, 150 % et 200 %. Après installation de
+Pillow, lancer :
+
+```bash
+xvfb-run -a -s '-screen 0 4096x2304x24 -nolisten tcp' python3 scripts/check-ui-visuals.py
+```
+
+Les 432 images de référence couvrent la barre caméra, les réglages image, les noms
+patients longs, les paramètres, le plein écran, les messages de capture longs,
+la correction de dossier, la recherche et la comparaison des photos ainsi que la visionneuse vidéo.
+Elles incluent la progression d’une sauvegarde, son rappel, l’export MP4 et les
+outils photo : notes, références, affichage, choix de comparaison, zoom et loupe,
+ainsi que les dossiers de consultation, le calendrier et l’export photo séparé.
+Le script rend 1 184 vues, dont la bibliothèque, les références et la visionneuse photo.
+Une modification visuelle volontaire se valide avec `--update`, puis une revue
+des PNG ; la CI compare sans réécrire les références. `--compare-only` permet de
+comparer les captures déjà générées, sans relancer le rendu.
+`--release` utilise les scénarios compilés avec optimisation pour accélérer les
+grandes matrices, avec les mêmes comparaisons d’images.
+La simulation du changement d’échelle vérifie le rendu logiciel ; les bureaux
+natifs Windows/macOS et la caméra réelle nécessitent des essais sur ces systèmes.
+
 ### Distribution portable
+
+La distribution retenue pour l’usage personnel est sans signature officielle.
+Construire et installer ces paquets ne nécessite ni certificat payant ni abonnement.
+La signature reste une option du script, pas une condition de cette installation.
 
 Sur chaque système cible, construire puis empaqueter le binaire natif :
 
@@ -371,13 +452,24 @@ caméra nécessaire à AVFoundation. Les licences des polices embarquées sont
 jointes à chaque archive. La CI produit ces trois formats sur leurs systèmes
 respectifs et les conserve comme artefacts téléchargeables.
 
-Ces archives sont portables : elles ne créent pas de raccourci ni de mise à jour
-automatique. Elles ne sont ni signées ni notarisées. Pour une distribution
-publique avec installation système, il reste à prévoir la signature, les
-installateurs et un processus de mise à jour adapté à chaque plateforme. Le
+Ces archives sont portables : elles ne créent pas de raccourci ni de mise à jour automatique. `python scripts/package-installer.py` produit aussi un paquet Debian avec entrée de menu, un installateur Windows par utilisateur et un DMG macOS avec accès au dossier Applications. La CI prépare les installateurs avec leurs empreintes, en plus des archives portables. Sous Windows, Inno Setup 6 est requis ; sous macOS, `hdiutil` est requis.
+
+Les paquets créés sans certificat restent non signés. Pour une distribution publique, le script accepte `--windows-certificate` (empreinte d’un certificat déjà installé), ou `--signing-identity` et `--notary-profile` sous macOS (identité Developer ID et profil de trousseau existants). Il signe et vérifie les paquets Windows ; sous macOS, il signe le bundle, soumet la notarisation et agrafe le ticket avant de créer le DMG. Aucun certificat ni mot de passe n’est inclus dans le dépôt. Ces opérations demandent les certificats officiels et les outils natifs ; elles n’ont pas été exécutées dans l’environnement cloud Linux. Les mises à jour restent manuelles. Le
 paquet Linux est construit sur Ubuntu 24.04 et dépend des bibliothèques système
 requises par Slint et V4L2 ; sa compatibilité avec d'autres distributions doit
 être vérifiée séparément.
+
+Chaque paquet contient le numéro de version et `release-info.json`, avec
+l’empreinte du binaire fourni et la disponibilité du moteur MP4. Les scripts
+refusent un binaire dont `--version` ne correspond pas au manifeste. Les paramètres
+et captures restent hors des fichiers installés ; les identifiants des installateurs
+restent constants lors d’une mise à jour. Les instructions sont dans
+[docs/RELEASE-0.4.0.md](docs/RELEASE-0.4.0.md).
+
+Pour inclure un FFmpeg autonome construit pour le système cible, les deux scripts
+acceptent `--ffmpeg chemin/ffmpeg` et `--ffmpeg-license chemin/COPYING.txt`.
+Fournir la licence et les attributions correspondant au binaire ; celui-ci doit
+disposer de `libx264`. Le paquet Debian recommande aussi le FFmpeg du système.
 
 ### Développement et tests
 
@@ -390,6 +482,13 @@ cargo run --release -p iriscope-app
 
 Le profil de développement optimise également les crates de décodage d'image,
 mais le profil `release` reste la référence pour les mesures de performance.
+
+Sous Linux, installer FFmpeg et `ffprobe` pour les tests réels d’export, ainsi que
+Xvfb pour les interactions graphiques. Les tests des paquets se lancent avec
+`python3 -m unittest discover -s tests -p 'test_packaging.py' -v` ; `dpkg-deb` est
+nécessaire au contrôle du paquet Debian. Les outils de création d’installateurs
+Windows/macOS sont simulés dans ces tests de structure ; leurs installateurs doivent
+être construits sur les hôtes natifs.
 
 ```text
 ./scripts/ci-local.sh
@@ -412,3 +511,5 @@ job par défaut pour limiter la mémoire.
 La CI GitHub exécute aussi les tests et l'analyse statique sur des machines Linux,
 Windows et macOS. Ces vérifications ne remplacent pas les essais avec un DE400 branché
 sur chaque système.
+
+Les mesures reproductibles sont décrites dans [docs/PERFORMANCE.md](docs/PERFORMANCE.md), et les essais avec le DE400 dans [docs/VALIDATION-MATERIELLE.md](docs/VALIDATION-MATERIELLE.md).

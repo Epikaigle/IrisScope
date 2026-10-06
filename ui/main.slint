@@ -1,4 +1,7 @@
-import { AppButton } from "./controls.slint";
+import { ConsultationOverlay } from "./consultation-overlay.slint";
+import { CalendarOverlay } from "./date-field.slint";
+import { PatientEdit } from "./patient-edit.slint";
+import { AppButton, HelpOverlay, HelpState } from "./controls.slint";
 import { Design } from "./theme.slint";
 import { Palette } from "std-widgets.slint";
 import { AppState } from "./state.slint";
@@ -11,12 +14,15 @@ import { ViewerOverlay } from "./viewer-overlay.slint";
 import { CaptureNotice } from "./capture-notice.slint";
 import "./fonts/Manrope.ttf";
 import "./fonts/InstrumentSerif-Regular.ttf";
-export { DiagnosticData, LibraryItemData, CameraControlUiData, PatientCandidateData } from "./models.slint";
+export { DiagnosticData, LibraryItemData, CameraControlUiData, PatientCandidateData, AnnotationData, ComparisonCandidateData, CalendarDayData, ConsultationDayData, SessionPhotoData } from "./models.slint";
 export { AppState } from "./state.slint";
 
 export component MainWindow inherits Window {
+    changed current-tab => { HelpState.text = ""; }
+    changed library-page => { HelpState.text = ""; }
+    changed library-loading => { HelpState.text = ""; }
     title: "IrisScope";
-    full-screen: root.iris-fullscreen;
+    full-screen: root.iris-fullscreen || AppState.viewer-fullscreen;
     min-width: 800px;
     min-height: 600px;
     max-width: 16384px;
@@ -33,16 +39,28 @@ export component MainWindow inherits Window {
     }
     changed iris-fullscreen => { app-shortcuts.focus(); }
     changed image-controls-open => {
+        HelpState.text = "";
         if (!root.image-controls-open) { app-shortcuts.focus(); }
     }
-    changed sidebar-visible => { app-shortcuts.focus(); }
+    changed sidebar-visible => { app-shortcuts.focus(); if AppState.interface-ready { AppState.interface-edited(); } }
     changed library-map-open => {
-        AppState.preview-tab-changed(root.current-tab == 0 && !root.viewer-open && !root.library-map-open);
+        HelpState.text = "";
+        AppState.preview-tab-changed(root.current-tab == 0 && !root.viewer-open && !root.library-map-open && (!AppState.consultation-open || AppState.presentation-mode));
         if (!root.library-map-open) { app-shortcuts.focus(); }
     }
+    private property <bool> presentation-active: AppState.presentation-mode;
+    changed presentation-active => { HelpState.text = ""; }
+    private property <bool> consultation-visible: AppState.consultation-open;
+    changed consultation-visible => { HelpState.text = ""; AppState.preview-tab-changed(root.current-tab == 0 && !root.viewer-open && !root.library-map-open && (!AppState.consultation-open || AppState.presentation-mode)); if (!AppState.consultation-open || AppState.presentation-mode) {app-shortcuts.focus();} }
     changed viewer-open => {
-        AppState.preview-tab-changed(root.current-tab == 0 && !root.viewer-open && !root.library-map-open);
-        if (!root.viewer-open) { app-shortcuts.focus(); }
+        HelpState.text = "";
+        AppState.preview-tab-changed(root.current-tab == 0 && !root.viewer-open && !root.library-map-open && (!AppState.consultation-open || AppState.presentation-mode));
+        if (!root.viewer-open) {
+            app-shortcuts.focus();
+            if AppState.consultation-open && AppState.consultation-day != "" {
+                AppState.select-consultation-day(AppState.consultation-day);
+            }
+        }
     }
     in-out property <image> live-frame <=> AppState.live-frame;
     in-out property <string> status-text <=> AppState.status-text;
@@ -128,13 +146,27 @@ export component MainWindow inherits Window {
     in-out property <string> viewer-video-position <=> AppState.viewer-video-position;
     in-out property <string> viewer-video-duration <=> AppState.viewer-video-duration;
 
+    public function focus-main-controls() { app-shortcuts.focus(); }
+
+
+    private property <int> layout-library-view: AppState.library-view;
+    changed layout-library-view => { if AppState.interface-ready { AppState.interface-edited(); } }
+    private property <int> photo-controls-revision: AppState.photo-controls-revision;
+    changed photo-controls-revision => {
+        if AppState.image-only && !AppState.viewer-loading && !AppState.viewer-review-busy && !AppState.viewer-adjusting && !AppState.photo-controls-interacting { photo-controls-timer.restart(); }
+    }
+    photo-controls-timer := Timer {
+        interval: 3s;
+        running: AppState.viewer-open && !AppState.viewer-loading && !AppState.viewer-review-busy && !AppState.viewer-adjusting && !AppState.viewer-is-video && AppState.image-only && AppState.photo-controls-visible && !AppState.photo-controls-interacting;
+        triggered => { if !AppState.photo-controls-interacting && !AppState.viewer-loading && !AppState.viewer-review-busy && !AppState.viewer-adjusting { AppState.photo-controls-visible = false; } }
+    }
     private property <int> viewport-controls-revision <=> AppState.viewport-controls-revision;
     changed viewport-controls-revision => {
         if !AppState.viewport-controls-interacting { viewport-controls-timer.restart(); }
     }
 
     viewport-controls-timer := Timer {
-        interval: 1s;
+        interval: 3s;
         running: AppState.viewport-controls-visible && !AppState.viewport-controls-interacting;
         triggered => {
             if !AppState.viewport-controls-interacting {
@@ -161,47 +193,42 @@ export component MainWindow inherits Window {
         }
 
         // One shortcut scope covers the active page and the private viewer.
-        KeyBinding { keys: @keys(Control + Shift? + "1"); enabled: !AppState.text-field-focused && !AppState.viewer-open && !AppState.library-map-open; activated => { AppState.navigate-to(0); AppState.image-controls-open = false; } }
-        KeyBinding { keys: @keys(Control + Shift? + "2"); enabled: !AppState.text-field-focused && !AppState.viewer-open && !AppState.library-map-open; activated => { AppState.navigate-to(0); AppState.image-controls-open = !AppState.image-controls-open; } }
-        KeyBinding { keys: @keys(Control + Shift? + "3"); enabled: !AppState.text-field-focused && !AppState.viewer-open && !AppState.library-map-open; activated => { AppState.navigate-to(2); } }
-        KeyBinding { keys: @keys(Control + Shift? + "4"); enabled: !AppState.text-field-focused && !AppState.viewer-open && !AppState.library-map-open; activated => { AppState.navigate-to(2); AppState.iridology-reference-mode = 0; AppState.library-map-open = true; } }
-        KeyBinding { keys: @keys(Control + Shift? + "5"); enabled: !AppState.text-field-focused && !AppState.viewer-open && !AppState.library-map-open; activated => { AppState.navigate-to(4); } }
+        KeyBinding { keys: @keys(Control + Shift? + "1"); enabled: !AppState.text-field-focused && !AppState.viewer-open && !AppState.library-map-open && !AppState.patient-edit-open && (!AppState.consultation-open || AppState.presentation-mode) && !AppState.calendar-open; activated => { AppState.navigate-to(0); AppState.image-controls-open = false; } }
+        KeyBinding { keys: @keys(Control + Shift? + "2"); enabled: !AppState.text-field-focused && !AppState.viewer-open && !AppState.library-map-open && !AppState.patient-edit-open && (!AppState.consultation-open || AppState.presentation-mode) && !AppState.calendar-open; activated => { AppState.navigate-to(0); AppState.image-controls-open = !AppState.image-controls-open; } }
+        KeyBinding { keys: @keys(Control + Shift? + "3"); enabled: !AppState.presentation-mode && !AppState.text-field-focused && !AppState.viewer-open && !AppState.library-map-open && !AppState.patient-edit-open && (!AppState.consultation-open || AppState.presentation-mode) && !AppState.calendar-open; activated => { AppState.navigate-to(2); } }
+        KeyBinding { keys: @keys(Control + Shift? + "4"); enabled: !AppState.presentation-mode && !AppState.text-field-focused && !AppState.viewer-open && !AppState.library-map-open && !AppState.patient-edit-open && (!AppState.consultation-open || AppState.presentation-mode) && !AppState.calendar-open; activated => { AppState.navigate-to(2); AppState.iridology-reference-mode = 0; AppState.library-map-open = true; } }
+        KeyBinding { keys: @keys(Control + Shift? + "5"); enabled: !AppState.presentation-mode && !AppState.text-field-focused && !AppState.viewer-open && !AppState.library-map-open && !AppState.patient-edit-open && (!AppState.consultation-open || AppState.presentation-mode) && !AppState.calendar-open; activated => { AppState.navigate-to(4); } }
 
         KeyBinding {
             keys: @keys(Control + P);
-            enabled: !AppState.text-field-focused && !AppState.viewer-open && !AppState.library-map-open && AppState.current-tab == 0
+            enabled: !AppState.text-field-focused && !AppState.viewer-open && !AppState.library-map-open && !AppState.patient-edit-open && (!AppState.consultation-open || AppState.presentation-mode) && !AppState.calendar-open && AppState.current-tab == 0
                 && !AppState.patient-action-pending && AppState.is-streaming && !AppState.recording-busy && AppState.selected-eye != 0
                 && (AppState.patient-id != "" || (AppState.patient-first-name == "" && AppState.patient-last-name == ""));
             activated => { AppState.trigger-capture(); }
         }
         KeyBinding {
             keys: @keys(Control + R);
-            enabled: !AppState.text-field-focused && !AppState.viewer-open && !AppState.library-map-open && AppState.current-tab == 0
+            enabled: !AppState.text-field-focused && !AppState.viewer-open && !AppState.library-map-open && !AppState.patient-edit-open && (!AppState.consultation-open || AppState.presentation-mode) && !AppState.calendar-open && AppState.current-tab == 0
                 && !AppState.recording-finalizing && (AppState.is-recording || (!AppState.patient-action-pending && AppState.is-streaming && AppState.selected-eye != 0
                     && (AppState.patient-id != "" || (AppState.patient-first-name == "" && AppState.patient-last-name == ""))));
             activated => { AppState.toggle-recording(); }
         }
         KeyBinding {
             keys: @keys(Control + F);
-            enabled: !AppState.text-field-focused && !AppState.viewer-open && !AppState.library-map-open && AppState.current-tab == 0
+            enabled: !AppState.text-field-focused && !AppState.viewer-open && !AppState.library-map-open && !AppState.patient-edit-open && (!AppState.consultation-open || AppState.presentation-mode) && !AppState.calendar-open && AppState.current-tab == 0
                 && (AppState.is-streaming || AppState.is-frozen);
             activated => { AppState.toggle-freeze(); }
         }
         KeyBinding {
             keys: @keys(Escape);
-            enabled: AppState.viewer-open || AppState.image-controls-open || AppState.library-map-open || AppState.iris-fullscreen;
-            activated => {
-                if AppState.viewer-open { AppState.dismiss-viewer(); }
-                else if AppState.library-map-open { AppState.library-map-open = false; }
-                else if AppState.image-controls-open { AppState.image-controls-open = false; }
-                else { AppState.iris-fullscreen = false; }
-            }
+            enabled: AppState.patient-edit-open || AppState.viewer-open || AppState.image-controls-open || AppState.library-map-open || AppState.iris-fullscreen || AppState.consultation-open || AppState.calendar-open || AppState.presentation-mode;
+            activated => { AppState.dismiss-top-overlay(); }
         }
 
         Rectangle {
             width: 100%;
             height: 100%;
-            visible: !AppState.viewer-open && !AppState.library-map-open;
+            visible: !AppState.viewer-open && !AppState.library-map-open && !AppState.patient-edit-open && (!AppState.consultation-open || AppState.presentation-mode) && !AppState.calendar-open;
 
             // Global navigation stays separate from contextual image tools.
             Rectangle {
@@ -209,7 +236,7 @@ export component MainWindow inherits Window {
                 y: 0px;
                 width: 100%;
                 height: 60px;
-                visible: !AppState.iris-fullscreen && !AppState.viewer-open && !AppState.library-map-open;
+                visible: !AppState.iris-fullscreen && !AppState.viewer-open && !AppState.library-map-open && !AppState.patient-edit-open && (!AppState.consultation-open || AppState.presentation-mode) && !AppState.calendar-open;
                 background: Design.header;
                 Rectangle { y: parent.height - 1px; width: 100%; height: 1px; background: Design.border; }
                 HorizontalLayout {
@@ -259,6 +286,7 @@ export component MainWindow inherits Window {
                         AppButton {
                             height: 36px;
                             text: "Bibliothèque";
+                            enabled: !AppState.presentation-mode;
                             quiet: true;
                             checkable: true;
                             selected: AppState.current-tab == 2;
@@ -267,14 +295,21 @@ export component MainWindow inherits Window {
                         AppButton {
                             height: 36px;
                             text: "Paramètres";
+                            enabled: !AppState.presentation-mode;
                             quiet: true;
                             checkable: true;
                             selected: AppState.current-tab == 4;
                             clicked => { AppState.navigate-to(4); }
                         }
                     }
+                    AppButton {
+                        height: 36px; compact: true; text: AppState.presentation-mode ? "Fin présentation" : "Présenter";
+                        checkable: true; selected: AppState.presentation-mode;
+                        tooltip: "Masquer les noms, dossiers, fichiers et notes privés";
+                        clicked => { AppState.toggle-presentation(); }
+                    }
                     Rectangle {
-                        width: root.width < 1000px ? 188px : 236px;
+                        width: root.width < 1000px ? 112px : 188px;
                         horizontal-stretch: 0;
                         height: 36px;
                         Rectangle {
@@ -297,14 +332,26 @@ export component MainWindow inherits Window {
             }
             Rectangle {
                 x: 0px; y: AppState.iris-fullscreen ? 0px : 60px; width: 100%; height: parent.height - self.y; background: Design.canvas;
-                visible: !AppState.viewer-open && !AppState.library-map-open;
-                if AppState.current-tab == 0: CameraPage { width: 100%; height: 100%; }
-                if AppState.current-tab == 2: LibraryPage { width: 100%; height: 100%; }
-                if AppState.current-tab == 4: SettingsPage { width: 100%; height: 100%; }
+                visible: !AppState.viewer-open && !AppState.library-map-open && !AppState.patient-edit-open && (!AppState.consultation-open || AppState.presentation-mode) && !AppState.calendar-open;
+                if AppState.current-tab == 0 || AppState.presentation-mode: CameraPage { width: 100%; height: 100%; }
+                if AppState.current-tab == 2 && !AppState.presentation-mode: LibraryPage { width: 100%; height: 100%; }
+                if AppState.current-tab == 4 && !AppState.presentation-mode: SettingsPage { width: 100%; height: 100%; }
             }
         }
         if AppState.library-map-open: MapOverlay { width: 100%; height: 100%; }
+        if AppState.consultation-open && !AppState.presentation-mode: ConsultationOverlay { width: 100%; height: 100%; }
         if AppState.viewer-open: ViewerOverlay { width: 100%; height: 100%; }
+        if AppState.patient-edit-open: PatientEdit { width: 100%; height: 100%; }
+        if AppState.calendar-open: CalendarOverlay { width: 100%; height: 100%; }
+        if AppState.presentation-mode && AppState.consultation-paused && !AppState.viewer-open: Rectangle {
+            x: 16px; y: 76px; width: parent.width - 32px; height: warning.preferred-height + 20px;
+            border-radius: Design.control-radius; background: Design.error-surface; border-width: 1px; border-color: Design.danger;
+            warning := Text { x: 12px; y: 10px; width: parent.width - 24px;
+                text: "Notes de séance non enregistrées. Quittez la présentation pour retrouver le brouillon.";
+                color: Design.danger; font-size: 12px; wrap: word-wrap;
+            }
+        }
         if AppState.show-last-capture: CaptureNotice { width: 100%; height: 100%; }
     }
+    HelpOverlay { available-width: root.width; available-height: root.height; }
 }

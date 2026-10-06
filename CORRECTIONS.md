@@ -159,6 +159,80 @@ correspondants. La compilation croisée vérifie les API et les tests compilés,
 sans les exécuter sur ces systèmes. La revue Linux ne constitue pas un audit
 complet avec lecteur d'écran ou facteur d'échelle élevé.
 
+## Corrections et optimisations du 5 octobre 2026
+
+La séparation de la barre caméra est ancrée au-dessus des boutons, et le bouton
+« Choisir » des résultats patients est centré dans sa ligne. Les menus caméra
+permettent une sélection directe, en conservant les valeurs natives, même
+lorsqu'elles sont espacées ou dépassent la précision des nombres flottants.
+Les textes longs des boutons, patients et captures disposent d'infobulles
+passives : leur apparition ne prend ni le focus clavier ni le premier clic.
+
+Les paramètres proposent « Parcourir… » pour le dossier des captures et les
+deux images de référence. Le sélecteur système fonctionne dans un worker et
+réutilise les callbacks existants pour valider et sauvegarder les chemins.
+Une annulation conserve les paramètres ; la saisie manuelle reste disponible.
+Sous Linux, un portail de bureau ou `zenity` est nécessaire.
+
+La bibliothèque présente les métadonnées avant de décoder les miniatures des
+éléments visibles. Le défilement actualise la plage prioritaire ; les changements
+de page et de dossier invalident les résultats en attente. La version du fichier
+est contrôlée avant et après le décodage, et le cache conserve son budget de
+32 Mio. La recherche patient réutilise un index normalisé jusqu'au changement
+du fichier principal ou de sa sauvegarde, avec un maximum de 25 propositions.
+Les buffers Slint du direct, des photos et des vidéos sont préparés dans les
+workers avant leur présentation par le thread d'interface.
+
+Validation dans l'environnement cloud Linux, sans caméra connectée :
+
+- **186 tests réussis**, aucun échec ; les deux essais matériels sont ignorés.
+- Clippy strict sur tous les targets du workspace (bibliothèques, application, tests et exemple visuel), en natif Linux et pour Windows x86_64, macOS x86_64 et macOS ARM64 : réussi. Ces contrôles croisés n'exécutent pas les bureaux natifs.
+- **608 vues synthétiques** : 19 scénarios, quatre tailles, deux thèmes et quatre facteurs d'échelle (100 %, 125 %, 150 %, 200 %). Les dimensions physiques sont vérifiées ; **64 comparaisons d'images réussissent** sur les barres caméra, menus, noms patients et paramètres. La CI Linux compare les références et archive les captures.
+- Application réelle sous Xvfb avec **140 captures fictives** : chargement des miniatures visibles en grille et en liste, défilement et fermeture propre vérifiés.
+- Retour de sélection simulé via le repli `zenity` : sauvegarde du dossier et des deux références avec espaces et accents, annulation sans modification et fermeture propre vérifiées. Cet essai contrôle les callbacks, sans valider l'affichage du sélecteur natif.
+- Formatage Rust et `git diff --check` : réussis.
+
+Les tests d'échelle injectent l'événement du backend et contrôlent le rendu
+logiciel. Les essais natifs de caméra et de sélecteur Windows/macOS restent à
+réaliser. Le bouton Snapshot du DE400 nécessite toujours l'identification de son
+signal sur le matériel ; aucun nouveau support matériel n'est annoncé ici.
+
+### Revue complémentaire du plein écran et des commandes vidéo
+
+Les outils d'image restent sous le direct, sur une ou deux lignes selon la
+largeur disponible. En plein écran, les boutons superposés gardent une largeur
+adaptée à leur texte : sortie de 36 pixels de haut à 16 pixels du bord droit,
+capture de 48 pixels de haut à 20 pixels du bas. L'indicateur « Image figée » et
+la sortie plein écran occupent deux lignes distinctes.
+
+Le délai de disparition passe d'une à trois secondes. Le survol, un clic
+maintenu et le focus clavier suspendent cette disparition ; le mouvement de
+la souris ou `Tab` révèle les commandes. Quand la capture est désactivée, son
+explication apparaît au-dessus du bouton. Rotation, miroirs et plein écran
+disposent d'infobulles explicites. Dans la visionneuse, les boutons de zoom et
+de fermeture sont centrés sur la ligne du titre ; lecture et timeline restent
+sous la vidéo.
+
+Les zones d'image du direct, de la visionneuse et des références disposent
+chacune d'une liaison locale pour `Échap`. Elles partagent l'ordre de fermeture
+avec le raccourci principal : visionneuse, références, réglages, puis plein
+écran. La fermeture reste accessible lorsque l'image possède le focus.
+
+Les tests du viewport couvrent les marges et les limites des zones cliquables
+à 800 × 600, 1024 × 720, 1360 × 860 et 1920 × 1080, à 100 %, 125 %, 150 % et
+200 %. Ils couvrent aussi l'attente avant disparition, le survol prolongé,
+le clic maintenu, la navigation clavier et la perte du flux. Les **64 tests
+applicatifs** passent après ces ajustements ; les **186 tests du workspace**
+avaient également passé la validation complète des modifications visuelles.
+Clippy strict sur tous les targets Linux passe à nouveau.
+
+Les captures couvrent désormais **704 vues** et **144 comparaisons d'images**,
+dont le plein écran photo/vidéo, les commandes masquées, la capture indisponible
+et la visionneuse vidéo. Les comparaisons finales réutilisent les captures déjà
+générées (`--compare-only`), sans les rendre une seconde fois. Les essais natifs
+sous Xvfb utilisent des images synthétiques ; les temporisations attendent
+l'affichage plutôt qu'un délai fixe trop court.
+
 ## Repères dans le code
 
 - `crates/iriscope-core/src/library/` : transaction média, dossier et reprise.
@@ -176,3 +250,168 @@ complet avec lecteur d'écran ou facteur d'échelle élevé.
 ## Images de référence
 
 L'import des deux planches est disponible dans les réglages. Aucune paire adaptée n'a été retenue pour être livrée avec l'application. La [carte de Kampanis](https://commons.wikimedia.org/wiki/File:Iridology_chart.jpg) autorise la redistribution avec attribution, mais ne mesure que 371 × 368 pixels et représente un seul iris. Le [livre de Lindlahr de 1922](https://wellcomecollection.org/works/mb4p8y3e), indiqué dans le domaine public par Wellcome, offre des pages numérisées à haute résolution, mais reste une référence historique en anglais dont les illustrations n'ont pas été validées pour cet usage. Les planches modernes commerciales consultées n'annoncent pas de permission de redistribution vérifiée. Le choix de deux fichiers adaptés et autorisés reste donc nécessaire pour une distribution qui les inclut.
+
+
+## 5 octobre 2026 — dossiers, recherche, sauvegarde et comparaison
+
+- Recherche de captures par numéro de dossier, œil et période inclusive ; tri chronologique et maintien de la pagination avec validation des associations affichées.
+- Contexte dossier/œil/mode visible en plein écran ; correction des noms sans changement de numéro ni renommage des médias.
+- Navigation de la visionneuse entre les pages ; référence photo conservée et comparaison avec zoom et déplacement synchronisés, accompagnée des dates et dossiers.
+- Sauvegarde complète et restauration vérifiée dans un nouveau dossier, hors du dossier source, avec refus des liens, chemins invalides et copies altérées. Les médias actuels ne sont pas remplacés.
+- Alerte d’espace disque et vérification avant les écritures ; arrêt possible pendant les états de stockage critique.
+- Outils de mesure en release, protocole de validation matérielle et préparation d’installateurs Debian, Windows et macOS. Le bouton physique Snapshot nécessite des essais sur l’ordinateur et la caméra réels.
+
+Validation complémentaire dans le cloud Linux, avec des données fictives :
+
+- **194 tests réussis**, aucun échec ; les deux essais matériels sont ignorés. Les 66 tests de l’application couvrent aussi les recherches invalides, les gardes de stockage, l’arrêt d’une vidéo, la comparaison, le blocage des captures pendant la correction d’un dossier et le retour du focus clavier après fermeture du dialogue.
+- Clippy strict sur tous les targets du workspace, en natif Linux et pour Windows x86_64, macOS x86_64 et macOS ARM64 : réussi. Ces compilations croisées ne remplacent pas les essais sur les bureaux natifs.
+- **800 vues synthétiques** et **192 comparaisons d’images**, à quatre tailles, deux thèmes et quatre échelles. La comparaison contrôle également la présence des deux images et leur séparation. Le message de capture en plein écran est placé sous les commandes et le contexte du dossier pour éviter leur chevauchement.
+- Application réelle sous Xvfb : nom corrigé avec conservation du numéro et des trois associations ; recherche par date ; sauvegarde et restauration avec empreintes vérifiées ; copie altérée refusée sans remplacement des captures. Les retours de sélection sont simulés via `zenity` ; l’affichage des sélecteurs natifs n’est pas validé par cet essai.
+- Navigation de la visionneuse avec 103 captures fictives : passage dans les deux sens entre la dernière capture de la première page et la première de la suivante, avec conservation de la recherche par dossier. Comparaison de deux photos, zoom et fermeture clavier vérifiés dans l’application.
+- Mesures en release sur 1 000 et 10 000 captures, décodage JPEG et AVI synthétique d’une heure (28 800 images, environ 2,86 Go), avec contrôle de 100 positions de lecture. Résultats et limites dans `docs/PERFORMANCE.md`.
+- Installateur Debian construit, empreinte et permissions vérifiées. Préparation des paquets Windows/macOS contrôlée avec fichiers fictifs, y compris le droit d’exécution du bundle macOS ; leurs outils natifs et l’installation sur ces systèmes restent à tester sur les hôtes correspondants. L’usage personnel retenu ne demande pas de signature officielle.
+
+## 5 octobre 2026 — harmonisation des commandes et messages vidéo
+
+- « Quitter le plein écran », le contexte dossier/œil/mode, le compteur de photos et les commandes de capture utilisent le même fond sombre, la police Manrope à 13 pixels et un poids de 600, avec des arrondis de 7 pixels.
+- Les textes des boutons sont centrés sur toute leur hauteur. Les largeurs suivent le texte avec des marges internes identiques, sans les anciens espaces vides du compteur de photos.
+- Les commandes courantes et les informations mesurent 36 pixels de haut ; la capture mesure 44 pixels pour conserver sa priorité. Les marges du plein écran sont de 16 pixels, avec 8 pixels entre les éléments d’une même ligne.
+- La sortie du plein écran garde une position fixe. Le contexte, les états d’enregistrement et d’image figée, ainsi que le message de capture occupent des lignes distinctes.
+- Les messages de capture sont placés dans la zone vidéo. Avec un nom de fichier long, « Voir » et la fermeture restent centrés verticalement. « Voir » ferme le message avant d’ouvrir la capture pour dégager les commandes de la visionneuse.
+- L’installation personnelle sans signature officielle est documentée ; aucun certificat payant n’est nécessaire pour cette distribution.
+
+Validation de cette harmonisation sous Linux : les **66 tests applicatifs** passent,
+puis les cinq tests d’interaction sont revérifiés après le dernier ajustement du
+message de capture. Le clic réel sur « Voir » est couvert avec un nom de fichier
+long. Clippy strict sur tous les targets du workspace, le formatage Rust et le
+contrôle des espaces passent également.
+
+**800 rendus synthétiques** ont été générés dans les deux thèmes, à quatre tailles
+de fenêtre et à 100 %, 125 %, 150 % et 200 %. Après revue des rendus, les
+**208 comparaisons d’images** passent, avec de nouvelles références pour les
+messages longs en mode fenêtré. Ces contrôles utilisent le rendu logiciel sous
+Xvfb et ne constituent pas des essais sur les bureaux natifs Windows/macOS.
+
+## 5 octobre 2026 — finalisation de la version personnelle 0.2.0
+
+- Sauvegarde et restauration : progression par fichiers et octets, annulation pendant la copie ou l’attente des verrous, retrait des dossiers temporaires et fermeture qui attend leur nettoyage.
+- La fermeture annule aussi les opérations encore en file d’attente avant l’ouverture d’un sélecteur, pour les sauvegardes et les exports.
+- Dernière sauvegarde réussie conservée pour chaque dossier de captures récemment utilisé ; rappel facultatif après sept jours, désactivé par défaut, avec persistance après redémarrage.
+- Export d’une copie MP4 H.264 depuis la visionneuse avec FFmpeg : progression, annulation, conservation de l’AVI, refus de remplacer un fichier existant et retrait des exports partiels en cas d’erreur. Une image JPEG corrompue fait échouer l’export au lieu d’être omise silencieusement.
+- Paramètres : version affichée, commandes de sauvegarde et de rappel dimensionnées selon le texte ; annulation accessible dans la visionneuse et les paramètres.
+- Paquets 0.2.0 sans signature officielle, avec version et empreinte du binaire, instructions de mise à jour et intégration facultative d’un FFmpeg autonome accompagné de sa licence. Les identifiants natifs et emplacements des réglages sont conservés ; les captures restent hors des fichiers installés.
+
+Les **209 tests du workspace** passent sous Linux ; les deux essais nécessitant
+la caméra restent ignorés. Les nouveaux essais couvrent l’interruption brutale
+d’un processus puis une nouvelle sauvegarde/restauration, une destination en
+lecture seule, la fermeture pendant une copie, les erreurs et l’annulation dans
+l’interface, l’historique après redémarrage et l’encodage réel H.264 avec contrôle
+de la durée et du nombre d’images. Les retours de sélection sont simulés via
+`zenity` ; les sélecteurs natifs ne sont pas validés par ces tests.
+
+Les **six contrôles de structure des paquets** passent, dont la construction et
+l’extraction d’un vrai paquet Debian. Les outils Inno Setup et hdiutil sont
+simulés pour contrôler les identifiants et permissions Windows/macOS.
+
+Les références visuelles passent de 208 à **272 images**, avec les nouveaux
+états de sauvegarde, rappel et export MP4. Les scénarios concernés sont rendus
+à quatre tailles, dans les deux thèmes, de 100 % à 200 %. Les vues inchangées
+sont réutilisées pour la comparaison complète ; la matrice entière comprend
+désormais 896 vues synthétiques.
+
+L’analyse Clippy stricte du workspace passe en natif Linux et en compilation
+croisée pour Windows x86_64, macOS Intel et macOS Apple Silicon. Les derniers
+contrôles d’export et du parcours graphique passent après les ajustements finaux.
+
+La version Linux optimisée 0.2.0 est construite et distribuée localement en
+archive portable et paquet Debian, avec empreintes SHA-256 vérifiées. Le binaire
+extrait du paquet Debian démarre et se ferme sous Xvfb avec une ancienne
+configuration : dossier des captures, modèle de nommage, thème, qualité vidéo,
+préférence du bouton et valeurs caméra sont conservés ; la photo synthétique
+existante reste identique. Le paquet ne contient que des fichiers sous `usr/`.
+
+Les essais avec le DE400, le bouton physique et l’installation sur les bureaux
+Windows/macOS restent à effectuer sur les ordinateurs correspondants, selon
+`docs/VALIDATION-MATERIELLE.md`.
+
+## 6 octobre 2026 — outils de consultation des photos
+
+- Zoom continu de 10 à 800 %, taille réelle tenant compte de l’échelle du moniteur, zoom sous le curseur, déplacement, loupe ×2,5 et plein écran avec sortie par Échap.
+- Notes de consultation et annotations manuelles : cercle, flèche, point et texte, aperçu pendant le tracé, masquage, suppression individuelle et annulation. Les notes restent modifiables pendant l’enregistrement automatique ; une erreur conserve le brouillon.
+- Observations associées à l’empreinte de la photo, conservées dans l’index local et incluses dans les sauvegardes/restaurations. La navigation et la fermeture attendent leur enregistrement ; un fichier remplacé ne reprend pas les anciennes observations.
+- Choix de photos du même dossier et du même œil, par période facultative ; cadrage indépendant et liaison qui conserve l’alignement. Références importées à côté de la photo et cercles repères réglables manuellement.
+- Luminosité, contraste, rotation et miroir réversibles, avec retour à l’original. Copie PNG en pleine résolution avec annotations et réglages d’affichage ; fiche PDF avec l’original annoté, notes paginées et éventuelle comparaison.
+- Originaux conservés, refus de remplacer les exports existants et nettoyage des copies temporaires lors de l’annulation. Les panneaux restent accessibles par défilement ; le bouton d’enregistrement des notes est visible dès l’ouverture à 800 × 600.
+
+Les outils et leurs limites sont décrits dans `docs/VISIONNEUSE.md`. Les images
+de référence et les repères servent à l’observation manuelle.
+
+Validation sous Linux avec des captures fictives : les **219 tests du workspace**
+passent ; les deux essais matériels restent ignorés. Après les derniers
+ajustements, le test de géométrie est revérifié : taille réelle à 200 % d’échelle
+du bureau, zoom sous le curseur, coordonnées après rotation/miroir, flèche
+cantonnée à sa zone et loupe ×2,5 mesurée sur les pixels du rendu.
+Le parcours applicatif vérifie aussi la saisie pendant une sauvegarde,
+l’enregistrement avant navigation/fermeture, l’annulation d’une suppression,
+la liaison des cadrages, les exports réels et la protection du brouillon après
+remplacement de la photo source. Les retours des sélecteurs sont simulés via
+`zenity` ; leurs fenêtres natives ne sont pas validées par cet essai.
+
+**320 vues de la visionneuse ont été actualisées**, à quatre tailles, dans les
+deux thèmes et aux quatre échelles de 100 % à 200 %, avec nouvelle revue des
+panneaux, du zoom et de la loupe. Les vues inchangées sont réutilisées dans la
+matrice de 1 088 captures ; les **384 comparaisons d’images** passent. Les PDF
+d’essai sont également relus avec `pdfinfo` et `pdftotext` pour contrôler leur
+structure et les textes accentués.
+
+Clippy strict sur tous les targets du workspace : réussi en natif Linux et
+pour Windows x86_64, macOS Intel et macOS Apple Silicon. Le formatage Rust et
+le contrôle des espaces passent. La compilation croisée ne remplace pas les
+essais sur les bureaux natifs. Les paquets 0.2.0 déjà générés ne sont pas
+reconstruits par cet ajout des outils photo.
+
+## 6 octobre 2026 — parcours de consultation, version 0.3.0
+
+- Commandes **Comparer** et **Exporter…** séparées ; panneau **Annoter / Notes** explicite et état permanent des notes avec heure du dernier enregistrement.
+- Choix de comparaison avec miniatures, date et œil, légendes lisibles sur plusieurs lignes ; marque **Retenue** conservée avec les observations, incluse dans les sauvegardes et actualisée au retour dans le dossier.
+- Vue **Dossiers / Séances** : recherche par nom ou numéro, choix explicite du dossier, journées de captures, miniatures gauche/droite et notes générales distinctes des notes d’une photo. La journée actuelle est disponible avant une capture. Les notes générales se sauvegardent automatiquement, y compris avant fermeture ou changement de journée ; une erreur conserve le brouillon.
+- Champs **Du / Au** avec dates françaises et calendrier partagé par la bibliothèque et la comparaison. Le format ISO reste accepté pour les anciennes saisies.
+- Compteurs de photos près du choix de l’œil : conservés lors du changement de côté et remis à zéro lors du changement de personne ou de la fin de session. Le choix de l’œil reste manuel.
+- Fermeture par Échap des dossiers et du calendrier, commandes de capture accessibles à petite taille et guides actualisés inclus dans les paquets 0.3.0.
+
+Les **220 tests du workspace** passent sous Linux ; les deux essais nécessitant
+une caméra réelle restent ignorés. Le parcours graphique vérifie notamment le
+calendrier d’une année bissextile, Échap, la sélection gauche/droite et ses
+miniatures, la marque retenue au retour d’une photo, la saisie pendant une
+sauvegarde, le brouillon après échec, les notes générales avant fermeture et
+la conservation des compteurs lors du changement d’œil. Le test du stockage
+vérifie l’isolation par dossier et journée, les homonymes, les limites de notes,
+l’annulation et leur récupération après sauvegarde/restauration.
+
+Les **six contrôles de structure des paquets** passent, dont un vrai paquet
+Debian extrait ; les outils d’installation Windows/macOS restent simulés dans
+ces contrôles. Les originaux et les paramètres personnels restent hors des
+fichiers installés. Le guide de consultation est dans `docs/VISIONNEUSE.md` et
+les instructions de mise à jour dans `docs/RELEASE-0.3.0.md`.
+
+Les **432 comparaisons visuelles** passent après mise à jour et revue des
+rendus concernés. Les **864 captures fraîches** couvrent 27 scénarios,
+quatre tailles de fenêtre, les deux thèmes et les échelles 100 %, 125 %,
+150 % et 200 %. La matrice complète disponible comprend 1 184 vues, avec
+les autres scénarios de la bibliothèque et des références. Le mode `--release`
+du script accélère le rendu avec les mêmes scénarios et contrôles d’images.
+
+Clippy strict sur tous les targets du workspace : réussi en natif Linux et
+pour Windows x86_64, macOS Intel et macOS Apple Silicon. Le formatage Rust et
+le contrôle des espaces passent. La version Linux optimisée 0.3.0 est
+reconstruite avec l’ensemble des outils photo et du parcours de consultation.
+La compilation croisée ne remplace pas les essais sur les bureaux natifs ;
+le bouton physique reste à vérifier sur l’iriscope réel.
+
+## Interface personnalisable · 6 octobre 2026 · version 0.4.0
+
+Les préférences d’affichage sont locales, avec reprise des anciennes configurations et bornes de largeur. La disposition retrouve les panneaux patient/photo, les largeurs des trois séparateurs et la grille/liste. La réinitialisation conserve le thème et les données de consultation.
+
+La présentation masque les informations privées et les annotations, sans effacer ni modifier les sources. Les notes continuent leur enregistrement ; les erreurs restent signalées sans chemin ni nom personnel. Image seule agrandit l’espace photo et masque les commandes après trois secondes sans interaction ; leur retour reste accessible à la souris et par Échap. Les miniatures ont trois tailles en grille et en liste. Le diagnostic caméra garde son état visible et replie les données techniques par défaut. Aucune option de masquage permanent de l’aide n’a été ajoutée.
+
+Validation 0.4.0 : 223 tests de workspace réussis, deux essais caméra ignorés faute de matériel ; Clippy strict sur Linux, Windows x64 et macOS x64/ARM64. La matrice produit 1 536 rendus (48 scènes, quatre fenêtres, deux thèmes, quatre échelles) et valide 608 comparaisons de référence. Les essais couvrent les séparateurs à la souris, la reprise des préférences, le masquage des données, les raccourcis privés, les échecs de notes et l’ouverture du panneau mémorisé après lecture réelle de la photo et des observations. Six tests d’empaquetage passent ; les outils Windows/macOS sont simulés. Le paquet Debian démarre et se ferme normalement sous Xvfb, conserve les anciennes préférences et un original JPEG, et mémorise le panneau entre deux démarrages. L’archive portable, les ressources et les empreintes sont vérifiées. Les essais natifs Windows/macOS et du bouton physique restent à effectuer sur leurs appareils.

@@ -64,6 +64,92 @@ pub enum SavedCameraControlValue {
     Menu(i64),
 }
 
+/// A successfully published backup, associated with its capture directory.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SuccessfulBackup {
+    /// Capture directory protected by this backup.
+    pub source: PathBuf,
+    /// Published backup directory.
+    pub destination: PathBuf,
+    /// Completion time as seconds since the Unix epoch.
+    pub completed_at_unix: u64,
+    /// Number of files in the backup.
+    pub files: usize,
+    /// Size of the saved files.
+    pub bytes: u64,
+}
+
+/// Display preferences contain no patient or photo identity.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+#[allow(clippy::struct_excessive_bools)] // Independent preferences, rather than a state machine.
+pub struct InterfacePreferences {
+    pub remember_layout: bool,
+    pub sidebar_visible: bool,
+    /// Zero preserves the responsive default width; other values are logical pixels.
+    pub camera_panel_width: i32,
+    pub viewer_panel_width: i32,
+    pub consultation_panel_width: i32,
+    pub photo_panel: i32,
+    pub library_view: i32,
+    /// 0 small, 1 medium, 2 large.
+    pub thumbnail_size: i32,
+    pub advanced_settings_expanded: bool,
+    pub presentation_mode: bool,
+    pub image_only: bool,
+}
+
+impl Default for InterfacePreferences {
+    fn default() -> Self {
+        Self {
+            remember_layout: true,
+            sidebar_visible: true,
+            camera_panel_width: 0,
+            viewer_panel_width: 0,
+            consultation_panel_width: 0,
+            photo_panel: 0,
+            library_view: 0,
+            thumbnail_size: 1,
+            advanced_settings_expanded: false,
+            presentation_mode: false,
+            image_only: false,
+        }
+    }
+}
+
+impl InterfacePreferences {
+    /// Clamp hand-edited or older preferences before using them for geometry.
+    pub fn normalize(&mut self) {
+        for (value, minimum, maximum) in [
+            (&mut self.camera_panel_width, 260, 480),
+            (&mut self.viewer_panel_width, 252, 480),
+            (&mut self.consultation_panel_width, 200, 400),
+        ] {
+            if *value != 0 {
+                *value = (*value).clamp(minimum, maximum);
+            }
+        }
+        self.photo_panel = self.photo_panel.clamp(0, 5);
+        self.library_view = self.library_view.clamp(0, 1);
+        self.thumbnail_size = self.thumbnail_size.clamp(0, 2);
+    }
+
+    /// Disabling layout memory keeps explicit display options and restores panel defaults.
+    #[must_use]
+    pub fn initial_layout(&self) -> Self {
+        if self.remember_layout {
+            return self.clone();
+        }
+        Self {
+            remember_layout: false,
+            thumbnail_size: self.thumbnail_size,
+            presentation_mode: self.presentation_mode,
+            image_only: self.image_only,
+            ..Self::default()
+        }
+    }
+}
+
 /// Application settings persisted across restarts.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct AppSettings {
@@ -87,6 +173,14 @@ pub struct AppSettings {
     /// Values selected for writable image controls, indexed by stable control key.
     #[serde(default)]
     pub camera_control_values: BTreeMap<String, SavedCameraControlValue>,
+    /// Latest successful backup for each recently used capture directory (bounded to 20).
+    #[serde(default)]
+    pub backup_history: Vec<SuccessfulBackup>,
+    /// Optional passive reminder in settings, after seven days without a backup.
+    #[serde(default)]
+    pub backup_reminder_enabled: bool,
+    #[serde(default)]
+    pub interface: InterfacePreferences,
 }
 
 impl Default for AppSettings {
@@ -105,11 +199,39 @@ impl Default for AppSettings {
             iridology_map_path: None,
             iridology_symbols_path: None,
             camera_control_values: BTreeMap::new(),
+            backup_history: Vec::new(),
+            backup_reminder_enabled: false,
+            interface: InterfacePreferences::default(),
         }
     }
 }
 
 impl AppSettings {
+    /// Records only a successfully published backup and bounds the history.
+    pub fn record_backup(&mut self, backup: SuccessfulBackup) {
+        self.backup_history
+            .retain(|entry| entry.source != backup.source);
+        self.backup_history.insert(0, backup);
+        self.backup_history.truncate(20);
+    }
+
+    /// Returns the latest successful backup of the active capture directory.
+    #[must_use]
+    pub fn last_backup(&self) -> Option<&SuccessfulBackup> {
+        self.backup_history
+            .iter()
+            .filter(|entry| entry.source == self.capture_directory)
+            .max_by_key(|entry| entry.completed_at_unix)
+    }
+
+    /// A missing backup or one older than seven days can trigger the optional reminder.
+    #[must_use]
+    pub fn backup_reminder_due(&self, now_unix: u64) -> bool {
+        self.backup_reminder_enabled
+            && self.last_backup().is_none_or(|entry| {
+                now_unix.saturating_sub(entry.completed_at_unix) >= 7 * 24 * 60 * 60
+            })
+    }
     /// Loads settings, using defaults only when the file does not exist.
     ///
     /// # Errors
@@ -270,7 +392,68 @@ fn settings_backup_path(path: &Path) -> PathBuf {
 mod tests {
     use std::{fs, time::SystemTime};
 
-    use super::{AppSettings, SavedCameraControlValue, VideoQualityPreference};
+    use super::{
+        AppSettings, InterfacePreferences, SavedCameraControlValue, VideoQualityPreference,
+    };
+
+    #[test]
+    fn legacy_and_partial_interface_preferences_keep_safe_defaults() {
+        let mut legacy = serde_json::to_value(AppSettings::default()).unwrap();
+        legacy.as_object_mut().unwrap().remove("interface");
+        let loaded: AppSettings = serde_json::from_value(legacy).unwrap();
+        assert_eq!(loaded.interface, InterfacePreferences::default());
+        let partial: InterfacePreferences =
+            serde_json::from_str(r#"{"thumbnail_size":2}"#).unwrap();
+        assert!(partial.remember_layout && partial.sidebar_visible);
+        assert!(
+            !partial.presentation_mode
+                && !partial.image_only
+                && !partial.advanced_settings_expanded
+        );
+        assert_eq!(partial.thumbnail_size, 2);
+    }
+
+    #[test]
+    fn interface_geometry_is_bounded_and_layout_memory_can_be_disabled() {
+        let mut prefs = InterfacePreferences {
+            camera_panel_width: i32::MAX,
+            viewer_panel_width: -100,
+            consultation_panel_width: 0,
+            library_view: 9,
+            photo_panel: -7,
+            thumbnail_size: 3,
+            ..InterfacePreferences::default()
+        };
+        prefs.normalize();
+        assert_eq!(
+            (
+                prefs.camera_panel_width,
+                prefs.viewer_panel_width,
+                prefs.consultation_panel_width
+            ),
+            (480, 252, 0)
+        );
+        assert_eq!(
+            (prefs.library_view, prefs.photo_panel, prefs.thumbnail_size),
+            (1, 0, 2)
+        );
+        prefs.remember_layout = false;
+        prefs.sidebar_visible = false;
+        prefs.presentation_mode = true;
+        prefs.image_only = true;
+        let restored = prefs.initial_layout();
+        assert!(restored.sidebar_visible);
+        assert_eq!(
+            (
+                restored.camera_panel_width,
+                restored.viewer_panel_width,
+                restored.library_view
+            ),
+            (0, 0, 0)
+        );
+        assert!(restored.presentation_mode && restored.image_only);
+        assert_eq!(restored.thumbnail_size, 2);
+    }
 
     #[test]
     fn settings_roundtrip_preserves_values() {
@@ -319,6 +502,61 @@ mod tests {
         let loaded: AppSettings = serde_json::from_value(legacy).expect("load legacy settings");
         assert!(loaded.camera_control_values.is_empty());
         assert_eq!(loaded.video_quality, VideoQualityPreference::Best);
+    }
+    #[test]
+    fn legacy_settings_upgrade_preserves_paths_preferences_and_camera_controls() {
+        let mut settings = AppSettings {
+            capture_directory: std::path::PathBuf::from("Images/Émilie — mes captures"),
+            filename_template: "{nom}_{prenom}_{oeil}_{date}".into(),
+            theme: super::AppTheme::Dark,
+            video_quality: VideoQualityPreference::Smooth,
+            iridology_map_path: Some("Images/ma carte.jpg".into()),
+            ..AppSettings::default()
+        };
+        settings.camera_control_values.insert(
+            "standard:Brightness".into(),
+            SavedCameraControlValue::Integer(42),
+        );
+        let mut legacy = serde_json::to_value(&settings).unwrap();
+        legacy.as_object_mut().unwrap().remove("backup_history");
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("backup_reminder_enabled");
+        let upgraded: AppSettings = serde_json::from_value(legacy).unwrap();
+        assert_eq!(upgraded, settings);
+        assert!(upgraded.backup_history.is_empty());
+        assert!(!upgraded.backup_reminder_enabled);
+    }
+    #[test]
+    fn backup_history_is_bounded_and_reminders_follow_the_active_directory() {
+        let mut settings = AppSettings {
+            capture_directory: "captures-0".into(),
+            backup_reminder_enabled: true,
+            ..AppSettings::default()
+        };
+        assert!(settings.backup_reminder_due(1));
+        for number in 0..25 {
+            settings.record_backup(super::SuccessfulBackup {
+                source: format!("captures-{number}").into(),
+                destination: format!("backup-{number}").into(),
+                completed_at_unix: 1_000_000,
+                files: 2,
+                bytes: 4096,
+            });
+        }
+        assert_eq!(settings.backup_history.len(), 20);
+        assert!(settings.last_backup().is_none());
+        settings.capture_directory = "captures-24".into();
+        assert!(!settings.backup_reminder_due(1_000_000 + 7 * 86400 - 1));
+        assert!(settings.backup_reminder_due(1_000_000 + 7 * 86400));
+        settings.backup_reminder_enabled = false;
+        assert!(!settings.backup_reminder_due(u64::MAX));
+        let serialized = serde_json::to_vec(&settings).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<AppSettings>(&serialized).unwrap(),
+            settings
+        );
     }
 
     #[test]

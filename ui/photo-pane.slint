@@ -1,0 +1,205 @@
+import { AppState } from "./state.slint";
+import { Design } from "./theme.slint";
+
+component PhotoMark inherits Rectangle {
+    in property <int> kind;
+    in property <string> label;
+    in property <length> ax;
+    in property <length> ay;
+    in property <length> bx;
+    in property <length> by;
+    private property <length> radius: max(1px, sqrt(((root.bx - root.ax)/1px)*((root.bx - root.ax)/1px) + ((root.by - root.ay)/1px)*((root.by - root.ay)/1px))*1px);
+    background: transparent;
+            if root.kind == 1: Rectangle {
+                x: root.ax - root.radius; y: root.ay - root.radius;
+                width: 2*root.radius; height: self.width; border-radius: self.width/2;
+                border-width: 2px; border-color: #ffcd66; background: transparent;
+            }
+            if root.kind == 2: Path {
+                width: parent.width; height: parent.height;
+                viewbox-x: 0; viewbox-y: 0; viewbox-width: root.width/1px; viewbox-height: root.height/1px;
+                stroke: #ffcd66; stroke-width: 2px;
+                MoveTo { x: root.ax/1px; y: root.ay/1px; }
+                LineTo { x: root.bx/1px; y: root.by/1px; }
+                MoveTo { x: (root.bx - 10px * cos(atan2((root.by - root.ay)/1px, (root.bx - root.ax)/1px) - 30deg))/1px; y: (root.by - 10px * sin(atan2((root.by - root.ay)/1px, (root.bx - root.ax)/1px) - 30deg))/1px; }
+                LineTo { x: root.bx/1px; y: root.by/1px; }
+                LineTo { x: (root.bx - 10px * cos(atan2((root.by - root.ay)/1px, (root.bx - root.ax)/1px) + 30deg))/1px; y: (root.by - 10px * sin(atan2((root.by - root.ay)/1px, (root.bx - root.ax)/1px) + 30deg))/1px; }
+            }
+            if root.kind == 3: Rectangle { x: root.ax - 4px; y: root.ay - 4px; width: 8px; height: 8px; border-radius: 4px; background: #ffcd66; border-width: 1px; border-color: #171e29; }
+            if root.kind == 4: Text { x: root.ax; y: root.ay; width: max(20px, parent.width - self.x); text: root.label; color: #ffcd66; font-size: 14px; font-weight: 600; wrap: word-wrap; }
+
+}
+
+export component PhotoPane inherits Rectangle {
+    in property <image> photo;
+    in property <bool> reference: false;
+    in-out property <bool> fit: true;
+    in-out property <int> zoom: 100;
+    in-out property <length> pan-x: 0px;
+    in-out property <length> pan-y: 0px;
+    in property <bool> interactive: true;
+    out property <float> actual-zoom: root.scale*root.pixel-scale*100;
+    min-width: 0px; min-height: 0px;
+    out property <length> rendered-width: root.image-width;
+    out property <length> rendered-height: root.image-height;
+    out property <length> rendered-left: root.left;
+    out property <length> rendered-top: root.top;
+    private property <float> pixel-scale: 1px / (1phx + 0px);
+    private property <float> fit-scale: min(root.width / max(1px, root.photo.width * 1px), root.height / max(1px, root.photo.height * 1px));
+    private property <float> scale: root.fit ? root.fit-scale : root.zoom / 100.0 / root.pixel-scale;
+    private property <length> image-width: max(1, root.photo.width) * 1px * root.scale;
+    private property <length> image-height: max(1, root.photo.height) * 1px * root.scale;
+    private property <length> limit-x: max(0px, (root.image-width - root.width) / 2);
+    private property <length> limit-y: max(0px, (root.image-height - root.height) / 2);
+    private property <length> left: (root.width - root.image-width) / 2 + root.pan-x;
+    private property <length> top: (root.height - root.image-height) / 2 + root.pan-y;
+    Timer {
+        interval: 100ms; running: AppState.viewer-open;
+        triggered => {
+            root.pan-x = clamp(root.pan-x,-root.limit-x,root.limit-x);
+            root.pan-y = clamp(root.pan-y,-root.limit-y,root.limit-y);
+            if root.reference { AppState.comparison-effective-zoom = root.actual-zoom; }
+            else { AppState.viewer-effective-zoom = root.actual-zoom; AppState.refresh-viewer-scale(); }
+        }
+    }
+    clip: true;
+    border-radius: Design.card-radius;
+    background: Design.preview;
+    accessible-role: groupbox;
+    accessible-label: root.reference ? "Photo de comparaison" : "Photo de l’iris. Molette pour zoomer, glisser pour déplacer.";
+    forward-focus: keyboard;
+
+    public pure function display-x(x: float, y: float) -> float {
+        let rotated = AppState.viewer-show-original ? x : AppState.viewer-rotation == 90 ? 1-y : AppState.viewer-rotation == 180 ? 1-x : AppState.viewer-rotation == 270 ? y : x;
+        return !AppState.viewer-show-original && AppState.viewer-mirror ? 1-rotated : rotated;
+    }
+    public pure function display-y(x: float, y: float) -> float {
+        return AppState.viewer-show-original ? y : AppState.viewer-rotation == 90 ? x : AppState.viewer-rotation == 180 ? 1-y : AppState.viewer-rotation == 270 ? 1-x : y;
+    }
+    public function original-x(x: float, y: float) -> float {
+        let dx = !AppState.viewer-show-original && AppState.viewer-mirror ? 1-x : x;
+        return AppState.viewer-show-original ? dx : AppState.viewer-rotation == 90 ? y : AppState.viewer-rotation == 180 ? 1-dx : AppState.viewer-rotation == 270 ? 1-y : dx;
+    }
+    public function original-y(x: float, y: float) -> float {
+        let dx = !AppState.viewer-show-original && AppState.viewer-mirror ? 1-x : x;
+        return AppState.viewer-show-original ? y : AppState.viewer-rotation == 90 ? 1-dx : AppState.viewer-rotation == 180 ? 1-y : AppState.viewer-rotation == 270 ? dx : y;
+    }
+    public function zoom-at(next: int, mx: length, my: length) {
+        let old = max(0.0001, root.scale);
+        let bounded = clamp(next, 10, 800);
+        let ratio = bounded / 100.0 / root.pixel-scale / old;
+        let px = (mx - root.width / 2) - ((mx - root.width / 2) - root.pan-x) * ratio;
+        let py = (my - root.height / 2) - ((my - root.height / 2) - root.pan-y) * ratio;
+        root.zoom = bounded;
+        root.fit = false;
+        root.pan-x = clamp(px, -root.limit-x, root.limit-x);
+        root.pan-y = clamp(py, -root.limit-y, root.limit-y);
+        if root.reference { AppState.comparison-effective-zoom = root.zoom; } else { AppState.viewer-effective-zoom = root.zoom; }
+        AppState.link-view(root.reference);
+    }
+
+    Image { x: root.left; y: root.top; width: root.image-width; height: root.image-height; source: root.photo; image-fit: fill; }
+    if !root.reference && AppState.viewer-annotations-visible && !AppState.presentation-mode: Rectangle {
+        x: root.left; y: root.top; width: root.image-width; height: root.image-height; background: transparent;
+        for a in AppState.viewer-annotations: PhotoMark {
+            width: parent.width; height: parent.height;
+            kind: a.kind; label: a.text;
+            ax: root.display-x(a.x, a.y) * self.width;
+            ay: root.display-y(a.x, a.y) * self.height;
+            bx: root.display-x(a.end-x, a.end-y) * self.width;
+            by: root.display-y(a.end-x, a.end-y) * self.height;
+        }
+    }
+    if !root.reference && AppState.viewer-guides: Rectangle {
+        x: root.left; y: root.top; width: root.image-width; height: root.image-height; background: transparent;
+        private property <length> cx: root.display-x(AppState.viewer-guide-x, AppState.viewer-guide-y) * self.width;
+        private property <length> cy: root.display-y(AppState.viewer-guide-x, AppState.viewer-guide-y) * self.height;
+        private property <length> radius: min(self.width, self.height) * AppState.viewer-guide-radius;
+        for fraction in [0.33, 0.66, 1]: Rectangle {
+            x: parent.cx - parent.radius*fraction; y: parent.cy - parent.radius*fraction;
+            width: 2*parent.radius*fraction; height: self.width; border-radius: self.width/2;
+            border-width: 1px; border-color: #88ffffff; background: transparent;
+        }
+        Rectangle { x: parent.cx - 6px; y: parent.cy; width: 12px; height: 1px; background: #88ffffff; }
+        Rectangle { x: parent.cx; y: parent.cy - 6px; width: 1px; height: 12px; background: #88ffffff; }
+    }
+    if !root.reference && pointer.pressed && pointer.inside-start && (AppState.viewer-tool == 1 || AppState.viewer-tool == 2): PhotoMark {
+        x: root.left; y: root.top; width: root.image-width; height: root.image-height;
+        kind: AppState.viewer-tool;
+        ax: root.display-x(pointer.start-x, pointer.start-y) * root.image-width;
+        ay: root.display-y(pointer.start-x, pointer.start-y) * root.image-height;
+        bx: clamp(pointer.mouse-x - root.left, 0px, root.image-width);
+        by: clamp(pointer.mouse-y - root.top, 0px, root.image-height);
+    }
+    pointer := TouchArea {
+        enabled: root.interactive;
+        pointer-event(event) => { if event.kind == PointerEventKind.move { AppState.show-photo-controls(); } }
+        private property <length> start-pan-x;
+        private property <length> start-pan-y;
+        private property <float> start-x;
+        private property <float> start-y;
+        private property <bool> inside-start: false;
+        changed pressed => {
+            if self.pressed {
+                keyboard.focus();
+                self.start-pan-x = root.pan-x; self.start-pan-y = root.pan-y;
+                let x = (self.mouse-x - root.left)/root.image-width;
+                let y = (self.mouse-y - root.top)/root.image-height;
+                self.inside-start = x >= 0 && x <= 1 && y >= 0 && y <= 1;
+                self.start-x = root.original-x(x,y); self.start-y = root.original-y(x,y);
+            } else if !root.reference && AppState.viewer-tool > 0 && self.inside-start {
+                let x = clamp((self.mouse-x - root.left)/root.image-width,0,1);
+                let y = clamp((self.mouse-y - root.top)/root.image-height,0,1);
+                if AppState.viewer-tool == 5 {
+                    AppState.viewer-guide-x = root.original-x(x,y); AppState.viewer-guide-y = root.original-y(x,y);
+                    AppState.viewer-tool = 0;
+                } else {
+                    AppState.add-viewer-annotation(AppState.viewer-tool, self.start-x, self.start-y, root.original-x(x,y), root.original-y(x,y));
+                }
+            }
+        }
+        moved => {
+            if self.pressed && (root.reference || AppState.viewer-tool == 0) {
+                root.pan-x = clamp(self.start-pan-x + self.mouse-x - self.pressed-x,-root.limit-x,root.limit-x);
+                root.pan-y = clamp(self.start-pan-y + self.mouse-y - self.pressed-y,-root.limit-y,root.limit-y);
+                AppState.link-view(root.reference);
+            }
+        }
+        scroll-event(event) => {
+            if event.delta-y == 0 { return reject; }
+            let actual = root.fit ? round(root.scale*root.pixel-scale*100) : root.zoom;
+            root.zoom-at(round(actual * (event.delta-y > 0 ? 1.2 : 1/1.2)), self.mouse-x, self.mouse-y);
+            return accept;
+        }
+        double-clicked => { if !root.reference || AppState.comparison-linked { AppState.fit-viewer(); } root.fit = true; root.pan-x = 0px; root.pan-y = 0px; }
+    }
+    if !root.reference && AppState.viewer-loupe && pointer.has-hover && !pointer.pressed
+        && pointer.mouse-x >= root.left && pointer.mouse-x <= root.left+root.image-width
+        && pointer.mouse-y >= root.top && pointer.mouse-y <= root.top+root.image-height: Rectangle {
+        x: clamp(pointer.mouse-x+20px, 8px, root.width - self.width - 8px);
+        y: clamp(pointer.mouse-y+20px, 8px, root.height - self.height - 8px);
+        width: min(180px, root.width - 16px); height: min(180px, root.height - 16px);
+        clip: true; background: Design.preview; border-radius: Design.card-radius;
+        Image {
+            source: root.photo; width: root.image-width*2.5; height: root.image-height*2.5;
+            x: parent.width/2-(pointer.mouse-x - root.left)*2.5;
+            y: parent.height/2-(pointer.mouse-y - root.top)*2.5; image-fit: fill;
+        }
+        Rectangle { x: 0px; y: 0px; width: 100%; height: 24px; background: Design.overlay-panel; }
+        Rectangle { x: 0px; y: 0px; width: 100%; height: 100%; background: transparent; border-radius: Design.card-radius; border-width: 2px; border-color: Design.overlay-accent; }
+        Text { x: 6px; y: 6px; text: "Loupe ×2,5"; color: Design.overlay-text; font-size: 11px; }
+    }
+    keyboard := FocusScope {
+        width: 0px; height: 0px;
+        KeyBinding { keys: @keys(Escape); activated => { AppState.dismiss-top-overlay(); } }
+        key-pressed(event) => {
+            if event.text == "+" || event.text == "=" { root.zoom-at(round((root.fit ? root.scale*root.pixel-scale*100 : root.zoom)*1.2), root.width/2, root.height/2); return accept; }
+            if event.text == "-" { root.zoom-at(round((root.fit ? root.scale*root.pixel-scale*100 : root.zoom)/1.2),root.width/2,root.height/2); return accept; }
+            if event.text == Key.LeftArrow { root.pan-x = clamp(root.pan-x+24px,-root.limit-x,root.limit-x); AppState.link-view(root.reference); return accept; }
+            if event.text == Key.RightArrow { root.pan-x = clamp(root.pan-x - 24px,-root.limit-x,root.limit-x); AppState.link-view(root.reference); return accept; }
+            if event.text == Key.UpArrow { root.pan-y = clamp(root.pan-y+24px,-root.limit-y,root.limit-y); AppState.link-view(root.reference); return accept; }
+            if event.text == Key.DownArrow { root.pan-y = clamp(root.pan-y - 24px,-root.limit-y,root.limit-y); AppState.link-view(root.reference); return accept; }
+            return reject;
+        }
+    }
+}

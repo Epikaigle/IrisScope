@@ -6,7 +6,7 @@ use slint::{
 };
 
 slint::slint! {
-    import { AppButton, AppSlider } from "../../../ui/controls.slint";
+    import { AppButton, AppSlider, HelpState, HelpOverlay } from "../../../ui/controls.slint";
 
     export component ControlWindow inherits Window {
         in-out property <bool> controls-enabled: true;
@@ -16,11 +16,13 @@ slint::slint! {
         in-out property <int> slider-releases: 0;
         in-out property <float> slider-value <=> slider.value;
         in-out property <float> slider-maximum: 30;
+        out property <bool> tooltip-open: HelpState.text != "";
         out property <bool> first-has-focus: first.has-focus;
 
         first := AppButton {
             x: 20px; y: 20px; width: 120px; height: 36px;
             text: "Capture";
+            tooltip: "Prendre une photo du dossier actif";
             enabled: root.controls-enabled;
             clicked => { root.first-clicks += 1; }
         }
@@ -37,6 +39,7 @@ slint::slint! {
             changed => { root.slider-changes += 1; }
             released(value) => { root.slider-releases += 1; }
         }
+        HelpOverlay { available-width: root.width; available-height: root.height; }
     }
 }
 
@@ -200,10 +203,37 @@ fn sliders_respect_native_steps_bounds_and_disable(window: &ControlWindow) {
     );
 }
 
+fn tooltip_preserves_clicks_and_keyboard_focus(window: &ControlWindow) {
+    window.show().expect("show controls");
+    click(window, 70.0, 38.0);
+    let before = window.get_first_clicks();
+    window.window().dispatch_event(WindowEvent::PointerMoved {
+        position: LogicalPosition::new(70.0, 38.0),
+    });
+    slint::platform::update_timers_and_animations();
+    std::thread::sleep(std::time::Duration::from_millis(700));
+    slint::platform::update_timers_and_animations();
+    assert!(window.get_tooltip_open(), "hover must reveal the help text");
+    assert!(
+        window.get_first_has_focus(),
+        "help must not steal keyboard focus"
+    );
+    click(window, 70.0, 38.0);
+    slint::platform::update_timers_and_animations();
+    assert_eq!(
+        window.get_first_clicks(),
+        before + 1,
+        "help must not consume the first click"
+    );
+    assert!(!window.get_tooltip_open());
+    window.hide().expect("hide controls");
+}
+
 #[test]
 fn shared_controls_handle_keyboard_repetition_focus_cancellation_and_camera_steps() {
     let window = ControlWindow::new().expect("create shared controls");
     window.window().set_size(PhysicalSize::new(360, 180));
     buttons_cancel_activation_on_repetition_focus_loss_and_disable(&window);
     sliders_respect_native_steps_bounds_and_disable(&window);
+    tooltip_preserves_clicks_and_keyboard_focus(&window);
 }

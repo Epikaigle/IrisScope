@@ -5,8 +5,8 @@ use crate::app_helpers::{
 use crate::config::NOTICE_ERROR;
 use crate::controls_ui::{
     CameraControlRuntimeState, camera_control_key, compatible_saved_camera_control_value,
-    default_camera_control_value, remember_camera_control_value, set_camera_control_model,
-    snap_integer_control_value, update_camera_control_row,
+    default_camera_control_value, remember_camera_control_value, selected_camera_menu_value,
+    set_camera_control_model, snap_integer_control_value, update_camera_control_row,
 };
 use crate::platform_camera;
 use crate::playback::{camera_error_status, is_de400, show_capture_notice};
@@ -210,7 +210,7 @@ pub(super) fn install(main_window: &MainWindow, runtime: &AppRuntime) {
     let weak_menu = main_window.as_weak();
     main_window
         .global::<AppState>()
-        .on_cycle_camera_control_menu(move |key| {
+        .on_select_camera_control_menu(move |key, requested_index| {
             let Some(win) = weak_menu.upgrade() else {
                 return;
             };
@@ -220,27 +220,12 @@ pub(super) fn install(main_window: &MainWindow, runtime: &AppRuntime) {
             let Some(state) = controls.iter_mut().find(|state| state.key == key.as_str()) else {
                 return;
             };
-            if state.descriptor.read_only {
-                return;
-            }
-
-            let CameraControlKind::Menu { items, .. } = &state.descriptor.kind else {
+            let Some(value) = selected_camera_menu_value(&state.descriptor, requested_index) else {
                 return;
             };
-            if items.is_empty() {
+            if state.value == value {
                 return;
             }
-
-            let current = match state.value {
-                CameraControlValue::Menu(value) => value,
-                _ => items[0].value,
-            };
-            let current_index = items
-                .iter()
-                .position(|item| item.value == current)
-                .unwrap_or_default();
-            let next = items[(current_index + 1) % items.len()].value;
-            let value = CameraControlValue::Menu(next);
             state.value = value.clone();
             control_commands_menu.set_control(state.descriptor.id.clone(), value.clone());
             let updated_controls = controls.clone();
@@ -306,8 +291,11 @@ fn start_decoder_worker(main_window: &MainWindow, runtime: &AppRuntime) -> threa
             {
                 continue;
             }
+            let (width, height, rgb) = decoded_frame;
+            let pixels = SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(&rgb, width, height);
+            drop(rgb);
             if let Ok(mut latest) = latest_decoded_frame_worker.lock() {
-                *latest = Some((job.generation, decoded_frame));
+                *latest = Some((job.generation, pixels));
             }
 
             if decoded_frame_update_pending_worker.swap(true, Ordering::AcqRel) {
@@ -326,15 +314,9 @@ fn start_decoder_worker(main_window: &MainWindow, runtime: &AppRuntime) -> threa
                 if !preview_active.load(Ordering::Acquire) || !live_preview_is_visible(&win) {
                     return;
                 }
-                let Some((job_generation, (width, height, raw_rgb))) = decoded else {
+                let Some((job_generation, pixel_buffer)) = decoded else {
                     return;
                 };
-                if job_generation != generation.load(Ordering::Acquire) {
-                    return;
-                }
-
-                let pixel_buffer =
-                    SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(&raw_rgb, width, height);
                 if job_generation != generation.load(Ordering::Acquire) {
                     return;
                 }

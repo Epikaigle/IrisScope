@@ -12,6 +12,16 @@ export struct DiagnosticData {
     dropped-frames: int,
 }
 
+export struct AnnotationData {
+    kind: int,
+    x: float, y: float, end-x: float, end-y: float,
+    text: string,
+}
+
+export struct ComparisonCandidateData {
+    path: string, version: string, caption: string, thumbnail: image,
+}
+
 export struct LibraryItemData {
     id: string,
     file-path: string,
@@ -46,5 +56,11 @@ export struct CameraControlUiData {
     value-label: string,
     boolean-value: bool,
     menu-label: string,
+    menu-options: [string],
+    menu-index: int,
     read-only: bool,
 }
+
+export struct CalendarDayData {day:int,date:string,enabled:bool,selected:bool,}
+export struct ConsultationDayData {date:string,label:string,left:int,right:int,videos:int,}
+export struct SessionPhotoData {path:string,version:string,caption:string,eye:int,retained:bool,thumbnail:image,}

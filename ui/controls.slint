@@ -1,15 +1,84 @@
 import { Design } from "./theme.slint";
 
+// A passive overlay keeps tooltips from capturing clicks or keyboard focus.
+export global HelpState {
+    in-out property <string> text: "";
+    in-out property <length> x;
+    in-out property <length> y;
+}
+
+export component Tooltip inherits Rectangle {
+    in property <string> text;
+    in property <bool> active;
+    private property <bool> shown: false;
+    width: 0px;
+    height: 0px;
+    horizontal-stretch: 0;
+    vertical-stretch: 0;
+    changed active => {
+        if !root.active && root.shown {
+            if HelpState.text == root.text { HelpState.text = ""; }
+            root.shown = false;
+        }
+    }
+    changed text => {
+        if root.shown { HelpState.text = ""; root.shown = false; }
+    }
+    Timer {
+        interval: 650ms;
+        running: root.active && root.text != "" && !root.shown;
+        triggered => {
+            root.shown = true;
+            HelpState.x = root.absolute-position.x;
+            HelpState.y = root.absolute-position.y;
+            HelpState.text = root.text;
+        }
+    }
+}
+
+export component HelpOverlay inherits Rectangle {
+    in property <length> available-width;
+    in property <length> available-height;
+    visible: HelpState.text != "";
+    width: min(360px, root.available-width - 24px);
+    height: message.preferred-height + 20px;
+    x: clamp(HelpState.x, 12px, root.available-width - self.width - 12px);
+    y: clamp(HelpState.y + self.height > root.available-height - 12px ? HelpState.y - self.height - 42px : HelpState.y, 12px, root.available-height - self.height - 12px);
+    background: Design.overlay-panel;
+    border-color: Design.overlay-border;
+    border-width: 1px;
+    border-radius: Design.control-radius;
+    message := Text {
+        x: 12px;
+        y: 10px;
+        width: parent.width - 24px;
+        text: HelpState.text;
+        color: Design.overlay-text;
+        font-size: 13px;
+        wrap: word-wrap;
+    }
+}
+
+export component HelpText inherits Text {
+    in property <string> full-text: self.text;
+    hover := TouchArea { }
+    Tooltip { y: root.height + 6px; text: root.full-text; active: hover.has-hover && !hover.pressed; }
+}
+
 // A single button treatment keeps the native UI consistent across platforms.
 export component AppButton inherits Rectangle {
     in property <string> text;
     in property <string> accessibility-label: text;
+    in property <string> tooltip: root.elide-text ? root.text : "";
+    in property <bool> collapse-when-hidden: false;
+    private property <bool> collapsed: root.collapse-when-hidden && !root.visible;
     in property <bool> selected: false;
     in property <bool> primary: false;
     in property <bool> quiet: false;
     in property <bool> compact: false;
     // Long device-provided labels may shrink without widening the whole panel.
     in property <bool> elide-text: false;
+    in property <bool> wrap-text: false;
     in property <bool> overlay: false;
     in property <bool> danger: false;
     in property <bool> checkable: false;
@@ -28,10 +97,11 @@ export component AppButton inherits Rectangle {
     private property <color> selection-surface: root.overlay ? Design.overlay-selected : Design.accent-soft;
     private property <bool> pressed: pointer.pressed || keyboard-focus.activation-key != "";
     private property <bool> pointer-focus: false;
-    min-width: max(root.compact ? Design.compact-control-height : Design.control-height,
-        root.elide-text ? 0px : content.min-width);
-    preferred-width: max(root.min-width, content.preferred-width);
-    min-height: max(root.compact ? Design.compact-control-height : Design.control-height, content.min-height);
+    private property <length> horizontal-padding: root.overlay ? Design.overlay-padding : root.compact ? 10px : 14px;
+    min-width: root.collapsed ? 0px : max(root.compact ? Design.compact-control-height : Design.control-height,
+        root.elide-text ? 0px : button-text.preferred-width + 2 * root.horizontal-padding);
+    preferred-width: root.collapsed ? 0px : max(root.min-width, button-text.preferred-width + 2 * root.horizontal-padding);
+    min-height: root.collapsed ? 0px : max(root.compact ? Design.compact-control-height : Design.control-height, button-text.preferred-height + 10px);
     preferred-height: root.min-height;
     horizontal-stretch: 0;
     vertical-stretch: 0;
@@ -41,13 +111,14 @@ export component AppButton inherits Rectangle {
     border-color: !root.enabled ? root.button-border
         : root.danger ? (root.overlay ? Design.overlay-danger : Design.danger)
         : root.selected ? (root.overlay ? Design.overlay-accent : Design.accent)
-        : root.primary ? Design.accent
+        : root.primary ? (root.overlay ? Design.overlay-accent : Design.accent)
         : root.quiet ? (pointer.has-hover ? root.button-border : transparent)
         : root.button-border;
     background: !root.enabled ? (root.overlay ? Design.overlay-control : Design.control-disabled)
         : root.danger ? (root.overlay ? (root.pressed ? Design.overlay-danger-pressed : pointer.has-hover ? Design.overlay-danger-hover : Design.overlay-danger-surface) : Design.error-surface)
         : root.selected ? (root.pressed ? root.button-pressed : pointer.has-hover ? root.button-hover : root.selection-surface)
-        : root.primary ? (root.pressed ? Design.accent-pressed : pointer.has-hover ? Design.accent-hover : Design.accent)
+        : root.primary ? (root.overlay ? (root.pressed ? root.button-pressed : pointer.has-hover ? root.button-hover : root.button-surface)
+            : root.pressed ? Design.accent-pressed : pointer.has-hover ? Design.accent-hover : Design.accent)
         : root.quiet ? (root.pressed ? root.button-pressed : pointer.has-hover ? root.button-hover : transparent)
         : root.pressed ? root.button-pressed : pointer.has-hover ? root.button-hover : root.button-surface;
     animate background, border-color { duration: 120ms; }
@@ -60,27 +131,24 @@ export component AppButton inherits Rectangle {
     accessible-description: root.selected ? "Sélectionné" : "";
     accessible-action-default => { if root.enabled { root.clicked(); } }
 
-    content := HorizontalLayout {
-        padding-left: root.compact ? 10px : 14px;
-        padding-right: root.compact ? 10px : 14px;
-        padding-top: 5px;
-        padding-bottom: 5px;
-        alignment: center;
-
-        Text {
-            min-width: root.elide-text ? 0px : self.preferred-width;
-            overflow: root.elide-text ? elide : clip;
+    button-text := Text {
+            x: root.horizontal-padding;
+            y: 0px;
+            width: max(0px, parent.width - 2 * root.horizontal-padding);
+            height: parent.height;
+            min-width: 0px;
+            overflow: root.elide-text && !root.wrap-text ? elide : clip;
+            wrap: root.wrap-text ? word-wrap : no-wrap;
             text: root.text;
             color: !root.enabled ? root.secondary-foreground : root.danger ? (root.overlay ? Design.overlay-danger : Design.danger)
                 : root.selected ? (root.overlay ? Design.overlay-accent : Design.accent)
-                : root.primary ? Design.accent-ink : root.foreground;
+                : root.primary ? (root.overlay ? root.foreground : Design.accent-ink) : root.foreground;
             font-family: Design.font-ui;
-            font-size: root.compact ? 12px : 13px;
-            font-weight: root.primary ? 700 : 600;
+            font-size: root.compact && !root.overlay ? 12px : Design.control-font-size;
+            font-weight: Design.control-font-weight;
             letter-spacing: 0.1px;
             horizontal-alignment: center;
             vertical-alignment: center;
-        }
     }
 
     pointer := TouchArea {
@@ -94,6 +162,7 @@ export component AppButton inherits Rectangle {
         }
         clicked => { root.clicked(); }
     }
+    Tooltip { y: root.height + 6px; text: root.tooltip; active: root.visible && pointer.has-hover && !pointer.pressed; }
 
     keyboard-focus := FocusScope {
         x: 0px;
@@ -136,6 +205,45 @@ export component AppButton inherits Rectangle {
     }
 }
 
+// Non-interactive camera information uses the same metrics as overlay buttons.
+export component OverlayBadge inherits Rectangle {
+    in property <string> text;
+    in property <bool> recording: false;
+    preferred-width: max(Design.control-height, badge-text.preferred-width + 2 * Design.overlay-padding + (root.recording ? 14px : 0px));
+    width: self.preferred-width;
+    height: Design.control-height;
+    horizontal-stretch: 0;
+    vertical-stretch: 0;
+    border-radius: Design.control-radius;
+    border-width: 1px;
+    border-color: root.recording ? Design.overlay-danger : Design.overlay-border;
+    background: Design.overlay-control;
+    if root.recording: Rectangle {
+        x: Design.overlay-padding;
+        y: (parent.height - self.height) / 2;
+        width: 6px;
+        height: 6px;
+        border-radius: 3px;
+        background: Design.overlay-danger;
+    }
+    badge-text := Text {
+        x: Design.overlay-padding + (root.recording ? 14px : 0px);
+        y: 0px;
+        width: max(0px, parent.width - self.x - Design.overlay-padding);
+        height: parent.height;
+        min-width: 0px;
+        text: root.text;
+        color: Design.overlay-text;
+        font-family: Design.font-ui;
+        font-size: Design.control-font-size;
+        font-weight: Design.control-font-weight;
+        letter-spacing: 0.1px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+}
+
 export component AppSlider inherits Rectangle {
     in property <string> label: "";
     in property <float> minimum: 0;
@@ -145,6 +253,7 @@ export component AppSlider inherits Rectangle {
     in property <bool> overlay: false;
     in-out property <float> value: minimum;
     out property <bool> has-focus: keyboard-focus.has-focus;
+    out property <bool> active-interaction: root.visible && (pointer.has-hover || pointer.pressed || root.has-focus);
     callback changed;
     callback released(float);
 

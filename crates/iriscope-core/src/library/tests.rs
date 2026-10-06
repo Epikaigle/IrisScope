@@ -14,11 +14,11 @@ use crate::{
 
 use super::{
     CaptureFileVersion, CaptureKind, LibraryEntry, LibraryFilter, assign_capture_to_patient,
-    assign_capture_to_patient_if_unchanged, capture_file_version, create_patient,
+    assign_capture_to_patient_if_unchanged, capture_file_version, create_patient, get_patient,
     load_library_index, present_library_items, record_capture_metadata,
-    resolve_library_candidates_cancellable, save_library_index, scan_library_directory,
-    search_patients, try_scan_library_directory, try_scan_library_directory_metadata,
-    upgrade_capture_fingerprints,
+    resolve_library_candidates_cancellable, save_indexed_capture, save_library_index,
+    scan_library_directory, search_patients, try_scan_library_directory,
+    try_scan_library_directory_metadata, upgrade_capture_fingerprints,
 };
 
 #[test]
@@ -897,4 +897,101 @@ fn scan_of_read_only_library_does_not_create_lock_file() {
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
         .expect("restore permission");
     std::fs::remove_dir_all(dir).expect("remove directory");
+}
+
+#[test]
+fn patient_search_cache_tracks_creations_and_directory_switches() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let first_dir = std::env::temp_dir().join(format!("iriscope-search-cache-{unique}"));
+    let second_dir = first_dir.join("other");
+    let first = create_patient(&first_dir, "Émilie", "Martin").unwrap();
+    let mut cache = super::PatientSearchCache::default();
+    assert_eq!(
+        cache.search(&first_dir, "e\u{301}mi", "MAR", 25).unwrap(),
+        vec![first.clone()]
+    );
+    assert_eq!(
+        cache.search(&first_dir, "ÉMILIE", "martin", 25).unwrap(),
+        vec![first.clone()]
+    );
+    let second = create_patient(&first_dir, "Émilie", "Martin").unwrap();
+    assert_eq!(
+        cache.search(&first_dir, "Émi", "Mar", 25).unwrap(),
+        vec![first.clone(), second]
+    );
+    assert_eq!(
+        cache.search(&first_dir, "Émi", "Mar", 1).unwrap(),
+        vec![first]
+    );
+    let other = create_patient(&second_dir, "Émilie", "Moreau").unwrap();
+    assert_eq!(
+        cache.search(&second_dir, "Émi", "Mo", 25).unwrap(),
+        vec![other]
+    );
+    assert_eq!(cache.search(&first_dir, "Émi", "Mar", 25).unwrap().len(), 2);
+    let backup = first_dir.join(super::LIBRARY_INDEX_BACKUP_FILE);
+    std::fs::remove_file(&backup).unwrap();
+    std::fs::create_dir(&backup).unwrap();
+    assert_eq!(
+        cache.search(&first_dir, "Émi", "Mar", 25).unwrap().len(),
+        2,
+        "an unavailable backup must not hide dossiers from a readable primary index"
+    );
+    std::fs::remove_dir_all(first_dir).unwrap();
+}
+
+#[test]
+fn correcting_names_preserves_identity_captures_and_rejects_concurrent_edits() {
+    let directory = fingerprint_test_directory("correct-dossier");
+    let patient = create_patient(&directory, "Jeam", "Dupont").unwrap();
+    let mut session = CaptureSession::new("Jeam", "Dupont", Eye::Right);
+    session.set_patient_id(Some(patient.id));
+    let capture = save_indexed_capture(
+        &directory,
+        "unchanged.jpg",
+        b"captured bytes",
+        &session,
+        CaptureKind::Photo,
+        CaptureTimestamp {
+            year: 2026,
+            month: 10,
+            day: 5,
+            hour: 12,
+            minute: 0,
+            second: 0,
+        },
+    )
+    .unwrap();
+    let corrected =
+        super::update_patient(&directory, patient.id, "Jeam", "Dupont", "Jean", "Dupont").unwrap();
+    assert_eq!(corrected.id, patient.id);
+    assert_eq!(corrected.dossier_number, patient.dossier_number);
+    assert_eq!(
+        corrected.last_capture,
+        get_patient(&directory, patient.id)
+            .unwrap()
+            .unwrap()
+            .last_capture
+    );
+    let entries = try_scan_library_directory(&directory).unwrap();
+    assert_eq!(entries[0].patient_id, Some(patient.id));
+    assert_eq!(entries[0].first_name.as_deref(), Some("Jean"));
+    assert!(capture.file_path.exists());
+    assert!(
+        super::update_patient(&directory, patient.id, "Jeam", "Dupont", "Other", "Name").is_err()
+    );
+    assert!(
+        super::update_patient(&directory, patient.id, "Jean", "Dupont", " ", "Dupont").is_err()
+    );
+    assert_eq!(
+        get_patient(&directory, patient.id)
+            .unwrap()
+            .unwrap()
+            .first_name,
+        "Jean"
+    );
+    fs::remove_dir_all(directory).unwrap();
 }

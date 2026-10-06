@@ -1,6 +1,10 @@
 //! Patient dossier queries and explicit capture assignment.
 
-use std::{fs, io, path::Path, time::UNIX_EPOCH};
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+    time::UNIX_EPOCH,
+};
 
 use chrono::DateTime;
 
@@ -30,24 +34,82 @@ pub fn search_patients(
     first_name: &str,
     last_name: &str,
 ) -> io::Result<Vec<PatientRecord>> {
-    let first = normalized_patient_name(first_name);
-    let last = normalized_patient_name(last_name);
-    if first.is_empty() && last.is_empty() {
-        return Ok(Vec::new());
+    PatientSearchCache::default().search(directory, first_name, last_name, usize::MAX)
+}
+
+type IndexVersions = (Option<CaptureFileVersion>, Option<CaptureFileVersion>);
+
+/// Reuses parsed dossiers and normalized names until either index copy changes.
+/// It owns only one directory snapshot and never caches failed reads.
+#[derive(Default)]
+pub struct PatientSearchCache {
+    directory: PathBuf,
+    versions: Option<IndexVersions>,
+    patients: Vec<(PatientRecord, String, String)>,
+}
+
+impl PatientSearchCache {
+    /// Finds up to `limit` matching dossiers, ordered by stable dossier number.
+    ///
+    /// # Errors
+    /// Returns errors when the library index cannot be read.
+    pub fn search(
+        &mut self,
+        directory: &Path,
+        first_name: &str,
+        last_name: &str,
+        limit: usize,
+    ) -> io::Result<Vec<PatientRecord>> {
+        let first = normalized_patient_name(first_name);
+        let last = normalized_patient_name(last_name);
+        if (first.is_empty() && last.is_empty()) || limit == 0 {
+            return Ok(Vec::new());
+        }
+        let versions = index_versions(directory).ok();
+        // A failed version probe disables caching. A readable primary index
+        // must remain usable even if the optional backup is inaccessible.
+        if self.directory != directory || versions.is_none() || self.versions != versions {
+            self.versions = None;
+            let index = load_library_index(directory)?;
+            self.patients = index
+                .patients
+                .iter()
+                .map(|(&id, patient)| {
+                    (
+                        PatientRecord::from_stored(id, patient),
+                        normalized_patient_name(&patient.first_name),
+                        normalized_patient_name(&patient.last_name),
+                    )
+                })
+                .collect();
+            self.patients.sort_by_key(|(patient, _, _)| patient.id);
+            self.directory = directory.to_path_buf();
+            self.versions =
+                versions.filter(|before| index_versions(directory).ok().as_ref() == Some(before));
+        }
+        Ok(self
+            .patients
+            .iter()
+            .filter(|(_, given, family)| {
+                (first.is_empty() || given.starts_with(&first))
+                    && (last.is_empty() || family.starts_with(&last))
+            })
+            .take(limit)
+            .map(|(patient, _, _)| patient.clone())
+            .collect())
     }
-    let index = load_library_index(directory)?;
-    let mut results: Vec<_> = index
-        .patients
-        .iter()
-        .filter(|(_, patient)| {
-            (first.is_empty() || normalized_patient_name(&patient.first_name).starts_with(&first))
-                && (last.is_empty()
-                    || normalized_patient_name(&patient.last_name).starts_with(&last))
-        })
-        .map(|(&id, patient)| PatientRecord::from_stored(id, patient))
-        .collect();
-    results.sort_by_key(|patient| patient.id);
-    Ok(results)
+}
+
+fn index_versions(directory: &Path) -> io::Result<IndexVersions> {
+    let read = |name: &str| match capture_file_version(&directory.join(name)) {
+        Ok(version) => Ok(Some(version)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    };
+    Ok((
+        read(super::LIBRARY_INDEX_FILE)?,
+        read(super::LIBRARY_INDEX_BACKUP_FILE)?,
+    ))
 }
 
 /// Returns one dossier by its stable internal number.
@@ -102,6 +164,56 @@ pub fn create_patient(
     index.patients.insert(id, patient.clone());
     save_library_index(directory, &index)?;
     Ok(PatientRecord::from_stored(id, &patient))
+}
+
+/// Corrects dossier names without changing its number or renaming media files.
+/// The expected names protect against overwriting another application's edit.
+/// # Errors
+/// Returns an error for empty names, a changed dossier, or failed durable writes.
+pub fn update_patient(
+    directory: &Path,
+    id: u64,
+    expected_first: &str,
+    expected_last: &str,
+    first: &str,
+    last: &str,
+) -> io::Result<PatientRecord> {
+    let first = first.trim();
+    let last = last.trim();
+    if first.is_empty() || last.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Le prénom et le nom sont requis.",
+        ));
+    }
+    let _guard = LIBRARY_INDEX_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _file_lock = lock_library_index(directory)?;
+    let mut index = load_library_index_for_write(directory)?;
+    let patient = index
+        .patients
+        .get_mut(&id)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Dossier introuvable."))?;
+    if patient.first_name != expected_first || patient.last_name != expected_last {
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "Ce dossier a changé. Rouvrez-le avant de le modifier.",
+        ));
+    }
+    first.clone_into(&mut patient.first_name);
+    last.clone_into(&mut patient.last_name);
+    let result = PatientRecord::from_stored(id, patient);
+    for metadata in index
+        .entries
+        .values_mut()
+        .filter(|entry| entry.patient_id == Some(id))
+    {
+        metadata.first_name = Some(first.to_owned());
+        metadata.last_name = Some(last.to_owned());
+    }
+    save_library_index(directory, &index)?;
+    Ok(result)
 }
 
 /// Explicitly assigns one unlinked legacy capture to a selected dossier.

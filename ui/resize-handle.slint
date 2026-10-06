@@ -1,0 +1,53 @@
+import { Design } from "./theme.slint";
+
+// Keyboard-accessible grip. Width changes commit on release, rather than on every pixel.
+export component ResizeHandle inherits Rectangle {
+    in property <length> panel-width;
+    in property <length> minimum;
+    in property <length> maximum;
+    in property <bool> reverse: false;
+    in property <bool> overlay: false;
+    in property <string> label;
+    callback resized(length);
+    callback committed();
+    width: 8px; horizontal-stretch: 0; min-height: 0px;
+    accessible-role: slider; accessible-label: root.label;
+    accessible-value: root.panel-width / 1px;
+    accessible-value-minimum: root.minimum / 1px;
+    accessible-value-maximum: root.maximum / 1px;
+    accessible-action-increment => {root.resized(clamp(root.panel-width + 16px,root.minimum,root.maximum));root.committed();}
+    accessible-action-decrement => {root.resized(clamp(root.panel-width - 16px,root.minimum,root.maximum));root.committed();}
+    forward-focus: keys;
+    Rectangle {
+        x: 3px; y: max(0px, (parent.height - self.height) / 2); width: 2px; height: min(48px,parent.height);
+        border-radius: 1px;
+        background: pointer.has-hover || pointer.pressed || keys.has-focus ? Design.accent : root.overlay ? Design.overlay-border : Design.border;
+    }
+    pointer := TouchArea {
+        mouse-cursor: ew-resize;
+        private property <length> start-x;
+        private property <length> start-width;
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.down {
+                self.start-x = root.absolute-position.x + self.mouse-x;
+                self.start-width = root.panel-width;
+                keys.focus();
+            }
+            if event.kind == PointerEventKind.up { root.committed(); }
+        }
+        moved => {
+            if self.pressed { root.resized(clamp(self.start-width + (root.absolute-position.x + self.mouse-x - self.start-x) * (root.reverse ? -1 : 1),root.minimum,root.maximum)); }
+        }
+        double-clicked => { root.resized(0px); root.committed(); }
+    }
+    keys := FocusScope {
+        width: 0px; height: 0px;
+        key-pressed(event) => {
+            if event.text == Key.LeftArrow || event.text == Key.RightArrow {
+                root.resized(clamp(root.panel-width + (event.text == Key.LeftArrow ? -16px : 16px),root.minimum,root.maximum));
+                root.committed(); return accept;
+            }
+            return reject;
+        }
+    }
+}

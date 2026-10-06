@@ -1,13 +1,17 @@
-import { AppButton } from "./controls.slint";
+import { DateField } from "./date-field.slint";
+import { AppButton, Tooltip } from "./controls.slint";
 import { Design } from "./theme.slint";
-import { ScrollView, ListView } from "std-widgets.slint";
+import { ScrollView, ListView, LineEdit, ComboBox } from "std-widgets.slint";
 import { AppState } from "./state.slint";
 
 export component LibraryPage inherits Rectangle {
-    private property <int> library-grid-columns: root.width < 700px ? 1 : root.width < 1100px ? 2 : root.width < 1500px ? 3 : 4;
+    private property <int> library-grid-columns: AppState.thumbnail-size == 1 ? (root.width < 700px ? 1 : root.width < 1100px ? 2 : root.width < 1500px ? 3 : 4) : clamp(floor((root.width - 2 * root.content-inset - 4px) / (AppState.thumbnail-size == 0 ? 220px : 440px)),1,6);
     private property <length> content-inset: root.width < 900px ? 16px : 24px;
     private property <length> card-width: (root.width - 2 * root.content-inset - 16px - (root.library-grid-columns - 1) * 12px) / root.library-grid-columns;
-    private property <length> thumbnail-height: clamp((root.card-width - 24px) * 0.6, 150px, 224px);
+    private property <length> thumbnail-height: clamp((root.card-width - 24px) * 0.6, AppState.thumbnail-size == 0 ? 100px : AppState.thumbnail-size == 2 ? 180px : 150px,AppState.thumbnail-size == 0 ? 150px : AppState.thumbnail-size == 2 ? 320px : 224px);
+    private property <length> list-row-height: AppState.thumbnail-size == 0 ? 88px : AppState.thumbnail-size == 2 ? 136px : 100px;
+    private property <length> list-image-width: AppState.thumbnail-size == 0 ? 72px : AppState.thumbnail-size == 2 ? 144px : 96px;
+    private property <length> list-image-height: AppState.thumbnail-size == 0 ? 54px : AppState.thumbnail-size == 2 ? 108px : 72px;
     private property <string> confirmation-patient-id: "";
     private property <string> confirmation-capture-path: "";
     private property <string> confirmation-file-version: "";
@@ -57,7 +61,8 @@ export component LibraryPage inherits Rectangle {
                 height: 32px;
                 vertical-stretch: 0;
                 spacing: 8px;
-                AppButton {
+                AppButton { height: 36px; compact: true; text: "Dossiers / Séances"; clicked => { AppState.open-consultation(); } }
+            AppButton {
                     height: 32px;
                     compact: true;
                     quiet: true;
@@ -231,6 +236,9 @@ export component LibraryPage inherits Rectangle {
                 }
             }
             Rectangle { min-width: 0px; horizontal-stretch: 1; background: transparent; }
+            ComboBox { width: 114px; height: 32px; model:["Petites","Moyennes","Grandes"]; current-index:AppState.thumbnail-size;
+                accessible-label:"Taille des miniatures"; selected(value)=>{AppState.thumbnail-size=self.current-index;AppState.interface-edited();}
+            }
             HorizontalLayout {
                 height: 32px;
                 vertical-stretch: 0;
@@ -256,6 +264,40 @@ export component LibraryPage inherits Rectangle {
             }
         }
 
+
+        HorizontalLayout {
+            height: 36px; vertical-stretch: 0; spacing: 8px;
+            LineEdit {
+                min-width: 100px; horizontal-stretch: 1;
+                text <=> AppState.library-query-dossier;
+                placeholder-text: "Dossier D-000123";
+                accessible-label: "Rechercher un numéro de dossier";
+                changed has-focus => { AppState.focused-text-fields = max(0, AppState.focused-text-fields + (self.has-focus ? 1 : -1)); }
+                accepted => { AppState.apply-library-query(); }
+            }
+            ComboBox {
+                width: 160px; model: ["Tous les yeux", "Œil gauche", "Œil droit", "Œil non renseigné"];
+                current-index <=> AppState.library-query-eye;
+                accessible-label: "Filtrer par œil";
+                selected => { AppState.apply-library-query(); }
+            }
+            ComboBox {
+                width: 160px; model: ["Plus récentes", "Plus anciennes"];
+                current-index <=> AppState.library-query-sort;
+                accessible-label: "Trier les captures par date";
+                selected => { AppState.apply-library-query(); }
+            }
+        }
+        HorizontalLayout {
+            height: 56px; vertical-stretch: 0; spacing: 8px;
+            DateField { horizontal-stretch: 1; label: "Du"; target: 1; value <=> AppState.library-query-from; }
+            DateField { horizontal-stretch: 1; label: "Au"; target: 2; value <=> AppState.library-query-to; }
+            AppButton { height: 36px; compact: true; text: "Appliquer"; clicked => { AppState.apply-library-query(); } }
+            AppButton { height: 36px; compact: true; quiet: true; text: "Effacer";
+                clicked => { AppState.library-query-dossier = ""; AppState.library-query-from = ""; AppState.library-query-to = ""; AppState.library-query-eye = 0; AppState.library-query-sort = 0; AppState.apply-library-query(); }
+            }
+        }
+        if AppState.library-query-error != "": Text { text: AppState.library-query-error; color: Design.danger; font-size: 12px; wrap: word-wrap; vertical-stretch: 0; }
 
         if AppState.library-loading: Rectangle {
             background: Design.surface;
@@ -323,7 +365,7 @@ export component LibraryPage inherits Rectangle {
                 alignment: center;
                 spacing: 8px;
                 Text {
-                    text: AppState.library-filter == 3
+                    text: AppState.library-query-active ? "Aucune capture pour cette recherche" : AppState.library-filter == 3
                     ? "Aucune capture pour ce patient."
                     : AppState.library-filter == 1
                     ? "Aucune photo dans la bibliothèque."
@@ -337,7 +379,7 @@ export component LibraryPage inherits Rectangle {
                     wrap: word-wrap;
                 }
                 Text {
-                    text: AppState.library-filter == 0
+                    text: AppState.library-query-active ? "Modifiez le dossier, l’œil ou la période recherchés." : AppState.library-filter == 0
                     ? "Prenez une photo ou une vidéo depuis la caméra pour commencer."
                     : "Essayez un autre filtre pour retrouver vos captures.";
                     color: Design.text-muted;
@@ -351,9 +393,11 @@ export component LibraryPage inherits Rectangle {
                         height: 32px;
                         compact: true;
                         primary: true;
-                        text: AppState.library-filter == 0 ? "Ouvrir la caméra" : "Voir toutes les captures";
+                        text: AppState.library-query-active ? "Effacer la recherche" : AppState.library-filter == 0 ? "Ouvrir la caméra" : "Voir toutes les captures";
                         clicked => {
-                            if AppState.library-filter == 0 {
+                            if AppState.library-query-active {
+                                AppState.library-query-dossier = ""; AppState.library-query-from = ""; AppState.library-query-to = ""; AppState.library-query-eye = 0; AppState.library-query-sort = 0; AppState.apply-library-query();
+                            } else if AppState.library-filter == 0 {
                                 AppState.navigate-to(0);
                             } else {
                                 root.select-capture("", "", "");
@@ -366,173 +410,186 @@ export component LibraryPage inherits Rectangle {
             }
         }
 
-        if !AppState.library-loading && AppState.library-error == "" && AppState.library-items.length > 0 && AppState.library-view == 1: library-list := ListView {
+        if !AppState.library-loading && AppState.library-error == "" && AppState.library-items.length > 0 && AppState.library-view == 1: Rectangle {
             min-height: 0px;
             vertical-stretch: 1;
-            for item in AppState.library-items: Rectangle {
-                width: library-list.visible-width;
-                height: 100px;
+            // ListView accepts only its repeater; the timer belongs to its wrapper.
+            Timer {
+                interval: 80ms;
+                running: true;
+                triggered => { AppState.library-visible-range-changed(library-list.first-visible, library-list.end-visible); }
+            }
+            library-list := ListView {
+                width: parent.width;
+                height: parent.height;
+                private property <int> first-visible: max(0, floor(-self.viewport-y / root.list-row-height));
+                private property <int> end-visible: min(AppState.library-items.length, self.first-visible + ceil(self.visible-height / root.list-row-height) + 1);
+                for item in AppState.library-items: Rectangle {
+                    width: library-list.visible-width;
+                    height: root.list-row-height;
 
-                Rectangle {
-                    width: 100%;
-                    height: 92px;
-                    border-radius: Design.card-radius;
-                    background: AppState.selected-library-path == item.file-path ? Design.accent-soft : list-card-pointer.has-hover || item.is-current-patient ? Design.surface-raised : Design.surface;
-                    border-width: 1px;
-                    border-color: AppState.selected-library-path == item.file-path ? Design.accent : Design.border;
+                    Rectangle {
+                        width: 100%;
+                        height: root.list-row-height - 8px;
+                        border-radius: Design.card-radius;
+                        background: AppState.selected-library-path == item.file-path ? Design.accent-soft : list-card-pointer.has-hover || item.is-current-patient ? Design.surface-raised : Design.surface;
+                        border-width: 1px;
+                        border-color: AppState.selected-library-path == item.file-path ? Design.accent : Design.border;
 
-                    HorizontalLayout {
-                        padding-left: 12px;
-                        padding-right: 12px;
-                        spacing: 12px;
-                        alignment: space-between;
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            padding-right: 12px;
+                            spacing: 12px;
+                            alignment: space-between;
 
-                        Rectangle {
-                            min-width: 0px;
-                            horizontal-stretch: 1;
-                            background: transparent;
-                            border-radius: 6px;
-                            border-width: list-card-focus.has-focus ? 2px : 0px;
-                            border-color: Design.focus;
-                            accessible-role: button;
-                            accessible-label: "Sélectionner " + item.title + ", " + item.date-time;
-                            accessible-description: AppState.selected-library-path == item.file-path ? "Capture sélectionnée" : item.is-current-patient ? "Capture du dossier actif" : "";
-                            accessible-action-default => { root.select-capture(item.file-path, item.dossier-number, item.file-version); }
-                            forward-focus: list-card-focus;
-                            HorizontalLayout {
-                                padding: 2px;
+                            Rectangle {
                                 min-width: 0px;
                                 horizontal-stretch: 1;
-                                spacing: 12px;
-                                alignment: start;
-
-                                Rectangle {
-                                    width: 96px;
-                                    vertical-stretch: 1;
-                                    background: transparent;
-
-                                    Rectangle {
-                                        y: (parent.height - self.height) / 2;
-                                        width: 96px;
-                                        height: 72px;
-                                        border-radius: 6px;
-                                        clip: true;
-                                        background: item.has-thumbnail ? Design.preview : Design.surface-sunken;
-
-                                        if item.has-thumbnail: Image {
-                                            source: item.thumbnail;
-                                            width: 100%;
-                                            height: 100%;
-                                            // Show the whole iris, including its edge.
-                                            image-fit: contain;
-                                        }
-
-                                        if !item.has-thumbnail: Text {
-                                            text: item.is-video ? "VIDÉO" : "IRIS";
-                                            color: Design.text-muted;
-                                            font-size: 12px;
-                                            font-weight: 700;
-                                            horizontal-alignment: center;
-                                            vertical-alignment: center;
-                                        }
-                                    }
-                                }
-
-                                Rectangle {
-                                    width: 48px;
-                                    vertical-stretch: 1;
-                                    background: transparent;
-
-                                    Rectangle {
-                                        y: (parent.height - self.height) / 2;
-                                        width: 48px;
-                                        height: 20px;
-                                        border-radius: 6px;
-                                        background: item.is-video ? Design.video-surface : Design.success-surface;
-                                        Text {
-                                            text: item.is-video ? "VIDÉO" : "PHOTO";
-                                            color: item.is-video ? Design.accent : Design.success;
-                                            font-size: 12px;
-                                            font-weight: 700;
-                                            horizontal-alignment: center;
-                                            vertical-alignment: center;
-                                        }
-                                    }
-                                }
-
-                                VerticalLayout {
+                                background: transparent;
+                                border-radius: 6px;
+                                border-width: list-card-focus.has-focus ? 2px : 0px;
+                                border-color: Design.focus;
+                                accessible-role: button;
+                                accessible-label: "Sélectionner " + item.title + ", " + item.date-time;
+                                accessible-description: AppState.selected-library-path == item.file-path ? "Capture sélectionnée" : item.is-current-patient ? "Capture du dossier actif" : "";
+                                accessible-action-default => { root.select-capture(item.file-path, item.dossier-number, item.file-version); }
+                                forward-focus: list-card-focus;
+                                HorizontalLayout {
+                                    padding: 2px;
                                     min-width: 0px;
                                     horizontal-stretch: 1;
-                                    alignment: center;
-                                    spacing: 2px;
+                                    spacing: 12px;
+                                    alignment: start;
 
-                                    HorizontalLayout {
+                                    Rectangle {
+                                        width: root.list-image-width;
+                                        vertical-stretch: 1;
+                                        background: transparent;
+
+                                        Rectangle {
+                                            y: (parent.height - self.height) / 2;
+                                            width: root.list-image-width;
+                                            height: root.list-image-height;
+                                            border-radius: 6px;
+                                            clip: true;
+                                            background: item.has-thumbnail ? Design.preview : Design.surface-sunken;
+
+                                            if item.has-thumbnail: Image {
+                                                source: item.thumbnail;
+                                                width: 100%;
+                                                height: 100%;
+                                                // Show the whole iris, including its edge.
+                                                image-fit: contain;
+                                            }
+
+                                            if !item.has-thumbnail: Text {
+                                                text: item.is-video ? "VIDÉO" : "IRIS";
+                                                color: Design.text-muted;
+                                                font-size: 12px;
+                                                font-weight: 700;
+                                                horizontal-alignment: center;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        width: 48px;
+                                        vertical-stretch: 1;
+                                        background: transparent;
+
+                                        Rectangle {
+                                            y: (parent.height - self.height) / 2;
+                                            width: 48px;
+                                            height: 20px;
+                                            border-radius: 6px;
+                                            background: item.is-video ? Design.video-surface : Design.success-surface;
+                                            Text {
+                                                text: item.is-video ? "VIDÉO" : "PHOTO";
+                                                color: item.is-video ? Design.accent : Design.success;
+                                                font-size: 12px;
+                                                font-weight: 700;
+                                                horizontal-alignment: center;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+                                    }
+
+                                    VerticalLayout {
                                         min-width: 0px;
-                                        spacing: 8px;
-                                        alignment: start;
-                                        Text {
+                                        horizontal-stretch: 1;
+                                        alignment: center;
+                                        spacing: 2px;
+
+                                        HorizontalLayout {
                                             min-width: 0px;
-                                            horizontal-stretch: 1;
-                                            text: item.title;
-                                            color: Design.text;
-                                            font-size: 14px;
-                                            font-weight: 600;
-                                            overflow: elide;
+                                            spacing: 8px;
+                                            alignment: start;
+                                            Text {
+                                                min-width: 0px;
+                                                horizontal-stretch: 1;
+                                                text: item.title;
+                                                color: Design.text;
+                                                font-size: 14px;
+                                                font-weight: 600;
+                                                overflow: elide;
+                                            }
+
+
                                         }
 
-
+                                        Text {
+                                            text: item.dossier-number == "" ? item.date-time : "Dossier n° " + item.dossier-number + " · " + item.date-time;
+                                            color: Design.text-muted;
+                                            font-size: 12px;
+                                            overflow: elide;
+                                        }
                                     }
-
-                                    Text {
-                                        text: item.dossier-number == "" ? item.date-time : "Dossier n° " + item.dossier-number + " · " + item.date-time;
-                                        color: Design.text-muted;
-                                        font-size: 12px;
-                                        overflow: elide;
+                                }
+                                Tooltip { y: parent.height + 6px; text: item.title + "\n" + item.date-time; active: list-card-pointer.has-hover && !list-card-pointer.pressed; }
+                                list-card-pointer := TouchArea {
+                                    clicked => { list-card-focus.focus(); root.select-capture(item.file-path, item.dossier-number, item.file-version); }
+                                }
+                                list-card-focus := FocusScope {
+                                    width: 0px;
+                                    key-pressed(event) => {
+                                        if event.text == " " || event.text == "\n" {
+                                            root.select-capture(item.file-path, item.dossier-number, item.file-version);
+                                            return accept;
+                                        }
+                                        return reject;
                                     }
                                 }
                             }
-                            list-card-pointer := TouchArea {
-                                clicked => { list-card-focus.focus(); root.select-capture(item.file-path, item.dossier-number, item.file-version); }
-                            }
-                            list-card-focus := FocusScope {
-                                width: 0px;
-                                key-pressed(event) => {
-                                    if event.text == " " || event.text == "\n" {
-                                        root.select-capture(item.file-path, item.dossier-number, item.file-version);
-                                        return accept;
-                                    }
-                                    return reject;
-                                }
-                            }
-                        }
 
-                        Rectangle {
-                            width: list-actions.preferred-width;
-                            horizontal-stretch: 0;
-                            vertical-stretch: 1;
-                            background: transparent;
-                            list-actions := HorizontalLayout {
-                                y: (parent.height - self.height) / 2;
-                                width: parent.width;
-                                height: 32px;
-                                spacing: 6px;
-                                if item.can-open-in-app: AppButton {
+                            Rectangle {
+                                width: list-actions.preferred-width;
+                                horizontal-stretch: 0;
+                                vertical-stretch: 1;
+                                background: transparent;
+                                list-actions := HorizontalLayout {
+                                    y: (parent.height - self.height) / 2;
+                                    width: parent.width;
                                     height: 32px;
-                                    compact: true;
-                                    text: "Ouvrir";
-                                    accessibility-label: "Ouvrir " + item.title + " dans IrisScope";
-                                    enabled: item.can-open-in-app;
-                                    primary: AppState.selected-library-path == item.file-path;
-                                    clicked => { AppState.library-map-open = false; AppState.open-capture-file(item.file-path, item.file-version); }
-                                }
-                                AppButton {
-                                    height: 32px;
-                                    compact: true;
-                                    quiet: item.can-open-in-app;
-                                    primary: !item.can-open-in-app && AppState.selected-library-path == item.file-path;
-                                    text: item.can-open-in-app ? "Autre app" : "Ouvrir avec une app";
-                                    accessibility-label: "Ouvrir " + item.title + " avec l'application système";
-                                    clicked => { AppState.open-capture-externally(item.file-path, item.file-version); }
+                                    spacing: 6px;
+                                    if item.can-open-in-app: AppButton {
+                                        height: 32px;
+                                        compact: true;
+                                        text: "Ouvrir";
+                                        accessibility-label: "Ouvrir " + item.title + " dans IrisScope";
+                                        enabled: item.can-open-in-app;
+                                        primary: AppState.selected-library-path == item.file-path;
+                                        clicked => { AppState.library-map-open = false; AppState.open-capture-file(item.file-path, item.file-version); }
+                                    }
+                                    AppButton {
+                                        height: 32px;
+                                        compact: true;
+                                        quiet: item.can-open-in-app;
+                                        primary: !item.can-open-in-app && AppState.selected-library-path == item.file-path;
+                                        text: item.can-open-in-app ? "Autre app" : "Ouvrir avec une app";
+                                        accessibility-label: "Ouvrir " + item.title + " avec l'application système";
+                                        clicked => { AppState.open-capture-externally(item.file-path, item.file-version); }
+                                    }
                                 }
                             }
                         }
@@ -542,6 +599,16 @@ export component LibraryPage inherits Rectangle {
         }
 
         if !AppState.library-loading && AppState.library-error == "" && AppState.library-items.length > 0 && AppState.library-view == 0: library-grid := ScrollView {
+            private property <length> row-height: root.thumbnail-height + 128px;
+            private property <int> first-visible: max(0, floor(-self.viewport-y / self.row-height)) * root.library-grid-columns;
+            private property <int> end-visible: min(AppState.library-items.length, self.first-visible + (ceil(self.visible-height / self.row-height) + 1) * root.library-grid-columns);
+            // Geometry is read after layout, never during conditional creation.
+            Timer {
+                interval: 80ms;
+                running: true;
+                triggered => { AppState.library-visible-range-changed(library-grid.first-visible, library-grid.end-visible); }
+            }
+
             min-height: 0px;
             vertical-stretch: 1;
             horizontal-scrollbar-policy: always-off;
@@ -647,6 +714,7 @@ export component LibraryPage inherits Rectangle {
                                     overflow: elide;
                                 }
                             }
+                            Tooltip { y: parent.height + 6px; text: item.title + "\n" + item.date-time; active: grid-card-pointer.has-hover && !grid-card-pointer.pressed; }
                             grid-card-pointer := TouchArea {
                                 clicked => { grid-card-focus.focus(); root.select-capture(item.file-path, item.dossier-number, item.file-version); }
                             }

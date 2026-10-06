@@ -28,6 +28,66 @@ fn select_patient_in_window(win: &MainWindow, record: PatientRecord) {
 
 #[allow(clippy::too_many_lines)]
 pub(super) fn install(main_window: &MainWindow, runtime: &AppRuntime) {
+    let weak_focus = main_window.as_weak();
+    main_window
+        .global::<AppState>()
+        .on_focus_main_controls(move || {
+            if let Some(win) = weak_focus.upgrade() {
+                win.invoke_focus_main_controls();
+            }
+        });
+    let edit_settings = Arc::clone(&runtime.settings);
+    let edit_jobs = Arc::clone(&runtime.background_jobs);
+    let edit_pending = Arc::clone(&runtime.patient_action_pending);
+    let edit_photos = Arc::clone(&runtime.photo_mailbox);
+    let edit_library = Arc::clone(&runtime.library_mailbox);
+    let edit_session = Arc::clone(&runtime.active_session);
+    let weak_edit = main_window.as_weak();
+    main_window.global::<AppState>().on_edit_patient(move |first, last| {
+        let Some(win) = weak_edit.upgrade() else { return; };
+        let state = win.global::<AppState>();
+        if !state.get_patient_edit_open() || state.get_recording_busy() || state.get_storage_busy() { return; }
+        if edit_photos.work_count() > 0 {
+            patient_error(&win, "Attendez la fin de l’enregistrement des photos avant de corriger le dossier.");
+            return;
+        }
+        let Ok(id) = win.get_patient_id().parse::<u64>() else { return; };
+        if edit_pending.swap(true, Ordering::AcqRel) { return; }
+        win.set_patient_action_pending(true);
+        let expected_first = win.get_patient_first_name();
+        let expected_last = win.get_patient_last_name();
+        let directory = settings_snapshot(&edit_settings).capture_directory;
+        let settings = Arc::clone(&edit_settings);
+        let pending = Arc::clone(&edit_pending);
+        let library = Arc::clone(&edit_library);
+        let session = Arc::clone(&edit_session);
+        let weak = weak_edit.clone();
+        if !edit_jobs.submit(move || {
+            let result = iriscope_core::library::update_patient(&directory, id, &expected_first, &expected_last, &first, &last);
+            let ui_pending = Arc::clone(&pending);
+            if weak.upgrade_in_event_loop(move |win| {
+                ui_pending.store(false, Ordering::Release);
+                win.set_patient_action_pending(false);
+                if settings_snapshot(&settings).capture_directory != directory || win.get_patient_id().as_str() != id.to_string() { return; }
+                match result {
+                    Ok(record) => {
+                        select_patient_in_window(&win, record);
+                        win.global::<AppState>().set_patient_edit_open(false);
+                        win.invoke_focus_main_controls();
+                        win.global::<AppState>().set_focused_text_fields(0);
+                        library.invalidate_thumbnails();
+                        refresh_library_in_background(&library, &settings, &session);
+                        show_capture_notice(&win, "Informations corrigées. Le numéro de dossier et les captures sont conservés.", NOTICE_SUCCESS);
+                    }
+                    Err(error) => patient_error(&win, &format!("Correction impossible : {error}")),
+                }
+            }).is_err() { pending.store(false, Ordering::Release); }
+        }) {
+            edit_pending.store(false, Ordering::Release);
+            win.set_patient_action_pending(false);
+            patient_error(&win, "Traitement disque en cours. Réessayez dans un instant.");
+        }
+    });
     let settings = Arc::clone(&runtime.settings);
     let library_mailbox = Arc::clone(&runtime.library_mailbox);
     let photo_context_generation = Arc::clone(&runtime.photo_context_generation);
@@ -293,13 +353,17 @@ pub(super) fn install(main_window: &MainWindow, runtime: &AppRuntime) {
                 eye,
             );
             session.set_patient_id(win.get_patient_id().parse::<u64>().ok());
-            let changed = if let Ok(mut current) = session_changed_session.lock() {
-                let changed = *current != session;
-                *current = session;
-                changed
-            } else {
-                false
-            };
+            let (changed, identity_changed) =
+                if let Ok(mut current) = session_changed_session.lock() {
+                    let identity_changed = current.patient_id() != session.patient_id()
+                        || current.first_name() != session.first_name()
+                        || current.last_name() != session.last_name();
+                    let changed = *current != session;
+                    *current = session;
+                    (changed, identity_changed)
+                } else {
+                    (false, false)
+                };
             if changed {
                 session_changed_generation.fetch_add(1, Ordering::AcqRel);
                 session_changed_mailbox.set_page(0);
@@ -310,7 +374,11 @@ pub(super) fn install(main_window: &MainWindow, runtime: &AppRuntime) {
                 win.set_last_capture_path("".into());
                 win.set_last_capture_file_version("".into());
                 win.set_last_capture_file_name("".into());
-                win.set_session_photo_count(0);
+                if identity_changed {
+                    win.set_session_photo_count(0);
+                    win.global::<AppState>().set_session_left_count(0);
+                    win.global::<AppState>().set_session_right_count(0);
+                }
                 refresh_library_in_background(
                     &session_changed_mailbox,
                     &session_changed_settings,
@@ -338,6 +406,8 @@ pub(super) fn install(main_window: &MainWindow, runtime: &AppRuntime) {
         win.set_patient_action_pending(false);
         win.set_selected_eye(0);
         win.set_session_photo_count(0);
+        win.global::<AppState>().set_session_left_count(0);
+        win.global::<AppState>().set_session_right_count(0);
         win.set_has_last_capture(false);
         win.set_has_last_capture_thumbnail(false);
         win.set_last_capture_thumbnail(slint::Image::default());

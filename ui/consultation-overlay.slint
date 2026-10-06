@@ -1,0 +1,91 @@
+import { ResizeHandle } from "./resize-handle.slint";
+import { AppButton } from "./controls.slint";
+import { LineEdit, TextEdit, ScrollView } from "std-widgets.slint";
+import { AppState } from "./state.slint";
+import { Design } from "./theme.slint";
+import { SessionPhotoData } from "./models.slint";
+component SessionPhotoCard inherits VerticalLayout {
+    in property <SessionPhotoData> photo;
+    height: 210px; spacing: 4px;
+    Image { height: 146px; source: root.photo.thumbnail; image-fit: contain; }
+    Text { height: 20px; text: root.photo.caption; color: root.photo.retained ? Design.overlay-accent : Design.overlay-text-secondary; overflow: elide; }
+    AppButton { height: 32px; compact: true; overlay: true; text: "Ouvrir"; clicked => {AppState.open-capture-file(root.photo.path,root.photo.version);} }
+}
+export component ConsultationOverlay inherits Rectangle {
+    private property <length> panel-width: clamp(AppState.consultation-panel-width == 0 ? (root.width < 900px ? 220px : 280px) : AppState.consultation-panel-width * 1px,200px,max(200px,min(400px,root.width - 540px)));
+    background: Design.overlay-surface;
+    TouchArea {clicked => {}}
+    private property <int> revision: AppState.consultation-revision;
+    changed revision => { if AppState.consultation-dirty && !AppState.consultation-saving {save-timer.restart();} }
+    save-timer := Timer {interval:700ms; running: AppState.consultation-dirty && !AppState.consultation-saving && !AppState.consultation-paused && !AppState.consultation-load-error; triggered => {AppState.save-consultation-notes();}}
+    search-timer := Timer {interval:300ms; triggered => {AppState.search-dossiers();}}
+    VerticalLayout { padding: root.width < 900px ? 12px : 20px; spacing: 12px;
+        HorizontalLayout { height: 36px; vertical-stretch: 0; spacing: 8px;
+            Text { min-width: 0px; horizontal-stretch: 1; text: "Dossiers et séances"; color: Design.overlay-text; font-size:22px; font-weight:600; }
+            AppButton { compact:true; overlay:true; text:"Fermer"; clicked=>{AppState.close-consultation();} }
+        }
+        if AppState.consultation-feedback != "": Text { text: AppState.consultation-feedback; color: Design.overlay-danger; wrap: word-wrap; vertical-stretch: 0; }
+        HorizontalLayout {spacing:16px; min-height:0px;
+            VerticalLayout {width: root.panel-width; horizontal-stretch:0; spacing:8px; min-height:0px;
+                Text {text:"Nom ou numéro de dossier"; color:Design.overlay-text; font-weight:600;}
+                LineEdit {height:36px; text <=> AppState.dossier-search; placeholder-text:"Nom ou D-000123"; accessible-label:"Rechercher un dossier par nom ou numéro"; edited=>{search-timer.restart();} accepted=>{AppState.search-dossiers();}}
+                Text {text:AppState.dossier-search-busy ? "Recherche…" : AppState.dossier-search == "" ? "Saisissez un nom pour rechercher un dossier." : AppState.dossier-candidates.length == 0 ? "Aucun dossier trouvé" : "Choisissez le dossier · 50 résultats maximum"; color:Design.overlay-text-secondary; font-size:12px; wrap:word-wrap;}
+                ScrollView {height:min(180px,AppState.dossier-candidates.length*42px); horizontal-scrollbar-policy:always-off;
+                    VerticalLayout {alignment:start; spacing:4px;
+                        for p in AppState.dossier-candidates: AppButton {height:36px; compact:true; overlay:true; elide-text:true; text:p.first-name+" "+p.last-name+" · "+p.dossier-number; selected:AppState.consultation-patient-id==p.id; checkable:true; enabled:!AppState.consultation-dirty && !AppState.consultation-saving; clicked=>{AppState.select-dossier(p.id);} }
+                    }
+                }
+                Text {text:"Prises par date"; color:Design.overlay-text; font-weight:600;}
+                ScrollView {min-height:0px; vertical-stretch:1; horizontal-scrollbar-policy:always-off;
+                    VerticalLayout {alignment:start; spacing:4px;
+                        for day in AppState.consultation-days: AppButton {height:54px; compact:true; overlay:true; elide-text:true; text:day.label+"\nG : "+day.left+" / D : "+day.right+" · vidéos : "+day.videos; tooltip:"Prises du "+day.label+" · "+day.videos+" vidéo(s), visibles dans la bibliothèque"; selected:AppState.consultation-day==day.date; checkable:true; enabled:!AppState.consultation-loading; clicked=>{AppState.select-consultation-day(day.date);} }
+                    }
+                }
+                if AppState.consultation-patient-id != "": AppButton {height:32px; compact:true; overlay:true; text:"Utiliser pour la capture"; enabled:!AppState.consultation-dirty && !AppState.consultation-saving && !AppState.recording-busy; clicked=>{AppState.select-patient(AppState.consultation-patient-id);AppState.close-consultation();AppState.navigate-to(0);} }
+            }
+            ResizeHandle { panel-width: root.panel-width; minimum: 200px; maximum: max(200px,min(400px,root.width - 540px)); overlay: true;
+                label: "Largeur de la liste des dossiers et des dates";
+                resized(value) => {AppState.consultation-panel-width=round(value/1px);}
+                committed => {AppState.interface-edited();}
+            }
+            VerticalLayout {min-width:0px; horizontal-stretch:1; min-height:0px; spacing:8px;
+                Text {text:AppState.consultation-title=="" ? "Ouvrez un dossier pour retrouver ses prises et ses notes." : AppState.consultation-title; color:Design.overlay-text; font-size:17px; overflow:elide;}
+                if AppState.consultation-loading: Text {text:"Chargement des prises…"; color:Design.overlay-text-secondary;}
+                if AppState.consultation-title != "": VerticalLayout {spacing:6px; vertical-stretch:0;
+                    Text {text:"Notes générales de la séance · prises regroupées par jour"; color:Design.overlay-text; font-weight:600;}
+                    TextEdit {height: root.height < 700px ? 84px : 120px; text <=> AppState.consultation-notes; wrap:word-wrap; enabled:!AppState.consultation-loading && !AppState.consultation-load-error; accessible-label:"Notes générales de cette séance"; edited=>{AppState.consultation-edited();}}
+                    HorizontalLayout {height:32px; spacing:8px;
+                        Text {min-width:0px; horizontal-stretch:1; text:AppState.consultation-load-error ? "Notes indisponibles" : AppState.consultation-paused ? "Échec · brouillon conservé" : AppState.consultation-saving ? "Enregistrement…" : AppState.consultation-dirty ? "Modifications en attente" : AppState.consultation-saved-at == "" ? "Aucune modification" : "Enregistré · "+AppState.consultation-saved-at; color:AppState.consultation-paused || AppState.consultation-load-error ? Design.overlay-danger : Design.overlay-success; font-size:12px; wrap:word-wrap; }
+                        AppButton {compact:true; overlay:true; text:"Enregistrer"; enabled:AppState.consultation-dirty && !AppState.consultation-saving && !AppState.consultation-load-error; clicked=>{AppState.save-consultation-notes();} }
+                    }
+                    if AppState.consultation-paused: AppButton {height:32px; compact:true; overlay:true; text:"Fermer sans enregistrer"; clicked=>{AppState.consultation-dirty=false;AppState.close-consultation();} }
+                }
+                ScrollView {min-height:0px; vertical-stretch:1; horizontal-scrollbar-policy:always-off;
+                    HorizontalLayout {alignment:start; spacing:12px;
+                        ResizeHandle { panel-width: root.panel-width; minimum: 200px; maximum: max(200px,min(400px,root.width - 540px)); overlay: true;
+                label: "Largeur de la liste des dossiers et des dates";
+                resized(value) => {AppState.consultation-panel-width=round(value/1px);}
+                committed => {AppState.interface-edited();}
+            }
+            VerticalLayout {min-width:0px; horizontal-stretch:1; alignment:start; spacing:8px;
+                            Text {text:"Œil gauche"; color:Design.overlay-text; font-weight:600;}
+                            if AppState.consultation-left-photos.length == 0: Text {text:"Aucune photo pour cette date"; color:Design.overlay-text-secondary; wrap:word-wrap;}
+                            for item in AppState.consultation-left-photos: SessionPhotoCard {photo:item;}
+                        }
+                        ResizeHandle { panel-width: root.panel-width; minimum: 200px; maximum: max(200px,min(400px,root.width - 540px)); overlay: true;
+                label: "Largeur de la liste des dossiers et des dates";
+                resized(value) => {AppState.consultation-panel-width=round(value/1px);}
+                committed => {AppState.interface-edited();}
+            }
+            VerticalLayout {min-width:0px; horizontal-stretch:1; alignment:start; spacing:8px;
+                            Text {text:"Œil droit"; color:Design.overlay-text; font-weight:600;}
+                            if AppState.consultation-right-photos.length == 0: Text {text:"Aucune photo pour cette date"; color:Design.overlay-text-secondary; wrap:word-wrap;}
+                            for item in AppState.consultation-right-photos: SessionPhotoCard {photo:item;}
+                        }
+                    }
+                }
+                Text {text:"Jusqu’à 200 photos par date · vidéos accessibles dans la bibliothèque"; color:Design.overlay-text-secondary; font-size:11px; wrap:word-wrap; vertical-stretch:0;}
+            }
+        }
+    }
+}

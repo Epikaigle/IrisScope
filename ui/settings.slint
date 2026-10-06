@@ -35,6 +35,8 @@ component SettingsField inherits VerticalLayout {
     in property <string> value;
     in property <string> placeholder;
     in property <bool> enabled: true;
+    in property <bool> browsable: false;
+    callback browse;
     callback save(string);
     vertical-stretch: 0;
     spacing: 8px;
@@ -73,6 +75,14 @@ component SettingsField inherits VerticalLayout {
             accessibility-label: "Enregistrer : " + root.label;
             enabled: root.enabled && (field.text != root.value || AppState.settings-feedback-is-error);
             clicked => { root.save(field.text); }
+        }
+        if root.browsable: AppButton {
+            height: 40px;
+            text: "Parcourir…";
+            tooltip: root.value == "" ? "Choisir : " + root.label : root.value;
+            accessibility-label: "Parcourir : " + root.label;
+            enabled: root.enabled && !AppState.file-dialog-pending;
+            clicked => { root.browse(); }
         }
     }
 }
@@ -119,6 +129,10 @@ export component SettingsPage inherits Rectangle {
                         wrap: word-wrap;
                         vertical-stretch: 0;
                     }
+                    Text {
+                        text: AppState.app-version == "" ? "IrisScope" : "IrisScope · version " + AppState.app-version;
+                        color: Design.text-muted; font-size: 12px; vertical-stretch: 0;
+                    }
                 }
 
                 GridLayout {
@@ -153,9 +167,11 @@ export component SettingsPage inherits Rectangle {
                                 }
                                 SettingsField {
                                     label: "Dossier des captures";
+                                    browsable: true;
+                                    browse => { AppState.browse-settings-path(0); }
                                     value: AppState.settings-capture-directory;
                                     placeholder: "Chemin du dossier";
-                                    enabled: !AppState.recording-busy;
+                                    enabled: !AppState.recording-busy && !AppState.storage-busy;
                                     save(value) => { AppState.update-capture-directory(value); }
                                 }
                                 HorizontalLayout {
@@ -166,6 +182,37 @@ export component SettingsPage inherits Rectangle {
                                         text: "Ouvrir ce dossier";
                                         clicked => { AppState.open-capture-directory(); }
                                     }
+                                }
+                                Text { text: AppState.storage-status; color: AppState.storage-low ? Design.danger : Design.text-muted; font-size: 12px; wrap: word-wrap; vertical-stretch: 0; }
+                                Text { text: "Sauvegarde complète : captures, dossiers et vidéos interrompues. La restauration crée un nouveau dossier et l’ouvre sans remplacer les captures actuelles."; color: Design.text-secondary; font-size: 12px; wrap: word-wrap; vertical-stretch: 0; }
+                                HorizontalLayout { height: 36px; spacing: 8px; vertical-stretch: 0; alignment: start;
+                                    AppButton { compact: true; text: "Sauvegarder"; enabled: !AppState.storage-busy && !AppState.export-busy && !AppState.file-dialog-pending && !AppState.recording-busy && !AppState.patient-action-pending; clicked => { AppState.backup-library(); } }
+                                    AppButton { compact: true; text: "Restaurer…"; quiet: true; enabled: !AppState.storage-busy && !AppState.export-busy && !AppState.file-dialog-pending && !AppState.recording-busy && !AppState.patient-action-pending; clicked => { AppState.restore-library(); } }
+                                    if AppState.storage-busy && !AppState.file-dialog-pending: AppButton {
+                                        compact: true; text: AppState.storage-cancelling ? "Annulation…" : "Annuler";
+                                        enabled: !AppState.storage-cancelling;
+                                        clicked => { AppState.cancel-storage-operation(); }
+                                    }
+                                }
+                                if AppState.storage-busy && AppState.storage-progress-known: Rectangle {
+                                    height: 6px; vertical-stretch: 0; background: Design.control; border-radius: 3px;
+                                    accessible-role: progress-indicator; accessible-value: AppState.storage-progress;
+                                    accessible-label: "Progression de la sauvegarde ou restauration";
+                                    accessible-value-minimum: 0; accessible-value-maximum: 100;
+                                    Rectangle { x: 0px; y: 0px; height: parent.height; width: parent.width * AppState.storage-progress / 100; background: Design.accent; border-radius: 3px; }
+                                }
+                                if AppState.storage-feedback != "": Text { text: AppState.storage-feedback; color: AppState.storage-feedback-error ? Design.danger : Design.text-secondary; font-size: 12px; wrap: word-wrap; vertical-stretch: 0; }
+                                Text { text: AppState.backup-last-status; color: Design.text-secondary; font-size: 12px; wrap: word-wrap; vertical-stretch: 0; }
+                                HorizontalLayout {
+                                    height: 36px; spacing: Design.gap-small; vertical-stretch: 0; alignment: start;
+                                    Text { text: "Rappel après 7 jours"; color: Design.text-secondary; font-size: 12px; vertical-alignment: center; }
+                                    AppButton { compact: true; checkable: true; selected: AppState.backup-reminder-enabled; text: AppState.backup-reminder-enabled ? "Activé" : "Désactivé"; accessibility-label: "Rappel de sauvegarde après sept jours"; clicked => { AppState.set-backup-reminder(!AppState.backup-reminder-enabled); } }
+                                }
+                                if AppState.backup-reminder != "": Text { text: AppState.backup-reminder; color: Design.accent; font-size: 12px; wrap: word-wrap; vertical-stretch: 0; }
+                                if AppState.export-feedback != "": Text { text: AppState.export-feedback; color: AppState.export-feedback-error ? Design.danger : Design.text-secondary; font-size: 12px; wrap: word-wrap; vertical-stretch: 0; }
+                                if AppState.export-busy && !AppState.file-dialog-pending: HorizontalLayout {
+                                    alignment: start; vertical-stretch: 0;
+                                    AppButton { compact: true; text: AppState.export-cancelling ? "Annulation…" : "Annuler l’export MP4"; enabled: !AppState.export-cancelling; clicked => { AppState.cancel-video-export(); } }
                                 }
                                 Rectangle { height: 1px; vertical-stretch: 0; background: Design.border; }
                                 SettingsField {
@@ -191,24 +238,12 @@ export component SettingsPage inherits Rectangle {
                             }
                         }
 
-                        Rectangle {
-                            border-radius: Design.card-radius;
-                            background: Design.surface;
-                            border-width: 1px;
-                            border-color: Design.border;
-                            height: display-content.preferred-height;
-                            vertical-stretch: 0;
-                            display-content := VerticalLayout {
-                                spacing: 16px;
-                                padding: 20px;
-                                alignment: start;
-                                Text {
-                                    text: "Affichage et caméra";
-                                    font-size: 16px;
-                                    font-weight: 600;
-                                    color: Design.text;
-                                    vertical-stretch: 0;
-                                }
+                Rectangle {
+                    border-radius: Design.card-radius; background: Design.surface;
+                    border-width: 1px; border-color: Design.border;
+                    height: interface-content.preferred-height; vertical-stretch: 0;
+                    interface-content := VerticalLayout { padding: 20px; spacing: 12px; alignment: start;
+                        Text {text: "Interface et affichage"; font-size: 16px; font-weight: 600; color: Design.text; vertical-stretch: 0;}
                                 VerticalLayout {
                                     vertical-stretch: 0;
                                     spacing: 8px;
@@ -243,6 +278,48 @@ export component SettingsPage inherits Rectangle {
                                         }
                                     }
                                 }
+
+                        HorizontalLayout { height: 36px; spacing: 12px; vertical-stretch: 0;
+                            Text {min-width:0px; horizontal-stretch:1; text:"Mémoriser la disposition"; color:Design.text; wrap:word-wrap; vertical-alignment:center;}
+                            AppButton {compact:true; checkable:true; selected:AppState.remember-layout; text:AppState.remember-layout ? "Activée" : "Désactivée"; clicked=>{AppState.remember-layout=!AppState.remember-layout;AppState.interface-edited();}}
+                        }
+                        Text {text:"Panneaux ouverts, largeurs et vue grille ou liste sont retrouvés au prochain lancement. Faites glisser les séparateurs pour ajuster les panneaux."; color:Design.text-muted; font-size:12px; wrap:word-wrap; vertical-stretch:0;}
+                        HorizontalLayout { height: 36px; spacing: 12px; vertical-stretch: 0;
+                            Text {min-width:0px; horizontal-stretch:1; text:"Image seule à l’ouverture des photos"; color:Design.text; wrap:word-wrap; vertical-alignment:center;}
+                            AppButton {compact:true; checkable:true; selected:AppState.image-only; text:AppState.image-only ? "Activée" : "Désactivée"; clicked=>{AppState.toggle-image-only();}}
+                        }
+                        Text {text:"Les commandes se masquent après 3 secondes. Bougez la souris ou utilisez « Commandes » pour les retrouver. Échap revient à la vue complète."; color:Design.text-muted; font-size:12px; wrap:word-wrap; vertical-stretch:0;}
+                        HorizontalLayout { height: 36px; spacing: 12px; vertical-stretch: 0;
+                            Text {min-width:0px; horizontal-stretch:1; text:"Taille des miniatures"; color:Design.text; vertical-alignment:center;}
+                            ComboBox {width:180px; model:["Petites","Moyennes","Grandes"]; current-index:AppState.thumbnail-size; selected(value)=>{AppState.thumbnail-size=self.current-index;AppState.interface-edited();}}
+                        }
+                        HorizontalLayout { height: 36px; spacing: 12px; vertical-stretch: 0;
+                            Text {min-width:0px; horizontal-stretch:1; text:"Montrer l’iris au patient"; color:Design.text; wrap:word-wrap; vertical-alignment:center;}
+                            AppButton {compact:true; text:"Présenter"; clicked=>{AppState.toggle-presentation();}}
+                        }
+                        Text {text:"La présentation masque les noms, numéros de dossier, fichiers, notes et annotations. Les indicateurs de capture et les erreurs restent visibles. Quittez ce mode pour accéder aux dossiers."; color:Design.text-muted; font-size:12px; wrap:word-wrap; vertical-stretch:0;}
+                        AppButton {text:"Réinitialiser la disposition"; compact:true; clicked=>{AppState.reset-interface();}}
+                    }
+                }
+
+                        Rectangle {
+                            border-radius: Design.card-radius;
+                            background: Design.surface;
+                            border-width: 1px;
+                            border-color: Design.border;
+                            height: display-content.preferred-height;
+                            vertical-stretch: 0;
+                            display-content := VerticalLayout {
+                                spacing: 16px;
+                                padding: 20px;
+                                alignment: start;
+                                Text {
+                                    text: "Caméra";
+                                    font-size: 16px;
+                                    font-weight: 600;
+                                    color: Design.text;
+                                    vertical-stretch: 0;
+                                }
                                 VerticalLayout {
                                     vertical-stretch: 0;
                                     spacing: 8px;
@@ -258,7 +335,7 @@ export component SettingsPage inherits Rectangle {
                                         vertical-stretch: 0;
                                         model: ["Maximale — résolution", "Équilibrée", "Fluide — images par seconde"];
                                         current-index: AppState.settings-video-quality;
-                                        enabled: !AppState.recording-busy;
+                                        enabled: !AppState.recording-busy && !AppState.storage-busy;
                                         accessible-label: "Qualité du direct et des vidéos";
                                         selected(value) => {
                                             AppState.update-video-quality(value == "Équilibrée" ? 1
@@ -305,12 +382,16 @@ export component SettingsPage inherits Rectangle {
                                 }
                                 SettingsField {
                                     label: "Carte d’iridologie";
+                                    browsable: true;
+                                    browse => { AppState.browse-settings-path(1); }
                                     value: AppState.settings-iridology-map-path;
                                     placeholder: "Chemin vers une image JPEG ou PNG";
                                     save(value) => { AppState.update-iridology-map-path(value); }
                                 }
                                 SettingsField {
                                     label: "Planche de signes et symboles";
+                                    browsable: true;
+                                    browse => { AppState.browse-settings-path(2); }
                                     value: AppState.settings-iridology-symbols-path;
                                     placeholder: "Chemin vers une image JPEG ou PNG";
                                     save(value) => { AppState.update-iridology-symbols-path(value); }
@@ -341,12 +422,15 @@ export component SettingsPage inherits Rectangle {
                             spacing: 16px;
                             padding: 20px;
                             alignment: start;
-                            Text {
+                            HorizontalLayout { height: 36px; spacing: 8px; vertical-stretch: 0;
+                            Text { min-width: 0px; horizontal-stretch: 1;
                                 text: "Diagnostic caméra";
                                 font-size: 16px;
                                 font-weight: 600;
                                 color: Design.text;
                                 vertical-stretch: 0;
+                            }
+                            AppButton {compact:true; text:AppState.advanced-settings-expanded ? "Replier" : "Détails"; checkable:true; selected:AppState.advanced-settings-expanded; clicked=>{AppState.advanced-settings-expanded=!AppState.advanced-settings-expanded;AppState.interface-edited();}}
                             }
                             Text {
                                 text: AppState.status-text == "" ? "Iridoscope déconnecté" : AppState.status-text;
@@ -365,7 +449,7 @@ export component SettingsPage inherits Rectangle {
                                 vertical-stretch: 0;
                             }
 
-                            if AppState.camera-connected: VerticalLayout {
+                            if AppState.camera-connected && AppState.advanced-settings-expanded: VerticalLayout {
                                 spacing: 12px;
                                 alignment: start;
                                 vertical-stretch: 0;

@@ -1,0 +1,129 @@
+import { DateField } from "./date-field.slint";
+import { AppButton, AppSlider } from "./controls.slint";
+import { AppState } from "./state.slint";
+import { Design } from "./theme.slint";
+import { ScrollView, LineEdit, TextEdit } from "std-widgets.slint";
+
+export component ViewerTools inherits Rectangle {
+    background: Design.overlay-panel;
+    border-radius: Design.card-radius;
+    border-width: 1px; border-color: Design.overlay-border;
+    clip: true;
+    ScrollView {
+        width: 100%; height: 100%;
+        VerticalLayout { alignment: start;
+            padding: 12px; spacing: 10px;
+            HorizontalLayout { height: 32px; vertical-stretch: 0; spacing: 4px;
+            Text { min-width: 0px; horizontal-stretch: 1; overflow: elide; text: AppState.viewer-panel == 1 ? "Observations" : AppState.viewer-panel == 2 ? "Références visuelles" : AppState.viewer-panel == 3 ? "Affichage" : AppState.viewer-panel == 4 ? "Comparer les prises" : "Exporter une copie"; font-size: 16px; font-weight: 600; color: Design.overlay-text; }
+            AppButton { compact: true; overlay: true; text: "×"; accessibility-label: "Fermer le panneau photo"; clicked => {AppState.select-photo-panel(0);} }
+            }
+            if AppState.viewer-panel == 1: VerticalLayout { alignment: start;
+                spacing: 8px;
+                Text { text: "Repérer une zone"; color: Design.overlay-text-secondary; font-size: 12px; }
+                HorizontalLayout { spacing: 4px; alignment: start;
+                    for tool in [{id:0,label:"Déplacer"},{id:1,label:"Cercle"},{id:2,label:"Flèche"}]: AppButton {
+                        height: 32px; elide-text: true; compact: true; overlay: true; text: tool.label; checkable: true; selected: AppState.viewer-tool == tool.id;
+                        enabled: !AppState.viewer-review-busy && !AppState.viewer-review-load-error;
+                        clicked => { AppState.viewer-tool = tool.id; }
+                    }
+                }
+                HorizontalLayout { spacing: 4px; alignment: start;
+                    for tool in [{id:3,label:"Point"},{id:4,label:"Texte"}]: AppButton {
+                        height: 32px; elide-text: true; compact: true; overlay: true; text: tool.label; checkable: true; selected: AppState.viewer-tool == tool.id;
+                        enabled: !AppState.viewer-review-busy && !AppState.viewer-review-load-error;
+                        clicked => { AppState.viewer-tool = tool.id; }
+                    }
+                    AppButton { height: 32px; elide-text: true; compact: true; overlay: true; text: "Annuler"; enabled: AppState.viewer-can-undo && !AppState.viewer-review-busy; tooltip: "Annuler la dernière modification des annotations"; clicked => { AppState.undo-viewer-annotation(); } }
+                }
+                if AppState.viewer-tool == 4: LineEdit { text <=> AppState.viewer-annotation-text; placeholder-text: "Texte à placer sur la photo"; accessible-label: "Libellé de l’annotation"; height: 36px; }
+                Text { text: AppState.viewer-tool == 1 ? "Glissez du centre au bord du cercle." : AppState.viewer-tool == 2 ? "Glissez du départ à la pointe de la flèche." : AppState.viewer-tool == 4 ? "Saisissez un libellé, puis cliquez sur l’image." : AppState.viewer-tool == 0 ? "Glissez pour déplacer l’image. Utilisez la molette pour zoomer." : "Cliquez pour placer un point."; color: Design.overlay-text-secondary; font-size: 12px; wrap: word-wrap; }
+                AppButton { height: 32px; elide-text: true; compact: true; overlay: true; text: AppState.viewer-annotations-visible ? "Masquer les annotations" : "Afficher les annotations"; clicked => { AppState.viewer-annotations-visible = !AppState.viewer-annotations-visible; } }
+                Text { text: "Notes de cette photo"; color: Design.overlay-text; font-weight: 600; }
+                TextEdit {
+                    height: root.height < 550px ? 120px : 160px; text <=> AppState.viewer-notes;
+                    enabled: !AppState.viewer-loading && !AppState.viewer-review-load-error;
+                    accessible-label: "Notes liées à cette photo"; wrap: word-wrap;
+                    edited => { AppState.viewer-review-edited(); }
+                }
+                HorizontalLayout { alignment: start;
+                    AppButton { height: 32px; elide-text: true; compact: true; overlay: true; text: AppState.viewer-review-busy ? "Enregistrement…" : "Enregistrer"; enabled: AppState.viewer-review-dirty && !AppState.viewer-review-busy && !AppState.viewer-review-load-error; clicked => { AppState.save-viewer-review(); } }
+                }
+                if AppState.viewer-autosave-paused: AppButton { height: 32px; elide-text: true; compact: true; overlay: true; text: "Fermer sans enregistrer"; clicked => { AppState.viewer-review-dirty = false; AppState.dismiss-viewer(); } }
+                Text { text: AppState.viewer-review-status; color: AppState.viewer-autosave-paused || AppState.viewer-review-load-error ? Design.overlay-danger : Design.overlay-success; font-size: 12px; wrap: word-wrap; }
+                Text { text: "Enregistrement automatique · original conservé."; color: Design.overlay-text-secondary; font-size: 12px; wrap: word-wrap; }
+                if AppState.viewer-annotations.length > 0: VerticalLayout { alignment: start; spacing: 4px;
+                    for a[i] in AppState.viewer-annotations: HorizontalLayout {
+                        spacing: 6px;
+                        Text { text: a.kind == 1 ? "Cercle " + (i+1) : a.kind == 2 ? "Flèche " + (i+1) : a.kind == 3 ? "Point " + (i+1) : a.text; color: Design.overlay-text-secondary; font-size: 12px; overflow: elide; min-width: 0px; horizontal-stretch: 1; vertical-alignment: center; }
+                        AppButton { height: 32px; elide-text: true; compact: true; overlay: true; text: "Retirer"; enabled: !AppState.viewer-review-busy; clicked => { AppState.delete-viewer-annotation(i); } }
+                    }
+                }
+            }
+            if AppState.viewer-panel == 2: VerticalLayout { alignment: start;
+                spacing: 8px;
+                HorizontalLayout { spacing: 4px; alignment: start;
+                    AppButton { height: 32px; elide-text: true; compact: true; overlay: true; text: "Carte"; checkable: true; selected: AppState.iridology-reference-mode == 0; clicked => { AppState.iridology-reference-mode = 0; } }
+                    AppButton { height: 32px; elide-text: true; compact: true; overlay: true; text: "Signes"; checkable: true; selected: AppState.iridology-reference-mode == 1; clicked => { AppState.iridology-reference-mode = 1; } }
+                }
+                Rectangle {
+                    height: 240px; clip: true; background: Design.preview;
+                    private property <image> reference-image: AppState.iridology-reference-mode == 0 ? AppState.iridology-map-image : AppState.iridology-symbols-image;
+                    private property <float> zoom: AppState.iridology-reference-zoom/100.0;
+                    Image { source: parent.reference-image; width: parent.width*parent.zoom; height: parent.height*parent.zoom; x: (parent.width - self.width)/2 + AppState.iridology-reference-pan-x; y: (parent.height - self.height)/2 + AppState.iridology-reference-pan-y; image-fit: contain; }
+                    TouchArea {
+                        private property <length> start-x; private property <length> start-y;
+                        changed pressed => { if self.pressed { self.start-x = AppState.iridology-reference-pan-x; self.start-y = AppState.iridology-reference-pan-y; } }
+                        moved => { if self.pressed { AppState.iridology-reference-pan-x = clamp(self.start-x+self.mouse-x - self.pressed-x,-parent.width*(parent.zoom - 1)/2,parent.width*(parent.zoom - 1)/2); AppState.iridology-reference-pan-y = clamp(self.start-y+self.mouse-y - self.pressed-y,-parent.height*(parent.zoom - 1)/2,parent.height*(parent.zoom - 1)/2); } }
+                    }
+                    if (AppState.iridology-reference-mode == 0 && !AppState.has-iridology-map) || (AppState.iridology-reference-mode == 1 && !AppState.has-iridology-symbols): Text { width: 100%; height: 100%; text: "Ajoutez votre image de référence dans les paramètres."; color: Design.overlay-text-secondary; wrap: word-wrap; horizontal-alignment: center; vertical-alignment: center; }
+                }
+                AppSlider { overlay: true; label: "Zoom de la référence"; minimum: 100; maximum: 400; step: 10; value: AppState.iridology-reference-zoom; released(v) => { AppState.iridology-reference-zoom = round(v); AppState.iridology-reference-pan-x = 0px; AppState.iridology-reference-pan-y = 0px; } }
+                AppButton { height: 32px; elide-text: true; compact: true; overlay: true; text: "Importer une référence…"; enabled: !AppState.file-dialog-pending && !AppState.presentation-mode; clicked => { AppState.browse-settings-path(AppState.iridology-reference-mode == 0 ? 1 : 2); } }
+                AppButton { height: 32px; elide-text: true; compact: true; overlay: true; text: AppState.viewer-guides ? "Masquer les cercles repères" : "Afficher les cercles repères"; clicked => { AppState.viewer-guides = !AppState.viewer-guides; } }
+                if AppState.viewer-guides: VerticalLayout { alignment: start; spacing: 6px;
+                    AppButton { height: 32px; elide-text: true; compact: true; overlay: true; text: "Placer le centre"; checkable: true; selected: AppState.viewer-tool == 5; clicked => { AppState.viewer-tool = 5; } }
+                    AppSlider { overlay: true; label: "Rayon des cercles repères"; minimum: 5; maximum: 50; value: AppState.viewer-guide-radius*100; released(v) => { AppState.viewer-guide-radius = v/100; } }
+                }
+                Text { text: "Repères manuels et références visuelles, sans interprétation automatique."; color: Design.overlay-text-secondary; font-size: 12px; wrap: word-wrap; }
+            }
+            if AppState.viewer-panel == 3: VerticalLayout { alignment: start;
+                spacing: 8px;
+                Text { text: "Luminosité · " + AppState.viewer-brightness; color: Design.overlay-text-secondary; }
+                AppSlider { overlay: true; label: "Luminosité d’affichage"; minimum: -100; maximum: 100; value: AppState.viewer-brightness; enabled: !AppState.viewer-adjusting; released(v) => { AppState.viewer-brightness = round(v); AppState.viewer-show-original = false; AppState.viewer-display-changed(); } }
+                Text { text: "Contraste · " + AppState.viewer-contrast; color: Design.overlay-text-secondary; }
+                AppSlider { overlay: true; label: "Contraste d’affichage"; minimum: -100; maximum: 100; value: AppState.viewer-contrast; enabled: !AppState.viewer-adjusting; released(v) => { AppState.viewer-contrast = round(v); AppState.viewer-show-original = false; AppState.viewer-display-changed(); } }
+                HorizontalLayout { alignment: start; spacing: 4px;
+                    AppButton { height: 32px; elide-text: true; compact: true; overlay: true; text: "Rotation 90°"; enabled: !AppState.viewer-adjusting; clicked => { AppState.viewer-rotation = mod(AppState.viewer-rotation+90,360); AppState.viewer-show-original = false; AppState.viewer-display-changed(); } }
+                    AppButton { height: 32px; elide-text: true; compact: true; overlay: true; text: "Miroir"; checkable: true; selected: AppState.viewer-mirror; enabled: !AppState.viewer-adjusting; clicked => { AppState.viewer-mirror = !AppState.viewer-mirror; AppState.viewer-show-original = false; AppState.viewer-display-changed(); } }
+                }
+                AppButton { height: 32px; elide-text: true; compact: true; overlay: true; text: "Original"; checkable: true; selected: AppState.viewer-show-original; enabled: !AppState.viewer-adjusting; clicked => { AppState.viewer-show-original = !AppState.viewer-show-original; AppState.viewer-display-changed(); } }
+                AppButton { height: 32px; elide-text: true; compact: true; overlay: true; text: "Réinitialiser l’affichage"; enabled: !AppState.viewer-adjusting; clicked => { AppState.viewer-brightness = 0; AppState.viewer-contrast = 0; AppState.viewer-rotation = 0; AppState.viewer-mirror = false; AppState.viewer-show-original = false; AppState.fit-viewer(); AppState.viewer-display-changed(); } }
+                Text { text: AppState.viewer-original.width + " × " + AppState.viewer-original.height + " pixels\nRotation : " + (AppState.viewer-show-original ? 0 : AppState.viewer-rotation) + "°" + (!AppState.viewer-show-original && AppState.viewer-mirror ? " · miroir" : ""); color: Design.overlay-text-secondary; wrap: word-wrap; }
+                Text { text: "Les réglages modifient uniquement l’affichage. La fiche PDF utilise l’original annoté ; la copie PNG reprend l’affichage."; color: Design.overlay-text-secondary; font-size: 12px; wrap: word-wrap; }
+            }
+            if AppState.viewer-panel == 4: VerticalLayout { alignment: start;
+                spacing: 8px;
+                DateField { overlay: true; label: "Du"; target: 3; value <=> AppState.comparison-from; }
+                DateField { overlay: true; label: "Au"; target: 4; value <=> AppState.comparison-to; }
+                AppButton { height: 32px; elide-text: true; compact: true; overlay: true; text: "Choisir une photo du dossier…"; enabled: AppState.viewer-dossier != "" && !AppState.comparison-loading; clicked => { AppState.find-comparison-photos(); } }
+                if AppState.viewer-dossier == "": Text { text: "Associez la photo à un dossier pour rechercher les prises du même œil."; color: Design.overlay-text-secondary; font-size: 12px; wrap: word-wrap; }
+                Text { text: "Même dossier, même œil · jusqu’à 200 photos récentes. Les dates permettent de retrouver des prises plus anciennes."; color: Design.overlay-text-secondary; font-size: 12px; wrap: word-wrap; }
+                if AppState.comparison-loading: Text { text: "Chargement des photos…"; color: Design.overlay-text-secondary; }
+                if AppState.comparison-candidates.length > 0: ScrollView {
+                    height: min(240px, AppState.comparison-candidates.length * 64px);
+                    VerticalLayout { alignment: start; spacing: 4px;
+                        for candidate in AppState.comparison-candidates: HorizontalLayout { height: 60px; spacing: 6px; Image { width: 64px; height: 56px; source: candidate.thumbnail; image-fit: contain; } AppButton { min-width: 0px; horizontal-stretch: 1; height: 56px; elide-text: true; wrap-text: true; compact: true; overlay: true; text: candidate.caption; enabled: !AppState.comparison-loading; clicked => { AppState.select-comparison-photo(candidate.path, candidate.version, candidate.caption); } } }
+                    }
+                }
+                AppButton { height: 32px; elide-text: true; compact: true; overlay: true; text: "Garder cette photo pour comparer"; clicked => { AppState.keep-comparison-image(); } }
+                if AppState.comparison-available: AppButton { height: 32px; elide-text: true; compact: true; overlay: true; text: "Effacer la comparaison"; clicked => { AppState.clear-comparison-image(); } }
+                if AppState.comparison-enabled: AppButton { height: 32px; elide-text: true; compact: true; overlay: true; text: AppState.comparison-linked ? "Dissocier les déplacements" : "Lier zoom et déplacements"; tooltip: "Positionnez les deux photos séparément, puis liez les vues en conservant cet alignement"; clicked => { AppState.toggle-comparison-link(); } }
+            }
+            if AppState.viewer-panel == 5: VerticalLayout { alignment: start; spacing: 10px;
+                AppButton { height: 32px; elide-text: true; compact: true; overlay: true; text: "Copie PNG annotée…"; enabled: !AppState.export-busy && !AppState.storage-busy && !AppState.file-dialog-pending && !AppState.viewer-adjusting; clicked => { AppState.export-viewer-photo(0); } }
+                AppButton { height: 32px; elide-text: true; compact: true; overlay: true; text: "Fiche PDF et notes…"; enabled: !AppState.export-busy && !AppState.storage-busy && !AppState.file-dialog-pending; clicked => { AppState.export-viewer-photo(1); } }
+                Text { text: "L’export ne remplace jamais la photo originale ni un fichier existant."; color: Design.overlay-text-secondary; font-size: 12px; wrap: word-wrap; }
+            }
+        }
+    }
+}

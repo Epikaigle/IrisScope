@@ -36,6 +36,51 @@ pub(super) fn refresh_pending_recording_count(
 
 #[allow(clippy::too_many_lines)]
 pub(super) fn install(main_window: &MainWindow, runtime: &AppRuntime) {
+    let query_mailbox = Arc::clone(&runtime.library_mailbox);
+    let query_settings = Arc::clone(&runtime.settings);
+    let query_session = Arc::clone(&runtime.active_session);
+    let weak_query = main_window.as_weak();
+    main_window
+        .global::<AppState>()
+        .on_apply_library_query(move || {
+            let Some(win) = weak_query.upgrade() else {
+                return;
+            };
+            let state = win.global::<AppState>();
+            match iriscope_core::library::LibraryQuery::parse(
+                &state.get_library_query_dossier(),
+                &state.get_library_query_from(),
+                &state.get_library_query_to(),
+                state.get_library_query_eye(),
+                state.get_library_query_sort(),
+            ) {
+                Ok(query) => {
+                    state.set_library_query_from(
+                        crate::workflow_controller::french_date(&query.date_from).into(),
+                    );
+                    state.set_library_query_to(
+                        crate::workflow_controller::french_date(&query.date_to).into(),
+                    );
+                    state.set_library_query_error("".into());
+                    state.set_library_query_active(
+                        query != iriscope_core::library::LibraryQuery::default(),
+                    );
+                    query_mailbox.set_query(query);
+                    clear_library_view(&win);
+                    refresh_library_in_background(&query_mailbox, &query_settings, &query_session);
+                }
+                Err(message) => state.set_library_query_error(message.into()),
+            }
+        });
+    let visible_mailbox = Arc::clone(&runtime.library_mailbox);
+    main_window
+        .global::<AppState>()
+        .on_library_visible_range_changed(move |first, end| {
+            if std::env::var_os("IRISCOPE_TRACE_LIBRARY").is_some() {
+                eprintln!("[IrisScope] Miniatures visibles : {first}–{end}");
+            }
+            visible_mailbox.set_visible_range(first, end);
+        });
     let settings = Arc::clone(&runtime.settings);
     let library_mailbox = Arc::clone(&runtime.library_mailbox);
     let active_session = Arc::clone(&runtime.active_session);

@@ -1,4 +1,4 @@
-import { AppButton } from "./controls.slint";
+import { HelpText, AppButton } from "./controls.slint";
 import { LineEdit, ScrollView } from "std-widgets.slint";
 import { AppState } from "./state.slint";
 import { Design } from "./theme.slint";
@@ -64,6 +64,7 @@ export component PatientPanel inherits Rectangle {
                             font-weight: 700;
                             vertical-alignment: center;
                         }
+                        if AppState.patient-id != "": AppButton { height: 32px; compact: true; quiet: true; text: "Séances"; enabled: !AppState.recording-busy; clicked => { AppState.open-consultation(); } }
                         AppButton {
                             height: 32px;
                             compact: true;
@@ -185,6 +186,17 @@ export component PatientPanel inherits Rectangle {
                                 overflow: elide;
                             }
                             AppButton {
+                                height: 32px; compact: true; quiet: true;
+                                text: "Corriger";
+                                accessibility-label: "Corriger le prénom et le nom du dossier actif";
+                                enabled: !AppState.recording-busy && !AppState.patient-action-pending && !AppState.storage-busy;
+                                clicked => {
+                                    AppState.patient-edit-first = AppState.patient-first-name;
+                                    AppState.patient-edit-last = AppState.patient-last-name;
+                                    AppState.patient-edit-open = true;
+                                }
+                            }
+                            AppButton {
                                 height: 32px;
                                 compact: true;
                                 quiet: true;
@@ -238,7 +250,7 @@ export component PatientPanel inherits Rectangle {
                                             horizontal-stretch: 1;
                                             alignment: center;
                                             spacing: 3px;
-                                            Text {
+                                            HelpText {
                                                 text: candidate.first-name + " " + candidate.last-name;
                                                 color: Design.text;
                                                 font-size: 12px;
@@ -258,13 +270,20 @@ export component PatientPanel inherits Rectangle {
                                                 overflow: elide;
                                             }
                                         }
-                                        AppButton {
-                                            height: 32px;
-                                            compact: true;
-                                            text: "Choisir";
-                                            accessibility-label: "Choisir " + candidate.first-name + " " + candidate.last-name + ", dossier " + candidate.dossier-number;
-                                            enabled: !AppState.recording-busy && !AppState.patient-action-pending;
-                                            clicked => { AppState.select-patient(candidate.id); }
+                                        Rectangle {
+                                            width: choose-patient.preferred-width;
+                                            horizontal-stretch: 0;
+                                            background: transparent;
+                                            choose-patient := AppButton {
+                                                y: (parent.height - self.height) / 2;
+                                                width: parent.width;
+                                                height: 32px;
+                                                compact: true;
+                                                text: "Choisir";
+                                                accessibility-label: "Choisir " + candidate.first-name + " " + candidate.last-name + ", dossier " + candidate.dossier-number;
+                                                enabled: !AppState.recording-busy && !AppState.patient-action-pending;
+                                                clicked => { AppState.select-patient(candidate.id); }
+                                            }
                                         }
                                     }
                                 }
@@ -283,7 +302,7 @@ export component PatientPanel inherits Rectangle {
                     height: 58px;
                     vertical-stretch: 0;
                     spacing: 4px;
-                    Text { height: 18px; text: "Œil examiné"; color: Design.text-secondary; font-size: 12px; }
+                    Text { height: 18px; text: "Œil examiné · photos de la session"; color: Design.text-secondary; font-size: 12px; }
                     HorizontalLayout {
                         height: 36px;
                         vertical-stretch: 0;
@@ -291,7 +310,8 @@ export component PatientPanel inherits Rectangle {
                         AppButton {
                             height: 36px;
                             horizontal-stretch: 1;
-                            text: "Gauche";
+                            text: "Gauche · " + AppState.session-left-count;
+                            tooltip: AppState.session-left-count + " photo(s) de l’œil gauche pendant cette session";
                             checkable: true;
                             selected: AppState.selected-eye == 1;
                             accessibility-label: "Examiner l’œil gauche";
@@ -306,7 +326,8 @@ export component PatientPanel inherits Rectangle {
                         AppButton {
                             height: 36px;
                             horizontal-stretch: 1;
-                            text: "Droit";
+                            text: "Droit · " + AppState.session-right-count;
+                            tooltip: AppState.session-right-count + " photo(s) de l’œil droit pendant cette session";
                             checkable: true;
                             selected: AppState.selected-eye == 2;
                             accessibility-label: "Examiner l’œil droit";

@@ -2,7 +2,7 @@ use crate::app_helpers::settings_snapshot;
 use crate::config::NOTICE_ERROR;
 use crate::playback::show_capture_notice;
 use crate::ui::{MainWindow, PatientCandidateData};
-use iriscope_core::library::{PatientRecord, search_patients};
+use iriscope_core::library::{PatientRecord, PatientSearchCache};
 use iriscope_core::settings::AppSettings;
 use slint::{ModelRc, VecModel};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -105,8 +105,14 @@ pub(super) fn run_patient_search_worker(
     settings: &Arc<Mutex<AppSettings>>,
     weak: &slint::Weak<MainWindow>,
 ) {
+    let mut cache = PatientSearchCache::default();
     while let Some(request) = mailbox.receive() {
-        let result = search_patients(&request.directory, &request.first_name, &request.last_name);
+        let result = cache.search(
+            &request.directory,
+            &request.first_name,
+            &request.last_name,
+            25,
+        );
         if generation.load(Ordering::Acquire) != request.generation {
             continue;
         }
