@@ -3,8 +3,8 @@
 //! <https://learn.microsoft.com/en-us/windows-hardware/drivers/stream/ksevent-vidcaptosti-ext-trigger>
 //! <https://learn.microsoft.com/en-us/windows-hardware/drivers/stream/sample-user-mode-code-for-methods-and-events>
 //!
-//! KSIDENTIFIER is the ABI alias of KSEVENT. This probe uses source scope;
-//! Microsoft's EXT_TRIGGER page describes a pin target and KSE_NODE descriptor.
+//! `KSIDENTIFIER` is the ABI alias of `KSEVENT`. This probe uses source scope;
+//! Microsoft's `EXT_TRIGGER` page describes a pin target and `KSE_NODE` descriptor.
 //! A driver requiring a separate pin or topology route may reject this probe.
 //! That route is not discovered here, and no node or pin ID is guessed.
 //! No second camera, USB interface or replacement driver is opened.
