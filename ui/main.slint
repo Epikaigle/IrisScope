@@ -1,5 +1,5 @@
 import { ConsultationOverlay } from "./consultation-overlay.slint";
-import { CalendarOverlay } from "./date-field.slint";
+import { PopupBounds } from "./popup-bounds.slint";
 import { PatientEdit } from "./patient-edit.slint";
 import { AppButton, HelpOverlay, HelpState } from "./controls.slint";
 import { Design } from "./theme.slint";
@@ -18,6 +18,9 @@ export { DiagnosticData, LibraryItemData, CameraControlUiData, PatientCandidateD
 export { AppState } from "./state.slint";
 
 export component MainWindow inherits Window {
+    init => { PopupBounds.width = root.width; PopupBounds.height = root.height; }
+    changed width => { PopupBounds.width = root.width; }
+    changed height => { PopupBounds.height = root.height; }
     changed current-tab => { HelpState.text = ""; }
     changed library-page => { HelpState.text = ""; }
     changed library-loading => { HelpState.text = ""; }
@@ -228,7 +231,7 @@ export component MainWindow inherits Window {
         Rectangle {
             width: 100%;
             height: 100%;
-            visible: !AppState.viewer-open && !AppState.library-map-open && !AppState.patient-edit-open && (!AppState.consultation-open || AppState.presentation-mode) && !AppState.calendar-open;
+            visible: !AppState.viewer-open && !AppState.library-map-open && !AppState.patient-edit-open && (!AppState.consultation-open || AppState.presentation-mode);
 
             // Global navigation stays separate from contextual image tools.
             Rectangle {
@@ -236,7 +239,7 @@ export component MainWindow inherits Window {
                 y: 0px;
                 width: 100%;
                 height: 60px;
-                visible: !AppState.iris-fullscreen && !AppState.viewer-open && !AppState.library-map-open && !AppState.patient-edit-open && (!AppState.consultation-open || AppState.presentation-mode) && !AppState.calendar-open;
+                visible: !AppState.iris-fullscreen && !AppState.viewer-open && !AppState.library-map-open && !AppState.patient-edit-open && (!AppState.consultation-open || AppState.presentation-mode);
                 background: Design.header;
                 Rectangle { y: parent.height - 1px; width: 100%; height: 1px; background: Design.border; }
                 HorizontalLayout {
@@ -302,12 +305,6 @@ export component MainWindow inherits Window {
                             clicked => { AppState.navigate-to(4); }
                         }
                     }
-                    AppButton {
-                        height: 36px; compact: true; text: AppState.presentation-mode ? "Fin présentation" : "Présenter";
-                        checkable: true; selected: AppState.presentation-mode;
-                        tooltip: "Masquer les noms, dossiers, fichiers et notes privés";
-                        clicked => { AppState.toggle-presentation(); }
-                    }
                     Rectangle {
                         width: root.width < 1000px ? 112px : 188px;
                         horizontal-stretch: 0;
@@ -332,7 +329,7 @@ export component MainWindow inherits Window {
             }
             Rectangle {
                 x: 0px; y: AppState.iris-fullscreen ? 0px : 60px; width: 100%; height: parent.height - self.y; background: Design.canvas;
-                visible: !AppState.viewer-open && !AppState.library-map-open && !AppState.patient-edit-open && (!AppState.consultation-open || AppState.presentation-mode) && !AppState.calendar-open;
+                visible: !AppState.viewer-open && !AppState.library-map-open && !AppState.patient-edit-open && (!AppState.consultation-open || AppState.presentation-mode);
                 if AppState.current-tab == 0 || AppState.presentation-mode: CameraPage { width: 100%; height: 100%; }
                 if AppState.current-tab == 2 && !AppState.presentation-mode: LibraryPage { width: 100%; height: 100%; }
                 if AppState.current-tab == 4 && !AppState.presentation-mode: SettingsPage { width: 100%; height: 100%; }
@@ -342,7 +339,6 @@ export component MainWindow inherits Window {
         if AppState.consultation-open && !AppState.presentation-mode: ConsultationOverlay { width: 100%; height: 100%; }
         if AppState.viewer-open: ViewerOverlay { width: 100%; height: 100%; }
         if AppState.patient-edit-open: PatientEdit { width: 100%; height: 100%; }
-        if AppState.calendar-open: CalendarOverlay { width: 100%; height: 100%; }
         if AppState.presentation-mode && AppState.consultation-paused && !AppState.viewer-open: Rectangle {
             x: 16px; y: 76px; width: parent.width - 32px; height: warning.preferred-height + 20px;
             border-radius: Design.control-radius; background: Design.error-surface; border-width: 1px; border-color: Design.danger;

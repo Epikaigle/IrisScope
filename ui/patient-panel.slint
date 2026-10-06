@@ -302,7 +302,7 @@ export component PatientPanel inherits Rectangle {
                     height: 58px;
                     vertical-stretch: 0;
                     spacing: 4px;
-                    Text { height: 18px; text: "Œil examiné · photos de la session"; color: Design.text-secondary; font-size: 12px; }
+                    Text { height: 18px; text: "Œil examiné"; color: Design.text-secondary; font-size: 12px; }
                     HorizontalLayout {
                         height: 36px;
                         vertical-stretch: 0;
@@ -310,8 +310,8 @@ export component PatientPanel inherits Rectangle {
                         AppButton {
                             height: 36px;
                             horizontal-stretch: 1;
-                            text: "Gauche · " + AppState.session-left-count;
-                            tooltip: AppState.session-left-count + " photo(s) de l’œil gauche pendant cette session";
+                            text: "Gauche";
+                            tooltip: "Examiner l’œil gauche";
                             checkable: true;
                             selected: AppState.selected-eye == 1;
                             accessibility-label: "Examiner l’œil gauche";
@@ -326,8 +326,8 @@ export component PatientPanel inherits Rectangle {
                         AppButton {
                             height: 36px;
                             horizontal-stretch: 1;
-                            text: "Droit · " + AppState.session-right-count;
-                            tooltip: AppState.session-right-count + " photo(s) de l’œil droit pendant cette session";
+                            text: "Droit";
+                            tooltip: "Examiner l’œil droit";
                             checkable: true;
                             selected: AppState.selected-eye == 2;
                             accessibility-label: "Examiner l’œil droit";

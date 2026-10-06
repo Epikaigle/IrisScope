@@ -63,6 +63,42 @@ fn escape(win: &MainWindow) {
         text: Key::Escape.into(),
     });
 }
+fn verify_rapid_rotation_uses_the_last_position(harness: &mut ControllerHarness) {
+    {
+        let state = harness.window().global::<AppState>();
+        let original =
+            slint::Image::from_rgb8(slint::SharedPixelBuffer::<slint::Rgb8Pixel>::new(320, 240));
+        state.set_viewer_original(original.clone());
+        state.set_viewer_image(original);
+        state.set_viewer_open(true);
+        for angle in 0..180 {
+            state.set_viewer_rotation(angle);
+            state.invoke_viewer_display_changed();
+        }
+        state.set_viewer_rotation(37);
+        state.invoke_viewer_display_changed();
+        assert!(
+            !state.get_viewer_feedback_error(),
+            "rapid movement cannot fill the background job queue"
+        );
+    }
+    harness.start_file_workers();
+    wait(harness.window(), |w| {
+        !w.global::<AppState>().get_viewer_adjusting()
+    });
+    let pixels = harness.window().get_viewer_image().to_rgb8().unwrap();
+    assert_eq!(
+        (pixels.width(), pixels.height()),
+        (400, 385),
+        "render the last requested angle, not an older queued position"
+    );
+    assert_eq!(
+        harness.window().global::<AppState>().get_viewer_rotation(),
+        37
+    );
+    harness.close_viewer();
+}
+
 fn child(root: &Path) {
     let captures = root.join("captures");
     let patient = library::create_patient(&captures, "Émilie", "Martin").unwrap();
@@ -101,7 +137,7 @@ fn child(root: &Path) {
     }
     let original = fs::read(rows[0].file_path.as_str()).unwrap();
     let mut harness = ControllerHarness::new(captures).unwrap();
-    harness.start_file_workers();
+    verify_rapid_rotation_uses_the_last_position(&mut harness);
     harness.start_viewer_worker();
     let win = harness.window();
     win.set_library_items(ModelRc::new(VecModel::from(rows.clone())));
@@ -213,7 +249,7 @@ fn child(root: &Path) {
     state.set_comparison_pan_x(0.0);
     state.set_viewer_panel(3);
     state.set_viewer_brightness(20);
-    state.set_viewer_rotation(90);
+    state.set_viewer_rotation(37);
     state.invoke_viewer_display_changed();
     wait(win, |w| !w.global::<AppState>().get_viewer_adjusting());
     assert_eq!(
@@ -221,7 +257,7 @@ fn child(root: &Path) {
             win.get_viewer_image().size().width,
             win.get_viewer_image().size().height
         ),
-        (80, 120)
+        (144, 137)
     );
     state.set_viewer_show_original(true);
     state.invoke_viewer_display_changed();
@@ -257,7 +293,7 @@ fn child(root: &Path) {
             .unwrap()
             .to_rgb8()
             .dimensions(),
-        (80, 120)
+        (144, 137)
     );
     assert_eq!(fs::read(rows[0].file_path.as_str()).unwrap(), original);
     fs::write(root.join("choice"), "observations.pdf").unwrap();

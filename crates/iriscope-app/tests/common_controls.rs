@@ -7,8 +7,22 @@ use slint::{
 
 slint::slint! {
     import { AppButton, AppSlider, HelpState, HelpOverlay } from "../../../ui/controls.slint";
+    import { PopupBounds } from "../../../ui/popup-bounds.slint";
+    import { RotationControl } from "../../../ui/rotation-control.slint";
+    import { AppComboBox } from "../../../ui/combo-box.slint";
+    import { ThumbnailSizeControl } from "../../../ui/thumbnail-size.slint";
+    import { ScrollView } from "std-widgets.slint";
+    export { AppState } from "../../../ui/state.slint";
 
     export component ControlWindow inherits Window {
+        init => { PopupBounds.width = root.width; PopupBounds.height = root.height; }
+        changed width => { PopupBounds.width = root.width; }
+        changed height => { PopupBounds.height = root.height; }
+        out property <length> rotation-left: rotation.popup-left;
+        out property <length> rotation-top: rotation.popup-top;
+        out property <length> bottom-left: bottom-rotation.popup-left;
+        out property <length> bottom-top: bottom-rotation.popup-top;
+        out property <int> bottom-angle: bottom-rotation.angle;
         in-out property <bool> controls-enabled: true;
         in-out property <int> first-clicks: 0;
         in-out property <int> second-clicks: 0;
@@ -18,6 +32,12 @@ slint::slint! {
         in-out property <float> slider-maximum: 30;
         out property <bool> tooltip-open: HelpState.text != "";
         out property <bool> first-has-focus: first.has-focus;
+        in-out property <int> rotation-angle <=> rotation.angle;
+        in-out property <int> rotation-changes: 0;
+        in-out property <int> menu-index <=> menu.current-index;
+        in-out property <length> menu-scroll-y <=> menus.viewport-y;
+        callback focus-menu();
+        focus-menu => { menu.focus(); }
 
         first := AppButton {
             x: 20px; y: 20px; width: 120px; height: 36px;
@@ -39,6 +59,21 @@ slint::slint! {
             changed => { root.slider-changes += 1; }
             released(value) => { root.slider-releases += 1; }
         }
+        menus := ScrollView {
+            x: 20px; y: 170px; width: 300px; height: 100px;
+            viewport-height: 480px;
+            horizontal-scrollbar-policy: always-off;
+            Rectangle {
+                height: 480px;
+                menu := AppComboBox {
+                    x: 0px; y: 0px; width: 250px; height: 36px;
+                    model: ["Maximale", "Équilibrée", "Fluide"];
+                }
+            }
+        }
+        ThumbnailSizeControl { x: 20px; y: 290px; width: 300px; height: 36px; }
+        rotation := RotationControl { x: 20px; y: 350px; width: 150px; height: 32px; adjusted => {root.rotation-changes += 1;} }
+        bottom-rotation := RotationControl { x: 280px; y: 560px; width: 60px; height: 32px; short-label: true; }
         HelpOverlay { available-width: root.width; available-height: root.height; }
     }
 }
@@ -229,11 +264,142 @@ fn tooltip_preserves_clicks_and_keyboard_focus(window: &ControlWindow) {
     window.hide().expect("hide controls");
 }
 
+fn menus_scroll_the_page_without_changing_the_selected_value(window: &ControlWindow) {
+    window.show().unwrap();
+    let _ = window.window().take_snapshot().unwrap();
+    window.set_menu_index(1);
+    window.invoke_focus_menu();
+    window
+        .window()
+        .dispatch_event(WindowEvent::PointerScrolled {
+            position: LogicalPosition::new(100.0, 188.0),
+            delta_x: 0.0,
+            delta_y: -60.0,
+        });
+    assert_eq!(
+        window.get_menu_index(),
+        1,
+        "a focused closed menu must never change from the wheel"
+    );
+    assert!(
+        window.get_menu_scroll_y() < 0.0,
+        "the surrounding page must still scroll"
+    );
+    window.set_menu_scroll_y(0.0);
+    click(window, 100.0, 188.0);
+    click(window, 100.0, 304.0);
+    assert_eq!(
+        window.get_menu_index(),
+        2,
+        "explicit popup selection still works"
+    );
+    let state = window.global::<AppState>();
+    state.set_thumbnail_width(187);
+    click(window, 200.0, 306.0);
+    state.set_thumbnail_width(187);
+    slint::platform::update_timers_and_animations();
+    press(window, Key::RightArrow.into());
+    release(window, Key::RightArrow.into());
+    assert_eq!(
+        state.get_thumbnail_width(),
+        188,
+        "thumbnail keyboard adjustment is exactly one pixel"
+    );
+    press(window, Key::Home.into());
+    release(window, Key::Home.into());
+    assert_eq!(state.get_thumbnail_width(), 80);
+    press(window, Key::End.into());
+    release(window, Key::End.into());
+    assert_eq!(state.get_thumbnail_width(), 480);
+    state.set_thumbnail_width(0);
+    state.set_thumbnail_size(0);
+    slint::platform::update_timers_and_animations();
+    press(window, Key::RightArrow.into());
+    release(window, Key::RightArrow.into());
+    assert_eq!(
+        state.get_thumbnail_width(),
+        145,
+        "preset selection also updates the slider"
+    );
+}
+
 #[test]
 fn shared_controls_handle_keyboard_repetition_focus_cancellation_and_camera_steps() {
     let window = ControlWindow::new().expect("create shared controls");
-    window.window().set_size(PhysicalSize::new(360, 180));
+    window.window().set_size(PhysicalSize::new(360, 600));
+    menus_scroll_the_page_without_changing_the_selected_value(&window);
     buttons_cancel_activation_on_repetition_focus_loss_and_disable(&window);
     sliders_respect_native_steps_bounds_and_disable(&window);
     tooltip_preserves_clicks_and_keyboard_focus(&window);
+    precise_rotation_updates_during_drag_and_uses_one_degree_steps(&window);
+}
+
+fn precise_rotation_updates_during_drag_and_uses_one_degree_steps(window: &ControlWindow) {
+    window.set_controls_enabled(true);
+    click(window, 70.0, 366.0);
+    let _ = window.window().take_snapshot().unwrap();
+    window.window().dispatch_event(WindowEvent::PointerPressed {
+        position: LogicalPosition::new(60.0, 236.0),
+        button: PointerEventButton::Left,
+    });
+    let first = window.get_rotation_angle();
+    window.window().dispatch_event(WindowEvent::PointerMoved {
+        position: LogicalPosition::new(120.0, 236.0),
+    });
+    assert!(
+        window.get_rotation_angle() > first,
+        "rotation must update before releasing the slider"
+    );
+    assert!(window.get_rotation_changes() > 1);
+    window
+        .window()
+        .dispatch_event(WindowEvent::PointerReleased {
+            position: LogicalPosition::new(120.0, 236.0),
+            button: PointerEventButton::Left,
+        });
+    window.set_rotation_angle(37);
+    slint::platform::update_timers_and_animations();
+    press(window, Key::RightArrow.into());
+    release(window, Key::RightArrow.into());
+    assert_eq!(
+        window.get_rotation_angle(),
+        38,
+        "model changes must also update the rotation slider"
+    );
+    press(window, Key::Home.into());
+    release(window, Key::Home.into());
+    assert_eq!(window.get_rotation_angle(), 0);
+    press(window, Key::End.into());
+    release(window, Key::End.into());
+    assert_eq!(window.get_rotation_angle(), 359);
+    click(window, 88.0, 196.0);
+    press(window, Key::Control.into());
+    press(window, "a".into());
+    release(window, "a".into());
+    release(window, Key::Control.into());
+    press(window, "37".into());
+    release(window, "37".into());
+    press(window, Key::Return.into());
+    release(window, Key::Return.into());
+    assert_eq!(
+        window.get_rotation_angle(),
+        37,
+        "an exact typed angle must also update the slider"
+    );
+    click(window, 335.0, 450.0);
+    assert!((8.0..=72.0).contains(&window.get_rotation_left()));
+    assert!((window.get_rotation_top() - 168.0).abs() < f32::EPSILON);
+    click(window, 310.0, 576.0);
+    let _ = window.window().take_snapshot().unwrap();
+    assert!((8.0..=72.0).contains(&window.get_bottom_left()));
+    assert!(
+        window.get_bottom_top() + 174.0 < 560.0,
+        "bottom toolbar remains uncovered"
+    );
+    click(window, 150.0, 446.0);
+    assert!(
+        window.get_bottom_angle() > 0,
+        "the upward popup's slider must remain reachable"
+    );
+    click(window, 335.0, 350.0);
 }

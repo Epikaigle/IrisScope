@@ -153,6 +153,7 @@ impl CameraBackend for LinuxV4l2Backend {
         let (capabilities, native_controls) = discover_capabilities(&device, buffer_type)?;
 
         Ok(Box::new(LinuxV4l2Device {
+            button: de400_button_key(path).map(super::button::ButtonMonitor::new),
             device,
             descriptor,
             capabilities,
@@ -168,6 +169,7 @@ impl CameraBackend for LinuxV4l2Backend {
 }
 
 struct LinuxV4l2Device {
+    button: Option<super::button::ButtonMonitor>,
     device: Device,
     descriptor: CameraDescriptor,
     capabilities: CameraCapabilities,
@@ -301,6 +303,9 @@ impl CameraDevice for LinuxV4l2Device {
     }
 
     fn stop_stream(&mut self) -> CameraResult<()> {
+        if let Some(button) = &mut self.button {
+            button.reset();
+        }
         self.stream = None;
         self.configuration = None;
         Ok(())
@@ -310,6 +315,13 @@ impl CameraDevice for LinuxV4l2Device {
         let configuration = self.configuration.clone().ok_or_else(|| {
             CameraError::new(CameraErrorKind::Backend, "stream configuration is missing")
         })?;
+        if let Some(event) = self
+            .button
+            .as_mut()
+            .and_then(super::button::ButtonMonitor::next_event)
+        {
+            return Ok(event);
+        }
         let stream = self.stream.as_mut().ok_or_else(|| {
             CameraError::new(CameraErrorKind::Backend, "V4L2 stream is not running")
         })?;
@@ -1356,6 +1368,24 @@ fn usb_identity(node_path: &Path) -> Option<UsbDeviceIdentity> {
             hardware_revision: read_trimmed(ancestor.join("bcdDevice"))
                 .map(|value| format_bcd_revision(&value)),
         })
+    })
+}
+
+fn de400_button_key(node_path: &Path) -> Option<String> {
+    let name = node_path.file_name()?;
+    let path = fs::canonicalize(
+        Path::new("/sys/class/video4linux")
+            .join(name)
+            .join("device"),
+    )
+    .ok()?;
+    path.ancestors().find_map(|ancestor| {
+        if read_hex_u16(ancestor.join("idVendor"))? != 0x21cd
+            || read_hex_u16(ancestor.join("idProduct"))? != 0x603b
+        {
+            return None;
+        }
+        ancestor.file_name()?.to_str().map(str::to_owned)
     })
 }
 

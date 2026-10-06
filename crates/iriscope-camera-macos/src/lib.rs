@@ -7,6 +7,12 @@ pub const BACKEND_NAME: &str = "AVFoundation";
 mod capabilities;
 
 #[cfg(target_os = "macos")]
+mod button;
+#[cfg(any(target_os = "macos", test))]
+mod button_protocol;
+#[cfg(any(target_os = "macos", test))]
+mod events;
+#[cfg(target_os = "macos")]
 mod platform;
 
 #[cfg(target_os = "macos")]

@@ -14,13 +14,15 @@ from PIL import Image, ImageChops
 ROOT = Path(__file__).resolve().parents[1]
 BASELINES = ROOT / "tests" / "visual-baselines"
 SCENES = {
+    "camera-angle-popup", "viewer-angle-popup", "references-loaded", "references-empty",
+    "camera-rotation", "camera-presentation-idle", "viewer-rotation", "library-menu", "dossier-empty",
     "camera-active", "camera-controls", "patient-search", "settings",
     "camera-fullscreen", "camera-fullscreen-photo", "camera-fullscreen-blocked",
     "camera-fullscreen-hidden", "viewer-video", "viewer-comparison", "patient-edit", "library-query", "capture-notice",
     "settings-bottom", "settings-backup", "settings-reminder", "viewer-export",
     "dossier-session", "calendar-filter", "viewer-photo-export",
     "camera-presentation", "presentation-notes-error", "camera-resized", "viewer-presentation", "viewer-image-only", "viewer-loading-notes", "viewer-resized", "library-small", "library-large", "library-list-large", "settings-advanced",
-    "viewer-photo", "viewer-notes", "viewer-references", "viewer-display", "viewer-chooser", "viewer-zoom", "viewer-loupe",
+    "viewer-photo", "viewer-notes", "viewer-references", "viewer-display", "viewer-chooser", "viewer-zoom", "viewer-loupe", "library-custom", "library-minimum",
 }
 SIZES = {"800x600", "1360x860"}
 

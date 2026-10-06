@@ -124,7 +124,7 @@ pub(super) fn capture_session_from_window(
 pub(super) fn dispatch_hardware_button(win: &MainWindow, behavior: PhysicalButtonBehavior) {
     match behavior {
         PhysicalButtonBehavior::FollowMode => {
-            if win.get_is_video_mode() {
+            if win.get_is_recording() || win.get_is_video_mode() {
                 win.global::<AppState>().invoke_toggle_recording();
             } else {
                 win.global::<AppState>().invoke_trigger_capture();
@@ -132,6 +132,25 @@ pub(super) fn dispatch_hardware_button(win: &MainWindow, behavior: PhysicalButto
         }
         PhysicalButtonBehavior::AlwaysPhoto => win.global::<AppState>().invoke_trigger_capture(),
         PhysicalButtonBehavior::AlwaysVideo => win.global::<AppState>().invoke_toggle_recording(),
+    }
+}
+
+pub(super) fn hardware_button_status() -> &'static str {
+    #[cfg(target_os = "linux")]
+    {
+        if std::path::Path::new("/run/iriscope-button/status.sock").exists() {
+            "Bouton DE400 : passerelle Linux présente. Une pression suit le mode Photo ou Vidéo choisi."
+        } else {
+            "Bouton DE400 : installer la passerelle Linux décrite dans le README. La capture à l’écran et les raccourcis restent disponibles."
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        "Bouton DE400 : réception native prévue si le pilote expose le déclencheur UVC. Validation sur l’appareil Windows requise. La capture à l’écran reste disponible."
+    }
+    #[cfg(target_os = "macos")]
+    {
+        "Bouton DE400 : réception USB macOS intégrée. Son état réel apparaît après ouverture de la caméra ; validation sur l’appareil Mac requise."
     }
 }
 

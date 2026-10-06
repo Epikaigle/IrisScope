@@ -7,6 +7,9 @@ pub const BACKEND_NAME: &str = "Media Foundation";
 mod controls;
 
 #[cfg(target_os = "windows")]
+mod button;
+
+#[cfg(target_os = "windows")]
 mod kernel_controls;
 
 #[cfg(target_os = "windows")]

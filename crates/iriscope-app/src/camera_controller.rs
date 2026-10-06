@@ -380,6 +380,9 @@ fn start_camera_worker(main_window: &MainWindow, runtime: &AppRuntime) -> thread
                     let status = format!("{} : {error}", camera_error_status(error.kind()));
                     let _ = main_weak.upgrade_in_event_loop(move |win| {
                         win.set_camera_connected(false);
+                        win.global::<AppState>().set_hardware_button_status(
+                            crate::app_helpers::hardware_button_status().into(),
+                        );
                         win.set_is_streaming(false);
                         win.set_status_text(status.into());
                     });
@@ -390,6 +393,9 @@ fn start_camera_worker(main_window: &MainWindow, runtime: &AppRuntime) -> thread
             if devices.is_empty() {
                 let _ = main_weak.upgrade_in_event_loop(|win| {
                     win.set_camera_connected(false);
+                    win.global::<AppState>().set_hardware_button_status(
+                        crate::app_helpers::hardware_button_status().into(),
+                    );
                     win.set_is_streaming(false);
                     win.set_status_text("DE400 non détecté".into());
                 });
@@ -400,6 +406,9 @@ fn start_camera_worker(main_window: &MainWindow, runtime: &AppRuntime) -> thread
             let Some(target) = devices.iter().find(|device| is_de400(device)).cloned() else {
                 let _ = main_weak.upgrade_in_event_loop(|win| {
                     win.set_camera_connected(false);
+                    win.global::<AppState>().set_hardware_button_status(
+                        crate::app_helpers::hardware_button_status().into(),
+                    );
                     win.set_is_streaming(false);
                     win.set_status_text("DE400 non détecté".into());
                 });
@@ -419,6 +428,9 @@ fn start_camera_worker(main_window: &MainWindow, runtime: &AppRuntime) -> thread
                     let status = format!("{} : {error}", camera_error_status(error.kind()));
                     let _ = main_weak.upgrade_in_event_loop(move |win| {
                         win.set_camera_connected(false);
+                        win.global::<AppState>().set_hardware_button_status(
+                            crate::app_helpers::hardware_button_status().into(),
+                        );
                         win.set_is_streaming(false);
                         win.set_status_text(status.into());
                     });
@@ -457,6 +469,9 @@ fn start_camera_worker(main_window: &MainWindow, runtime: &AppRuntime) -> thread
                 );
                 let _ = main_weak.upgrade_in_event_loop(move |win| {
                     win.set_camera_connected(false);
+                    win.global::<AppState>().set_hardware_button_status(
+                        crate::app_helpers::hardware_button_status().into(),
+                    );
                     win.set_is_streaming(false);
                     win.set_status_text(status.into());
                 });
@@ -540,6 +555,9 @@ fn start_camera_worker(main_window: &MainWindow, runtime: &AppRuntime) -> thread
                         return;
                     }
                     win.set_camera_connected(true);
+                    win.global::<AppState>().set_hardware_button_status(
+                        crate::app_helpers::hardware_button_status().into(),
+                    );
                     win.set_is_streaming(false);
                     win.set_is_frozen(false);
                     preview_active_for_ui.store(win.get_current_tab() == 0, Ordering::Release);
@@ -742,6 +760,7 @@ fn start_camera_worker(main_window: &MainWindow, runtime: &AppRuntime) -> thread
                             last_stat_time = Instant::now();
                             stat_frames = 0;
 
+                            let button_status = device.hardware_button_status();
                             let rec_dur_str =
                                 rec_start_clone.lock().ok().and_then(|g| *g).map(|st| {
                                     let el = st.elapsed().as_secs();
@@ -749,6 +768,10 @@ fn start_camera_worker(main_window: &MainWindow, runtime: &AppRuntime) -> thread
                                 });
 
                             let _ = main_weak.upgrade_in_event_loop(move |win| {
+                                if let Some(status) = button_status {
+                                    win.global::<AppState>()
+                                        .set_hardware_button_status(status.into());
+                                }
                                 let mut diag = win.get_diagnostics();
                                 diag.measured_fps = format!("{fps:.2} fps").into();
                                 diag.decode_time_ms = format!("{decode_ms:.1} ms").into();
@@ -799,6 +822,9 @@ fn start_camera_worker(main_window: &MainWindow, runtime: &AppRuntime) -> thread
                                 return;
                             }
                             win.set_camera_connected(false);
+                            win.global::<AppState>().set_hardware_button_status(
+                                crate::app_helpers::hardware_button_status().into(),
+                            );
                             win.set_is_streaming(false);
                             win.set_is_recording(false);
                             win.set_recording_finalizing(recording_mailbox_for_ui.is_finalizing());
@@ -858,6 +884,9 @@ fn start_camera_worker(main_window: &MainWindow, runtime: &AppRuntime) -> thread
                                 return;
                             }
                             win.set_camera_connected(false);
+                            win.global::<AppState>().set_hardware_button_status(
+                                crate::app_helpers::hardware_button_status().into(),
+                            );
                             win.set_is_streaming(false);
                             win.set_is_recording(false);
                             win.set_recording_finalizing(recording_mailbox_for_ui.is_finalizing());

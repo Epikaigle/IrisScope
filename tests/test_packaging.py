@@ -52,6 +52,8 @@ class PackageTests(unittest.TestCase):
             self.assertEqual(info["input_executable_sha256"], hashlib.sha256(self.binary.read_bytes()).hexdigest())
             self.assertEqual(info["mp4_export"], "bundled-ffmpeg")
             self.assertEqual(package.extractfile("IrisScope/licenses/FFmpeg-COPYING.txt").read(), self.license.read_bytes())
+            for name in ["scripts/install-de400-button.sh", "scripts/uninstall-de400-button.sh", "helpers/linux/de400_button_bridge.py", "helpers/linux/iriscope-button.service"]:
+                self.assertEqual(package.extractfile(f"IrisScope/{name}").read(), (ROOT / name).read_bytes())
             self.assertFalse(any(name.startswith("/") or "settings.json" in name or ".iriscope-index" in name for name in package.getnames()))
 
     def test_windows_and_macos_archives_keep_native_identity_and_camera_permission(self):
@@ -105,6 +107,8 @@ class PackageTests(unittest.TestCase):
         self.assertEqual((extracted / "usr/bin/iriscope").stat().st_mode & 0o777, 0o755)
         self.assertEqual((extracted / "usr/lib/iriscope/ffmpeg").stat().st_mode & 0o777, 0o755)
         self.assertEqual((extracted / "usr/share/doc/iriscope/VERSION.txt").read_text().strip(), self.version)
+        for name in ["scripts/install-de400-button.sh", "helpers/linux/de400_button_bridge.py", "helpers/linux/iriscope-button.service"]:
+            self.assertEqual((extracted / "usr/share/doc/iriscope" / name).read_bytes(), (ROOT / name).read_bytes())
         self.assertEqual(sorted(path.name for path in extracted.iterdir()), ["usr"])
         self.assertEqual(sorted(path.name for path in (stage / "DEBIAN").iterdir()), ["control"])
 

@@ -79,6 +79,22 @@ fn encoder_path() -> PathBuf {
     }
     PathBuf::from("ffmpeg")
 }
+
+#[derive(Debug)]
+struct MissingEncoder;
+impl std::fmt::Display for MissingEncoder {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("L’export MP4 nécessite FFmpeg. Installez-le puis relancez l’export. La vidéo originale est conservée.")
+    }
+}
+impl std::error::Error for MissingEncoder {}
+
+pub(super) fn encoder_is_missing(error: &io::Error) -> bool {
+    error
+        .get_ref()
+        .is_some_and(<dyn std::error::Error + Send + Sync>::is::<MissingEncoder>)
+}
+
 fn start_encoder(program: &Path, source: &Path, staging: &Path) -> io::Result<Encoder> {
     let mut command = Command::new(program);
     #[cfg(windows)]
@@ -98,6 +114,8 @@ fn start_encoder(program: &Path, source: &Path, staging: &Path) -> io::Result<En
             "-nostats",
             "-threads",
             "2",
+            "-err_detect",
+            "explode",
             "-i",
         ])
         .arg(source)
@@ -129,8 +147,10 @@ fn start_encoder(program: &Path, source: &Path, staging: &Path) -> io::Result<En
         .stderr(Stdio::piped());
     command.spawn().map(Encoder).map_err(|error| {
         if error.kind() == io::ErrorKind::NotFound {
-            io::Error::new(error.kind(), "L’export MP4 nécessite FFmpeg. Installez-le puis relancez l’export. La vidéo originale est conservée.")
-        } else { error }
+            io::Error::new(error.kind(), MissingEncoder)
+        } else {
+            error
+        }
     })
 }
 fn collect_errors(mut stream: impl Read) -> String {
@@ -258,7 +278,7 @@ fn export_with_encoder(
         .unwrap_or(Path::new("."));
     let parent = fs::canonicalize(parent)?;
     let file = crate::playback::open_verified_capture_cancellable(source, expected, cancel)?;
-    let reader = AviMjpegReader::from_file(file.try_clone()?)?;
+    let mut reader = AviMjpegReader::from_file(file.try_clone()?)?;
     if reader.frame_count() == 0 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -268,6 +288,21 @@ fn export_with_encoder(
     let fps = reader.frame_rate();
     let duration_us = reader.frame_count() as u128 * 1_000_000 * u128::from(fps.denominator())
         / u128::from(fps.numerator());
+    // Some FFmpeg builds silently skip a corrupt MJPEG packet even with
+    // -xerror. Verify each original image before publishing a shortened export.
+    for index in 0..reader.frame_count() {
+        cancelled(cancel)?;
+        let jpeg = reader.read_frame(index)?;
+        iriscope_imaging::decode_mjpeg_to_rgb8(&jpeg).map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "L’encodage MP4 est impossible : image {} invalide ({error}).",
+                    index + 1
+                ),
+            )
+        })?;
+    }
     drop(reader);
     iriscope_core::disk_space::ensure_available_space(
         &parent,
@@ -369,6 +404,11 @@ mod tests {
         .unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::NotFound);
         assert!(error.to_string().contains("FFmpeg"));
+        assert!(encoder_is_missing(&error));
+        assert!(!encoder_is_missing(&io::Error::new(
+            io::ErrorKind::NotFound,
+            "source video disappeared"
+        )));
         assert!(!target.exists());
         fixture.assert_no_staging();
         fs::write(&target, b"existing export").unwrap();

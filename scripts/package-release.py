@@ -84,7 +84,17 @@ def shared_files() -> list[tuple[str, bytes]]:
         ("docs/RELEASE-0.4.0.md", (ROOT / "docs/RELEASE-0.4.0.md").read_bytes()),
         ("docs/VISIONNEUSE.md", (ROOT / "docs/VISIONNEUSE.md").read_bytes()),
         ("docs/VALIDATION-MATERIELLE.md", (ROOT / "docs/VALIDATION-MATERIELLE.md").read_bytes()),
+        ("docs/VALIDATION-LINUX-2026-10-06.md", (ROOT / "docs/VALIDATION-LINUX-2026-10-06.md").read_bytes()),
+        ("docs/BOUTON-MULTIPLATEFORME.md", (ROOT / "docs/BOUTON-MULTIPLATEFORME.md").read_bytes()),
+        ("docs/ESSAIS-WINDOWS-MACOS.md", (ROOT / "docs/ESSAIS-WINDOWS-MACOS.md").read_bytes()),
+        ("docs/VALIDATION-INTERFACE-2026-10-06.md", (ROOT / "docs/VALIDATION-INTERFACE-2026-10-06.md").read_bytes()),
         ("scripts/diagnose-de400-button.py", (ROOT / "scripts/diagnose-de400-button.py").read_bytes()),
+        ("scripts/diagnose-de400-usb-status.py", (ROOT / "scripts/diagnose-de400-usb-status.py").read_bytes()),
+        ("scripts/install-de400-button.sh", (ROOT / "scripts/install-de400-button.sh").read_bytes()),
+        ("scripts/uninstall-de400-button.sh", (ROOT / "scripts/uninstall-de400-button.sh").read_bytes()),
+        ("helpers/linux/README.md", (ROOT / "helpers/linux/README.md").read_bytes()),
+        ("helpers/linux/de400_button_bridge.py", (ROOT / "helpers/linux/de400_button_bridge.py").read_bytes()),
+        ("helpers/linux/iriscope-button.service", (ROOT / "helpers/linux/iriscope-button.service").read_bytes()),
     ] + [
         (f"licenses/{path.name}", path.read_bytes()) for path in FONT_LICENSES
     ]

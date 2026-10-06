@@ -1,0 +1,31 @@
+import { AppComboBox } from "./combo-box.slint";
+import { AppSlider } from "./controls.slint";
+import { AppState } from "./state.slint";
+import { Design } from "./theme.slint";
+
+export component ThumbnailSizeControl inherits HorizontalLayout {
+    spacing: 8px; vertical-stretch: 0;
+    private property <int> effective-width: AppState.effective-thumbnail-width;
+    changed effective-width => { size-slider.value = root.effective-width; }
+    private property <int> preset-index: AppState.thumbnail-width > 0 ? 3 : AppState.thumbnail-size;
+    changed preset-index => { preset-menu.current-index = root.preset-index; }
+    preset-menu := AppComboBox {
+        width: 120px; horizontal-stretch: 0; height: 36px;
+        model: ["Petites", "Moyennes", "Grandes", "Sur mesure"];
+        current-index: AppState.thumbnail-width > 0 ? 3 : AppState.thumbnail-size;
+        accessible-label: "Préréglage des miniatures";
+        selected(value) => {
+            if self.current-index < 3 { AppState.thumbnail-size = self.current-index; AppState.thumbnail-width = 0; }
+            else { AppState.thumbnail-width = AppState.effective-thumbnail-width; }
+            AppState.interface-edited();
+        }
+    }
+    size-slider := AppSlider {
+        label: "Largeur des miniatures en pixels";
+        minimum: 80; maximum: 480; step: 1;
+        value: AppState.effective-thumbnail-width;
+        changed => { AppState.thumbnail-width = round(self.value); }
+        released(value) => { AppState.interface-edited(); }
+    }
+    Text { width: 50px; horizontal-stretch: 0; text: AppState.effective-thumbnail-width + " px"; color: Design.text-secondary; font-size: 12px; vertical-alignment: center; }
+}

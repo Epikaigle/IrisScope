@@ -1,5 +1,9 @@
+import { ZoomControl } from "./zoom-control.slint";
+import { MirrorControl } from "./mirror-control.slint";
+import { RotationControl } from "./rotation-control.slint";
+import { AppComboBox } from "./combo-box.slint";
 import { AppButton, AppSlider, HelpText, OverlayBadge } from "./controls.slint";
-import { ScrollView, ComboBox } from "std-widgets.slint";
+import { ScrollView } from "std-widgets.slint";
 import { AppState } from "./state.slint";
 import { Design } from "./theme.slint";
 
@@ -33,14 +37,14 @@ export component CameraPreview inherits Rectangle {
 
         if AppState.is-streaming: Image {
             source: AppState.live-frame;
-            private property <bool> quarter-turn:
-            AppState.rotation-angle == 90 || AppState.rotation-angle == 270;
             private property <float> zoom-factor: AppState.zoom-level / 100.0;
-
-            width: (self.quarter-turn ? parent.height : parent.width)
-            * self.zoom-factor;
-            height: (self.quarter-turn ? parent.width : parent.height)
-            * self.zoom-factor;
+            private property <float> cosine: abs(cos(AppState.rotation-angle * 1deg));
+            private property <float> sine: abs(sin(AppState.rotation-angle * 1deg));
+            private property <float> source-width: max(1, AppState.live-frame.width);
+            private property <float> source-height: max(1, AppState.live-frame.height);
+            private property <length> fit-pixel: min(parent.width / (self.source-width*self.cosine + self.source-height*self.sine), parent.height / (self.source-width*self.sine + self.source-height*self.cosine));
+            width: self.source-width * self.fit-pixel * self.zoom-factor;
+            height: self.source-height * self.fit-pixel * self.zoom-factor;
             x: (parent.width - self.width) / 2 + AppState.zoom-pan-x;
             y: (parent.height - self.height) / 2 + AppState.zoom-pan-y;
             image-fit: contain;
@@ -128,10 +132,11 @@ export component CameraPreview inherits Rectangle {
             y: Design.inset;
             height: Design.control-height;
             overlay: true;
-            visible: AppState.iris-fullscreen && AppState.viewport-controls-visible;
-            text: AppState.iris-fullscreen ? "Quitter le plein écran" : "Plein écran";
+            visible: AppState.iris-fullscreen && (AppState.viewport-controls-visible || AppState.presentation-mode);
+            text: AppState.presentation-mode ? "Fin présentation" : "Quitter le plein écran";
             tooltip: "Revenir à la vue caméra · Échap";
             clicked => {
+                if AppState.presentation-mode { AppState.toggle-presentation(); return; }
                 AppState.image-controls-open = false;
                 AppState.iris-fullscreen = !AppState.iris-fullscreen;
                 AppState.show-viewport-controls();
@@ -290,8 +295,8 @@ export component CameraPreview inherits Rectangle {
                     + " · " + (AppState.is-video-mode ? "Vidéo" : "Photo");
         }
 
-        if AppState.presentation-mode: HorizontalLayout {
-            x: Design.inset; y: Design.inset + (AppState.iris-fullscreen ? 2 : 1) * (Design.control-height + Design.gap-small);
+        if AppState.presentation-mode && !AppState.recording-busy: HorizontalLayout {
+            x: Design.inset; y: Design.inset + Design.control-height + Design.gap-small;
             width: self.preferred-width; height: Design.control-height; spacing: 4px;
             if AppState.recording-busy: OverlayBadge {text:AppState.selected-eye == 1 ? "Œil gauche" : AppState.selected-eye == 2 ? "Œil droit" : "Œil à choisir";}
             if !AppState.recording-busy: HorizontalLayout { spacing: 4px;
@@ -301,7 +306,6 @@ export component CameraPreview inherits Rectangle {
                 clicked => {AppState.selected-eye=eye.id; AppState.session-changed();}
             }
             }
-            if AppState.iris-fullscreen: AppButton {compact:true; overlay:true; text:"Fin présentation"; clicked=>{AppState.toggle-presentation();}}
         }
 
         recording-badge := OverlayBadge {
@@ -313,7 +317,7 @@ export component CameraPreview inherits Rectangle {
         }
 
         OverlayBadge {
-            visible: AppState.session-photo-count > 0;
+            visible: AppState.session-photo-count > 0 && !AppState.presentation-mode;
             x: AppState.is-recording ? recording-badge.x + recording-badge.width + Design.gap-small : Design.inset;
             y: recording-badge.y;
             text: AppState.session-photo-count + (AppState.session-photo-count > 1 ? " photos" : " photo");
@@ -493,11 +497,13 @@ export component CameraPreview inherits Rectangle {
                                     enabled: !control.read-only;
                                     clicked => { AppState.set-camera-control-bool(control.key, !control.boolean-value); }
                                 }
-                                if control.kind == 2: menu := ComboBox {
+                                if control.kind == 2: menu := AppComboBox {
                                     height: 32px;
                                     min-width: 0px;
                                     vertical-stretch: 0;
                                     model: control.menu-options;
+                                    private property <int> native-index: control.menu-index;
+                                    changed native-index => { self.current-index = self.native-index; }
                                     current-index: control.menu-index;
                                     enabled: !control.read-only && control.menu-options.length > 0;
                                     accessible-label: control.name;
@@ -553,26 +559,11 @@ export component CameraPreview inherits Rectangle {
                     enabled: AppState.is-streaming;
                     clicked => { AppState.show-iridology-grid = !AppState.show-iridology-grid; }
                 }
-                AppSlider {
-                    label: "Zoom de l'image";
-                    minimum: 100; maximum: 200;
-                    value: AppState.zoom-level;
+                ZoomControl {
+                    horizontal-stretch: 1;
+                    zoom <=> AppState.zoom-level;
                     enabled: AppState.is-streaming;
-                    changed => { AppState.zoom-level = round(self.value); AppState.zoom-pan-x = 0px; AppState.zoom-pan-y = 0px; }
-                }
-                Text {
-                    width: 44px;
-                    text: AppState.zoom-level + " %";
-                    color: Design.text-secondary;
-                    font-size: 12px;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                }
-                AppButton {
-                    height: 32px; compact: true; quiet: true;
-                    text: "Ajuster";
-                    accessibility-label: "Rétablir le zoom à 100 % et recentrer l'image";
-                    clicked => { AppState.zoom-level = 100; AppState.zoom-pan-x = 0px; AppState.zoom-pan-y = 0px; }
+                    adjusted => { AppState.zoom-pan-x = 0px; AppState.zoom-pan-y = 0px; }
                 }
             }
             HorizontalLayout {
@@ -582,33 +573,19 @@ export component CameraPreview inherits Rectangle {
                 horizontal-stretch: 0;
                 alignment: end;
                 spacing: 6px;
-                AppButton {
-                    height: 32px; compact: true; quiet: true;
-                    text: AppState.rotation-angle + "°";
-                    accessibility-label: "Faire pivoter l'image de 90 degrés";
-                    tooltip: "Faire pivoter l’image de 90°";
+                RotationControl {
+                    short-label: true;
+                    left-limit: root.absolute-position.x + 8px;
+                    right-limit: root.absolute-position.x + root.width - 8px;
+                    above-clearance: root.compact-tools ? 52px : 8px;
+                    angle <=> AppState.rotation-angle;
                     enabled: AppState.is-streaming;
-                    clicked => { AppState.rotation-angle = Math.mod(AppState.rotation-angle + 90, 360); AppState.zoom-pan-x = 0px; AppState.zoom-pan-y = 0px; }
+                    adjusted => { AppState.zoom-pan-x = 0px; AppState.zoom-pan-y = 0px; }
                 }
-                AppButton {
-                    height: 32px; compact: true; quiet: true;
-                    text: "Miroir H";
-                    accessibility-label: "Miroir horizontal";
-                    tooltip: "Miroir horizontal";
-                    checkable: true;
-                    selected: AppState.mirror-horizontal;
+                MirrorControl {
+                    horizontal <=> AppState.mirror-horizontal;
+                    vertical <=> AppState.mirror-vertical;
                     enabled: AppState.is-streaming;
-                    clicked => { AppState.mirror-horizontal = !AppState.mirror-horizontal; }
-                }
-                AppButton {
-                    height: 32px; compact: true; quiet: true;
-                    text: "Miroir V";
-                    accessibility-label: "Miroir vertical";
-                    tooltip: "Miroir vertical";
-                    checkable: true;
-                    selected: AppState.mirror-vertical;
-                    enabled: AppState.is-streaming;
-                    clicked => { AppState.mirror-vertical = !AppState.mirror-vertical; }
                 }
                 AppButton {
                     height: 32px; compact: true;
@@ -617,6 +594,11 @@ export component CameraPreview inherits Rectangle {
                     checkable: true;
                     selected: AppState.image-controls-open;
                     clicked => { AppState.image-controls-open = !AppState.image-controls-open; }
+                }
+                AppButton {
+                    height: 32px; compact: true; text: "Présenter";
+                    tooltip: "Présenter l’iris en masquant les informations privées";
+                    clicked => { AppState.image-controls-open = false; AppState.toggle-presentation(); }
                 }
                 AppButton {
                     height: 32px; compact: true;

@@ -1,0 +1,44 @@
+import { AppButton, AppSlider } from "./controls.slint";
+import { Design } from "./theme.slint";
+
+export component ZoomControl inherits HorizontalLayout {
+    in-out property <int> zoom: 100;
+    in property <int> maximum: 200;
+    in property <bool> enabled: true;
+    in property <bool> overlay: false;
+    in property <string> label: "Zoom de l’image";
+    callback adjusted();
+    height: 32px;
+    vertical-stretch: 0;
+    spacing: 6px;
+    private property <int> observed-zoom: root.zoom;
+    changed observed-zoom => { zoom-slider.value = root.zoom; }
+    zoom-slider := AppSlider {
+        height: 32px;
+        label: root.label;
+        overlay: root.overlay;
+        minimum: 100;
+        maximum: root.maximum;
+        value: root.zoom;
+        enabled: root.enabled;
+        changed => { root.zoom = round(self.value); root.adjusted(); }
+    }
+    Text {
+        width: 48px;
+        text: root.zoom + " %";
+        color: root.overlay ? Design.overlay-text : Design.text-secondary;
+        font-size: 12px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    AppButton {
+        height: 32px;
+        compact: true;
+        quiet: true;
+        overlay: root.overlay;
+        text: "Ajuster";
+        accessibility-label: "Rétablir le zoom à 100 % et recentrer l’image";
+        enabled: root.enabled;
+        clicked => { root.zoom = 100; root.adjusted(); }
+    }
+}

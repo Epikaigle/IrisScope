@@ -2,7 +2,7 @@
 
 use iriscope_app::test_support::ControllerHarness;
 use iriscope_core::session::Eye;
-use iriscope_core::settings::{AppTheme, VideoQualityPreference};
+use iriscope_core::settings::{AppTheme, PhysicalButtonBehavior, VideoQualityPreference};
 use std::path::PathBuf;
 
 fn viewer_open_and_close_reset_the_previous_transform(harness: &ControllerHarness) {
@@ -28,6 +28,27 @@ fn viewer_open_and_close_reset_the_previous_transform(harness: &ControllerHarnes
         "the close callback used after errors must also reset the view"
     );
     std::fs::remove_file(path).expect("cleanup");
+}
+
+fn physical_button_still_stops_video_after_mode_or_storage_changes() {
+    let harness = ControllerHarness::new(PathBuf::from("/tmp/iriscope-physical-button-routing"))
+        .expect("Slint window");
+    harness.set_patient("Alice", "Martin", "42", Eye::Left);
+    harness.publish_frame(1);
+    harness.seed_active_stream();
+    harness.window().set_is_video_mode(true);
+    harness.press_hardware_button(PhysicalButtonBehavior::FollowMode);
+    assert!(harness.active_recording_generation().is_some());
+    harness.window().set_is_video_mode(false);
+    harness.set_patient_action_pending(true);
+    harness.press_hardware_button(PhysicalButtonBehavior::FollowMode);
+    assert!(harness.active_recording_generation().is_none());
+    assert!(harness.recording_is_finalizing());
+    assert_eq!(
+        harness.photo_work_count(),
+        0,
+        "stopping cannot accidentally take a photo"
+    );
 }
 
 fn unavailable_shutter_sound_cannot_report_an_accepted_photo_as_failed() {
@@ -183,6 +204,7 @@ fn unchanged_settings_retry_failed_saves_without_restarting_stream(harness: &Con
 
 #[test]
 fn production_callbacks_reach_capture_settings_and_viewer_state() {
+    physical_button_still_stops_video_after_mode_or_storage_changes();
     unavailable_shutter_sound_cannot_report_an_accepted_photo_as_failed();
     // CI runs this test under Xvfb on Linux. No capture directory is created,
     // because the photo and settings workers are intentionally not started.

@@ -20,6 +20,7 @@ mod diagnostic;
 mod export_controller;
 mod file_dialogs;
 mod gui;
+mod hardware_validation;
 mod interface_controller;
 mod library_controller;
 mod library_ui;
@@ -45,3 +46,4 @@ mod workflow_controller;
 
 pub use diagnostic::run_diagnose;
 pub use gui::run_gui;
+pub use hardware_validation::run_hardware_validation;

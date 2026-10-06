@@ -7,20 +7,23 @@ Cette version permet d’adapter l’espace de travail pour la capture, l’exam
 - Image seule : barres photo et panneau retirés pour agrandir la zone de l’iris ; retour des commandes au mouvement, bouton Commandes et sortie par Échap.
 - Trois panneaux redimensionnables, limités selon l’espace disponible, avec réglage au clavier et retour à la largeur adaptative.
 - Diagnostic caméra repliable, état de connexion visible.
-- Miniatures petites, moyennes ou grandes en grille et en liste.
+- Miniatures petites, moyennes ou grandes en grille et en liste, avec largeur personnalisable de 80 à 480 pixels logiques.
+- Rotation précise de 0 à 359°, zoom immédiat et molette synchronisée dans le direct et les références.
+- Calendriers contextuels, bibliothèque compacte et menus alignés qui ne changent plus de sélection à la molette.
+- Bouton physique DE400 validé sous Linux avec une passerelle locale ; récepteurs Windows et macOS intégrés, à confirmer sur les appareils réels.
 
 Les options sont regroupées dans **Paramètres → Interface et affichage**. **Réinitialiser la disposition** conserve le thème, le stockage, les dossiers, les notes et les images. Aucun réglage supplémentaire ne masque l’aide existante.
 
 ## Installer et mettre à jour
 
-Fermer IrisScope, sauvegarder la bibliothèque, puis remplacer l’application. Les anciennes configurations sont compatibles ; les nouvelles options ont des valeurs par défaut. Aucun dossier, média ni plein écran n’est rouvert automatiquement.
+Fermer IrisScope, sauvegarder la bibliothèque, puis remplacer l’application. Les anciennes configurations sont compatibles ; les nouvelles options ont des valeurs par défaut. Aucun dossier ni média n’est rouvert automatiquement. Le mode présentation mémorisé rétablit sa vue plein écran pour conserver le masquage des informations personnelles.
 
 Vérifier `VERSION.txt`, `release-info.json`, `iriscope-app --version` et la somme SHA-256 du paquet. Les paquets personnels restent sans signature officielle. La version cloud fournit l’archive portable Linux et le paquet Debian. Les installateurs Windows/macOS nécessitent leurs systèmes natifs.
 
-Le mode présentation protège l’affichage dans IrisScope : les fichiers et exports restent complets. Son état est mémorisé jusqu’à sa désactivation. Les essais du bouton physique de l’iriscope restent à effectuer sur l’ordinateur réel selon [le protocole matériel](VALIDATION-MATERIELLE.md).
+Le mode présentation protège l’affichage dans IrisScope : les fichiers et exports restent complets. Son état est mémorisé jusqu’à sa désactivation. Les essais du bouton physique Windows et macOS restent à effectuer selon [le protocole matériel](VALIDATION-MATERIELLE.md). Le [guide Windows et macOS](ESSAIS-WINDOWS-MACOS.md) explique l’installation et les essais sans environnement de développement.
 
 Les commandes et réglages sont décrits dans [Visionneuse photo](VISIONNEUSE.md).
 
 ## Validation disponible
 
-223 tests réussis, deux essais caméra ignorés sans appareil ; 608 comparaisons visuelles sur 1 536 rendus Linux, à 100, 125, 150 et 200 %. La compilation passe avec Clippy strict sous Linux et pour Windows x64 ainsi que macOS x64/ARM64. Les six essais d’empaquetage passent ; les outils d’installateur Windows/macOS sont simulés. Le paquet Debian a été lancé deux fois avec une ancienne configuration : panneau mémorisé, fermeture normale et original JPEG conservé. Les notes ne deviennent éditables qu’après lecture complète de leurs observations.
+234 tests réussis, deux essais caméra ignorés sans appareil ; 784 comparaisons visuelles sur 1 824 rendus Linux, à 100, 125, 150 et 200 %. La compilation passe avec Clippy strict sous Linux et pour Windows x64 ainsi que macOS x64/ARM64. Dix tests Python couvrent la passerelle et l’empaquetage ; les outils d’installateur Windows/macOS sont simulés dans les tests locaux. Le paquet Debian a été lancé avec une ancienne configuration : panneau mémorisé, fermeture normale et original JPEG conservé. Les notes ne deviennent éditables qu’après lecture complète de leurs observations. Les [rapports d’interface](VALIDATION-INTERFACE-2026-10-06.md) et [matériel Linux](VALIDATION-LINUX-2026-10-06.md) détaillent les limites des essais.

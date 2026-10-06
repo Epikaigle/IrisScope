@@ -94,6 +94,8 @@ pub struct InterfacePreferences {
     pub library_view: i32,
     /// 0 small, 1 medium, 2 large.
     pub thumbnail_size: i32,
+    /// Zero keeps the selected preset; otherwise the image width in logical pixels.
+    pub thumbnail_width: i32,
     pub advanced_settings_expanded: bool,
     pub presentation_mode: bool,
     pub image_only: bool,
@@ -110,6 +112,7 @@ impl Default for InterfacePreferences {
             photo_panel: 0,
             library_view: 0,
             thumbnail_size: 1,
+            thumbnail_width: 0,
             advanced_settings_expanded: false,
             presentation_mode: false,
             image_only: false,
@@ -132,6 +135,9 @@ impl InterfacePreferences {
         self.photo_panel = self.photo_panel.clamp(0, 5);
         self.library_view = self.library_view.clamp(0, 1);
         self.thumbnail_size = self.thumbnail_size.clamp(0, 2);
+        if self.thumbnail_width != 0 {
+            self.thumbnail_width = self.thumbnail_width.clamp(80, 480);
+        }
     }
 
     /// Disabling layout memory keeps explicit display options and restores panel defaults.
@@ -143,6 +149,7 @@ impl InterfacePreferences {
         Self {
             remember_layout: false,
             thumbnail_size: self.thumbnail_size,
+            thumbnail_width: self.thumbnail_width,
             presentation_mode: self.presentation_mode,
             image_only: self.image_only,
             ..Self::default()
@@ -411,6 +418,10 @@ mod tests {
                 && !partial.advanced_settings_expanded
         );
         assert_eq!(partial.thumbnail_size, 2);
+        assert_eq!(
+            partial.thumbnail_width, 0,
+            "older settings preserve their preset"
+        );
     }
 
     #[test]
@@ -422,6 +433,7 @@ mod tests {
             library_view: 9,
             photo_panel: -7,
             thumbnail_size: 3,
+            thumbnail_width: i32::MAX,
             ..InterfacePreferences::default()
         };
         prefs.normalize();
@@ -453,6 +465,7 @@ mod tests {
         );
         assert!(restored.presentation_mode && restored.image_only);
         assert_eq!(restored.thumbnail_size, 2);
+        assert_eq!(restored.thumbnail_width, 480);
     }
 
     #[test]

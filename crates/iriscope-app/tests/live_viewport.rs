@@ -186,6 +186,32 @@ fn wheel_zoom_and_resize_keep_image_pan_bounded(window: &MainWindow) {
         });
     assert_eq!(window.get_zoom_level(), 100);
 
+    click(window, 700.0, 640.0);
+    let manual_zoom = window.get_zoom_level();
+    assert!(
+        manual_zoom > 100 && manual_zoom < 180,
+        "camera zoom slider must receive the pointer"
+    );
+    window
+        .window()
+        .dispatch_event(WindowEvent::PointerScrolled {
+            position: image_position,
+            delta_x: 0.0,
+            delta_y: 60.0,
+        });
+    slint::platform::update_timers_and_animations();
+    window.window().dispatch_event(WindowEvent::KeyPressed {
+        text: Key::RightArrow.into(),
+    });
+    window.window().dispatch_event(WindowEvent::KeyReleased {
+        text: Key::RightArrow.into(),
+    });
+    assert_eq!(
+        window.get_zoom_level(),
+        manual_zoom + 11,
+        "camera slider must follow a wheel change even after being dragged"
+    );
+
     window.set_zoom_level(200);
     window
         .window()

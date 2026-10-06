@@ -1,0 +1,26 @@
+import { AppButton } from "./controls.slint";
+import { Design } from "./theme.slint";
+
+export component MirrorControl inherits AppButton {
+    in-out property <bool> horizontal: false;
+    in-out property <bool> vertical: false;
+    compact: true; text: "Miroir"; checkable: true;
+    selected: root.horizontal || root.vertical;
+    accessibility-label: "Choisir le miroir horizontal ou vertical";
+    clicked => { mirror-menu.show(); }
+    mirror-menu := PopupWindow {
+        x: 0px; y: root.height + 4px; width: max(root.width, choices.preferred-width); height: 84px;
+        close-policy: close-on-click-outside;
+        forward-focus: popup-focus;
+        popup-focus := FocusScope {
+            KeyBinding { keys: @keys(Escape); activated => { mirror-menu.close(); } }
+        Rectangle {
+            background: Design.surface-raised; border-width: 1px; border-color: Design.border; border-radius: Design.control-radius;
+            choices := VerticalLayout { padding: 8px; spacing: 4px;
+                AppButton { height: 32px; compact: true; left-aligned: true; text: "Miroir horizontal"; checkable: true; selected: root.horizontal; enabled: root.enabled; clicked => {root.horizontal = !root.horizontal;} }
+                AppButton { height: 32px; compact: true; left-aligned: true; text: "Miroir vertical"; checkable: true; selected: root.vertical; enabled: root.enabled; clicked => {root.vertical = !root.vertical;} }
+            }
+        }
+        }
+    }
+}

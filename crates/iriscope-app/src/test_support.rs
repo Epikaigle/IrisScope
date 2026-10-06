@@ -236,6 +236,11 @@ impl ControllerHarness {
         self.window.global::<AppState>().invoke_trigger_capture();
     }
 
+    /// Dispatches the physical button through the production routing logic.
+    pub fn press_hardware_button(&self, behavior: iriscope_core::settings::PhysicalButtonBehavior) {
+        crate::app_helpers::dispatch_hardware_button(&self.window, behavior);
+    }
+
     /// Saturates the optional disk job queue without starting any worker.
     pub fn saturate_background_jobs(&self) {
         while self.runtime.background_jobs.submit(|| {}) {}

@@ -110,6 +110,7 @@ fn native_pixels_cursor_zoom_and_rotated_annotations_match_the_photo() {
     let (_, x, y) = captured.get();
     approx(x, 0.1);
     approx(y, 0.2);
+    assert_precise_rotation_coordinates(&window, &captured);
     assert_arrow_region(&window);
     assert_loupe_magnifies_pointer(&window);
     window.hide().unwrap();
@@ -201,4 +202,43 @@ fn assert_loupe_magnifies_pointer(window: &PhotoWindow) {
         (f32::from(ordinary_delta) / f32::from(magnified_delta) - 2.5).abs() < 0.3,
         "loupe must magnify the actual photo around the pointer by 2.5"
     );
+}
+
+fn assert_precise_rotation_coordinates(window: &PhotoWindow, captured: &Cell<(i32, f32, f32)>) {
+    let state = window.global::<AppState>();
+    state.set_viewer_show_original(false);
+    state.set_viewer_rotation(37);
+    state.set_viewer_original(slint::Image::from_rgb8(
+        SharedPixelBuffer::<Rgb8Pixel>::new(320, 240),
+    ));
+    window.set_photo(slint::Image::from_rgb8(
+        SharedPixelBuffer::<Rgb8Pixel>::new(400, 385),
+    ));
+    window.set_fit(true);
+    for mirror in [false, true] {
+        state.set_viewer_mirror(mirror);
+        let (dx, dy) =
+            iriscope_imaging::RotationGeometry::new(320, 240, 37).project(0.2, 0.7, mirror);
+        click(
+            window,
+            window.get_image_left() + window.get_image_width() * dx,
+            window.get_image_top() + window.get_image_height() * dy,
+        );
+        let (kind, x, y) = captured.get();
+        assert_eq!(kind, 3);
+        approx(x, 0.2);
+        approx(y, 0.7);
+    }
+    captured.set((0, 0.0, 0.0));
+    click(
+        window,
+        window.get_image_left() + window.get_image_width() * 0.01,
+        window.get_image_top() + window.get_image_height() * 0.01,
+    );
+    assert_eq!(
+        captured.get().0,
+        0,
+        "new black corners must not accept annotations outside the original image"
+    );
+    state.set_viewer_original(slint::Image::default());
 }

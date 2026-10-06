@@ -69,20 +69,34 @@ export component PhotoPane inherits Rectangle {
     accessible-label: root.reference ? "Photo de comparaison" : "Photo de l’iris. Molette pour zoomer, glisser pour déplacer.";
     forward-focus: keyboard;
 
+    private property <float> source-width: max(1, AppState.viewer-original.width > 0 ? AppState.viewer-original.width : (AppState.viewer-rotation == 90 || AppState.viewer-rotation == 270) ? root.photo.height : root.photo.width);
+    private property <float> source-height: max(1, AppState.viewer-original.height > 0 ? AppState.viewer-original.height : (AppState.viewer-rotation == 90 || AppState.viewer-rotation == 270) ? root.photo.width : root.photo.height);
+    private property <float> cosine: cos(AppState.viewer-rotation * 1deg);
+    private property <float> sine: sin(AppState.viewer-rotation * 1deg);
     public pure function display-x(x: float, y: float) -> float {
-        let rotated = AppState.viewer-show-original ? x : AppState.viewer-rotation == 90 ? 1-y : AppState.viewer-rotation == 180 ? 1-x : AppState.viewer-rotation == 270 ? y : x;
-        return !AppState.viewer-show-original && AppState.viewer-mirror ? 1-rotated : rotated;
+        if AppState.viewer-show-original { return x; }
+        let dx = (x - 0.5) * root.source-width;
+        let dy = (y - 0.5) * root.source-height;
+        let rotated = (dx * root.cosine - dy * root.sine) / max(1, root.photo.width) + 0.5;
+        return AppState.viewer-mirror ? 1-rotated : rotated;
     }
     public pure function display-y(x: float, y: float) -> float {
-        return AppState.viewer-show-original ? y : AppState.viewer-rotation == 90 ? x : AppState.viewer-rotation == 180 ? 1-y : AppState.viewer-rotation == 270 ? 1-x : y;
+        if AppState.viewer-show-original { return y; }
+        let dx = (x - 0.5) * root.source-width;
+        let dy = (y - 0.5) * root.source-height;
+        return (dx * root.sine + dy * root.cosine) / max(1, root.photo.height) + 0.5;
     }
     public function original-x(x: float, y: float) -> float {
-        let dx = !AppState.viewer-show-original && AppState.viewer-mirror ? 1-x : x;
-        return AppState.viewer-show-original ? dx : AppState.viewer-rotation == 90 ? y : AppState.viewer-rotation == 180 ? 1-dx : AppState.viewer-rotation == 270 ? 1-y : dx;
+        if AppState.viewer-show-original { return x; }
+        let dx = ((AppState.viewer-mirror ? 1-x : x) - 0.5) * max(1, root.photo.width);
+        let dy = (y - 0.5) * max(1, root.photo.height);
+        return (dx * root.cosine + dy * root.sine) / root.source-width + 0.5;
     }
     public function original-y(x: float, y: float) -> float {
-        let dx = !AppState.viewer-show-original && AppState.viewer-mirror ? 1-x : x;
-        return AppState.viewer-show-original ? y : AppState.viewer-rotation == 90 ? 1-dx : AppState.viewer-rotation == 180 ? 1-y : AppState.viewer-rotation == 270 ? dx : y;
+        if AppState.viewer-show-original { return y; }
+        let dx = ((AppState.viewer-mirror ? 1-x : x) - 0.5) * max(1, root.photo.width);
+        let dy = (y - 0.5) * max(1, root.photo.height);
+        return (-dx * root.sine + dy * root.cosine) / root.source-height + 0.5;
     }
     public function zoom-at(next: int, mx: length, my: length) {
         let old = max(0.0001, root.scale);
@@ -99,7 +113,7 @@ export component PhotoPane inherits Rectangle {
     }
 
     Image { x: root.left; y: root.top; width: root.image-width; height: root.image-height; source: root.photo; image-fit: fill; }
-    if !root.reference && AppState.viewer-annotations-visible && !AppState.presentation-mode: Rectangle {
+    if !root.reference && AppState.viewer-annotations-visible && !AppState.viewer-adjusting && !AppState.presentation-mode: Rectangle {
         x: root.left; y: root.top; width: root.image-width; height: root.image-height; background: transparent;
         for a in AppState.viewer-annotations: PhotoMark {
             width: parent.width; height: parent.height;
@@ -110,11 +124,11 @@ export component PhotoPane inherits Rectangle {
             by: root.display-y(a.end-x, a.end-y) * self.height;
         }
     }
-    if !root.reference && AppState.viewer-guides: Rectangle {
+    if !root.reference && AppState.viewer-guides && !AppState.viewer-adjusting: Rectangle {
         x: root.left; y: root.top; width: root.image-width; height: root.image-height; background: transparent;
         private property <length> cx: root.display-x(AppState.viewer-guide-x, AppState.viewer-guide-y) * self.width;
         private property <length> cy: root.display-y(AppState.viewer-guide-x, AppState.viewer-guide-y) * self.height;
-        private property <length> radius: min(self.width, self.height) * AppState.viewer-guide-radius;
+        private property <length> radius: min(root.source-width, root.source-height) * root.scale * 1px * AppState.viewer-guide-radius;
         for fraction in [0.33, 0.66, 1]: Rectangle {
             x: parent.cx - parent.radius*fraction; y: parent.cy - parent.radius*fraction;
             width: 2*parent.radius*fraction; height: self.width; border-radius: self.width/2;
@@ -145,7 +159,7 @@ export component PhotoPane inherits Rectangle {
                 self.start-pan-x = root.pan-x; self.start-pan-y = root.pan-y;
                 let x = (self.mouse-x - root.left)/root.image-width;
                 let y = (self.mouse-y - root.top)/root.image-height;
-                self.inside-start = x >= 0 && x <= 1 && y >= 0 && y <= 1;
+                self.inside-start = root.original-x(x,y) >= 0 && root.original-x(x,y) <= 1 && root.original-y(x,y) >= 0 && root.original-y(x,y) <= 1;
                 self.start-x = root.original-x(x,y); self.start-y = root.original-y(x,y);
             } else if !root.reference && AppState.viewer-tool > 0 && self.inside-start {
                 let x = clamp((self.mouse-x - root.left)/root.image-width,0,1);

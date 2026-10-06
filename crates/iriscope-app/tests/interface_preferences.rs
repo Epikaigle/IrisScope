@@ -56,7 +56,17 @@ fn wait_saved(path: &Path, expected: &InterfacePreferences) {
 
 fn verify_presentation_camera_shortcuts_and_failed_notes(window: &MainWindow) {
     let state = window.global::<AppState>();
+    assert!(!state.get_sidebar_visible());
+    assert!(!state.get_iris_fullscreen());
     state.invoke_toggle_presentation();
+    assert!(
+        state.get_iris_fullscreen(),
+        "presentation has its own full image view"
+    );
+    assert!(
+        !state.get_sidebar_visible(),
+        "presentation must not overwrite the panel preference"
+    );
     state.invoke_focus_main_controls();
     for key in ["3", "4", "5"] {
         for (down, text) in [
@@ -97,11 +107,39 @@ fn verify_presentation_camera_shortcuts_and_failed_notes(window: &MainWindow) {
         !state.get_presentation_mode(),
         "Escape must leave presentation despite a hidden failed-save dialog"
     );
+    assert!(!state.get_iris_fullscreen());
+    assert!(
+        !state.get_sidebar_visible(),
+        "the hidden panel is restored after presentation"
+    );
     assert!(state.get_consultation_open());
     assert_eq!(state.get_consultation_notes(), "Brouillon privé conservé");
     state.set_consultation_open(false);
     state.set_consultation_dirty(false);
     state.set_consultation_paused(false);
+}
+
+fn verify_presentation_restores_each_panel_and_fullscreen_state(window: &MainWindow) {
+    let state = window.global::<AppState>();
+    for sidebar in [false, true] {
+        for fullscreen in [false, true] {
+            state.set_sidebar_visible(sidebar);
+            let previous_tab = if fullscreen { 0 } else { 2 };
+            state.invoke_navigate_to(previous_tab);
+            state.set_iris_fullscreen(fullscreen);
+            state.invoke_toggle_presentation();
+            assert!(state.get_iris_fullscreen());
+            assert_eq!(state.get_sidebar_visible(), sidebar);
+            assert_eq!(window.get_current_tab(), 0);
+            state.invoke_toggle_presentation();
+            assert_eq!(state.get_sidebar_visible(), sidebar);
+            assert_eq!(state.get_iris_fullscreen(), fullscreen);
+            assert_eq!(window.get_current_tab(), previous_tab);
+        }
+    }
+    state.set_sidebar_visible(false);
+    state.set_iris_fullscreen(false);
+    state.invoke_navigate_to(0);
 }
 
 fn verify_privacy_and_image_only(window: &MainWindow) {
@@ -222,6 +260,7 @@ fn verify_restart_and_reset(settings: AppSettings, path: &Path) {
     assert_eq!(state.get_consultation_panel_width(), 320);
     assert_eq!(state.get_library_view(), 1);
     assert_eq!(state.get_thumbnail_size(), 2);
+    assert_eq!(state.get_thumbnail_width(), 187);
     assert_eq!(state.get_preferred_photo_panel(), 2);
     assert!(state.get_advanced_settings_expanded());
     let before = harness.current_settings();
@@ -237,6 +276,7 @@ fn verify_restart_and_reset(settings: AppSettings, path: &Path) {
     state.set_sidebar_visible(false);
     state.set_camera_panel_width(450);
     state.set_thumbnail_size(0);
+    state.set_thumbnail_width(0);
     state.invoke_interface_edited();
     wait_saved(
         path,
@@ -290,9 +330,11 @@ fn display_preferences_survive_restart_and_controls_preserve_private_data() {
     state.set_consultation_panel_width(320);
     state.set_library_view(1);
     state.set_thumbnail_size(2);
+    state.set_thumbnail_width(187);
     state.set_advanced_settings_expanded(true);
     state.invoke_select_photo_panel(2);
     verify_presentation_camera_shortcuts_and_failed_notes(window);
+    verify_presentation_restores_each_panel_and_fullscreen_state(window);
     verify_privacy_and_image_only(window);
     let expected = harness.current_settings().interface;
     wait_saved(&path, &expected);

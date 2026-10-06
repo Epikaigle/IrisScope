@@ -28,12 +28,20 @@ Lancer `iriscope-app --diagnose` et conserver le résultat localement. Vérifier
 
 ## Bouton physique Snapshot
 
-Aucun backend n’émet actuellement l’événement matériel de ce bouton. Ne pas annoncer son fonctionnement avant identification et corrélation du signal avec les pressions sur l’appareil réel.
+Sous Linux, le signal a été identifié sur le DE400 `21cd:603b` le 6 octobre 2026 : trois pressions réelles ont produit chacune `02 01 00 01`, puis `02 01 00 00` au relâchement, sur l’endpoint d’interruption `0x81`. Le pilote ne crée pas de touche caméra car l’appareil déclare `bTriggerUsage = 0`. La [passerelle Linux](../helpers/linux/README.md) transmet ce signal au backend. Windows essaie désormais un abonnement natif optionnel, à valider avec le pilote réel ; macOS dispose d’un récepteur USB optionnel, avec indication du refus si le pilote Apple détient l’interface. Les deux réceptions doivent encore être testées sur les machines physiques. Voir [l'état multiplateforme](BOUTON-MULTIPLATEFORME.md).
 
 Sous Linux, après fermeture du direct, utiliser l’outil existant `python3 scripts/diagnose-de400-button.py --seconds 45 --video /dev/video0 --metadata /dev/video1` et effectuer trois pressions espacées. Adapter les chemins après identification du périphérique. L’outil observe les métadonnées UVC sans commandes USB propriétaires et sans enregistrer d’images.
 
-Une éventuelle implémentation devra avoir un test de non-répétition lors d’un appui prolongé, respecter dossier/œil, les opérations en cours et la fermeture, et conserver le comportement choisi dans les paramètres. Windows et macOS nécessitent leur propre observation du signal.
+Sur cet exemplaire, aucun marqueur STILL_IMAGE n’a été observé pendant les pressions. Pour observer le signal utilisé, lancer `sudo python3 scripts/diagnose-de400-usb-status.py`, puis appuyer trois fois après `STATUS_ARMED`. L’outil ne conserve pas d’images et ne modifie pas les contrôles USB.
+
+Après installation de la passerelle et compilation, lancer `target/release/iriscope-app --validate-button target/validation-bouton` avec une destination vide. Deux pressions prennent les photos des deux yeux pour deux dossiers homonymes distincts ; les deux suivantes démarrent et arrêtent une vidéo. Suivre les messages du terminal. Le rapport vérifie aussi les noms, la lisibilité de chaque image vidéo, la finalisation, l’export et la sauvegarde/restauration. Tester séparément un appui prolongé, la déconnexion/reconnexion et les actions de bouton choisies dans les paramètres. Le scénario automatique est `--validate-hardware target/validation-auto`.
 
 ## Compte rendu
+
+Les commandes adaptées aux installations Windows et macOS sont dans
+[Essayer sur Windows et macOS](ESSAIS-WINDOWS-MACOS.md). Le rapport indique le
+système et l’architecture réellement testés. Si FFmpeg est absent, seul l’export
+MP4 est marqué **NOT TESTED** ; les captures et leur sauvegarde/restauration sont
+quand même vérifiées. Toute autre erreur d’export reste un échec.
 
 Pour chaque parcours, noter « réussi », « échoué » ou « non testé », le comportement obtenu et les étapes de reproduction. Un échec ou un essai non réalisé bloque uniquement l’affirmation correspondant à ce parcours, et ne doit pas être remplacé par un résultat synthétique.

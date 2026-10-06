@@ -31,7 +31,7 @@ Aucune étape technique de type « ouvrir la caméra », « choisir /dev/video0 
 - affichage live dès l'ouverture de l'application ;
 - mode **Photo** ou **Vidéo** clairement sélectionnable ;
 - gros bouton logiciel de capture ;
-- le bouton physique du DE400 n'est pas encore relié à la capture dans les backends ;
+- bouton physique du DE400 sous Linux via la [passerelle locale](helpers/linux/README.md) ;
 - indicateur **REC** et durée d'enregistrement ;
 - dernière capture visible immédiatement ;
 - détection de déconnexion / reconnexion de la caméra ;
@@ -82,7 +82,7 @@ Pour revoir un patient, saisir son prénom et son nom puis sélectionner le bon 
 
 Le dossier et l'œil restent actifs jusqu'à ce que l'utilisateur les change afin de pouvoir réaliser plusieurs captures successives rapidement. Utiliser **Terminer session** avant de commencer avec une autre personne.
 
-Les compteurs sur les boutons **Gauche / Droit** indiquent séparément les photos prises pendant cette session. Ils sont conservés lors du changement d’œil et remis à zéro avec **Terminer session** ou le changement de personne. Le changement d’œil reste manuel.
+Les boutons **Gauche / Droit** sélectionnent uniquement l’œil examiné, sans compteur dans leur libellé. Le changement d’œil reste manuel.
 
 Les fichiers sont automatiquement nommés avec, lorsqu'ils sont renseignés :
 
@@ -100,7 +100,7 @@ La bibliothèque propose actuellement :
 - photos et vidéos réunies au même endroit ;
 - miniatures pour les photos et pour les vidéos AVI à partir de leur première image, chargées progressivement pour les cartes visibles pendant le défilement ;
 - affichage au choix en grille ou en liste, avec sélection puis ouverture dans la visionneuse ;
-- filtres Tous / Photos / Vidéos / Dossier actif, recherche par numéro de dossier, œil et période inclusive, champs **Du / Au** au format JJ/MM/AAAA avec calendrier ; le format AAAA-MM-JJ reste accepté ; tri des plus récentes ou des plus anciennes ;
+- filtres Tous / Photos / Vidéos / Dossier actif, recherche par numéro de dossier, œil et période inclusive, champs **Du / Au** au format JJ/MM/AAAA avec calendrier contextuel, sans masquer la page ; le format AAAA-MM-JJ reste accepté ; tri des plus récentes ou des plus anciennes ;
 - ouverture initiale sur toutes les captures, puis conservation du filtre et de la page entre les onglets ;
 - masquage du nom dans le titre des captures appartenant à d'autres personnes ; les noms de fichiers et les miniatures restent visibles dans le dossier de stockage ;
 - index local caché de métadonnées et de numéros de dossier, indépendant du modèle de nom de fichier ;
@@ -121,13 +121,23 @@ sont pas chiffrés par IrisScope : les personnes ayant accès au dossier de
 captures peuvent consulter ces informations. Le masquage des titres dans la
 bibliothèque est une aide visuelle, pas une protection d'accès.
 
+Les dossiers patients sont organisés dans la bibliothèque par numéro stable
+(`D-000042`), puis consultables par date, œil et type de capture. Sur disque,
+les médias restent ensemble dans le dossier de stockage sélectionné ;
+`.iriscope-index.json` conserve les liens entre fichiers et dossiers patients.
+Deux homonymes restent donc séparés même si leurs noms sont identiques. Les noms
+de fichiers indiquent prénom, nom, œil, date et heure avec le modèle par défaut ;
+des prises simultanées reçoivent un suffixe `_2`, `_3`, etc., sans écrasement.
+Une capture anonyme conserve le préfixe `Iris` et l'œil choisi. Cette organisation
+est conservée par la sauvegarde/restauration intégrée.
+
 Dans la visionneuse photo, **Ajuster** affiche toute l’image et **100 %** affiche un pixel photo par pixel écran, en tenant compte de l’échelle du moniteur. La molette zoome sur le curseur, les boutons −/+ et le curseur règlent le zoom, le glisser et les flèches déplacent l’image. Un double-clic rétablit l’image entière. **Loupe** examine une zone sans changer le cadrage et **Plein écran** agrandit la fenêtre ; Échap quitte d’abord le plein écran, puis ferme la photo.
 
 Les panneaux **Annoter / Notes**, **Références**, **Affichage** et **Comparer** se referment pour rendre la place à la photo. **Exporter…** ouvre séparément les commandes de copie. Les notes et les cercles, flèches, points ou textes sont enregistrés automatiquement après une pause dans la saisie, avec date de modification et empreinte de la photo dans l’index privé de la bibliothèque. Les annotations utilisent les coordonnées de l’original, restent positionnées après une rotation ou un miroir, peuvent être masquées, retirées ou annulées. Navigation et fermeture attendent la fin de l’enregistrement ; en cas d’échec, le brouillon reste ouvert pour réessayer ou le copier avant un abandon explicite. Les sauvegardes/restaurations comprennent ces observations. Une photo remplacée ne récupère pas les annotations de l’ancien contenu.
 
 **Comparer** recherche les photos du même dossier et du même œil, avec des dates facultatives et jusqu’à 200 résultats récents par recherche. Le choix affiche des miniatures, la date, l’œil et les photos marquées **Retenue**. **Retenir**, dans la visionneuse, conserve cette marque entre les ouvertures sans modifier l’original. Les deux vues peuvent être positionnées indépendamment, puis liées en conservant leur alignement. **Garder cette photo pour comparer** conserve aussi l’original comme référence : ouvrir une autre photo ou utiliser **Suivante** l’affiche à côté, avec les dates, yeux et dossiers. **Effacer la comparaison** revient à une seule image. Changer de dossier de stockage efface cette référence.
 
-**Références** affiche la carte ou la planche importée à côté de la photo, avec zoom et déplacement. Les cercles repères facultatifs se centrent manuellement. **Affichage** règle luminosité, contraste, rotation et miroir ; **Original** permet de comparer et **Réinitialiser l’affichage** remet ces réglages à zéro. Ils ne sont pas enregistrés dans la photo et reviennent à l’original à chaque ouverture.
+**Références** affiche la carte ou la planche importée à côté de la photo, avec zoom et déplacement. Les cercles repères facultatifs se centrent manuellement. **Affichage** règle luminosité, contraste, rotation et miroir ; le bouton **Rotation** ouvre un curseur de 0 à 359° et une saisie au degré près, également disponibles dans le direct. Les annotations suivent la rotation et le miroir dans la copie PNG. **Original** permet de comparer et **Réinitialiser l’affichage** remet ces réglages à zéro. Ils ne sont pas enregistrés dans la photo et reviennent à l’original à chaque ouverture.
 
 **Copie PNG annotée…** exporte l’affichage avec les annotations. **Fiche PDF et notes…** exporte l’original annoté, sa légende et les notes, avec la deuxième photo lorsque la comparaison est active. Les notes longues continuent sur plusieurs pages. Les exports conservent les sources et refusent de remplacer un fichier existant. Le détail des outils et de leurs limites figure dans [Visionneuse photo](docs/VISIONNEUSE.md).
 
@@ -213,7 +223,9 @@ Sous Linux, le sélecteur utilise le portail du bureau, ou `zenity` en repli.
 
 **Paramètres → Interface et affichage** regroupe le thème, la mémorisation de la disposition, l’ouverture en **Image seule** et la taille des miniatures. Les panneaux patient, photo et dossiers sont redimensionnables avec des bornes adaptées à la fenêtre. Les préférences retrouvent les panneaux et la vue grille/liste au redémarrage ; **Réinitialiser la disposition** conserve les captures et les notes.
 
-**Présenter** masque les noms, dossiers, fichiers, notes et annotations à l’écran et bloque l’accès aux vues privées jusqu’à **Fin présentation**. L’œil, les erreurs et les commandes de capture restent accessibles. **Image seule** masque les barres photo après trois secondes : mouvement de souris, **Commandes** et Échap assurent le retour. Le diagnostic technique se déplie avec **Détails**. L’aide existante reste disponible.
+La bibliothèque et les paramètres proposent les préréglages **Petites / Moyennes / Grandes** et un curseur de **80 à 480 pixels**, par pas d'un pixel logique, conservé au redémarrage. La grille adapte le nombre de colonnes à cette largeur. Les menus se modifient par sélection explicite ou au clavier : la molette sur un menu fermé fait défiler la page sans changer sa valeur.
+
+**Présenter**, dans les outils du direct ou de la visionneuse, affiche l'iris en plein écran, masque les noms, dossiers, fichiers, notes et annotations à l’écran et bloque l’accès aux vues privées jusqu’à **Fin présentation**. La sortie rétablit l'onglet, le plein écran et le panneau précédents : un panneau masqué reste masqué. L’œil, les erreurs et les commandes de capture restent accessibles. **Image seule** masque les barres photo après trois secondes : mouvement de souris, **Commandes** et Échap assurent le retour. Le diagnostic technique se déplie avec **Détails**. L’aide existante reste disponible.
 
 ## Interface volontairement simple
 
@@ -223,7 +235,7 @@ L'application comporte trois espaces principaux :
 2. **Bibliothèque**
 3. **Paramètres et diagnostic**
 
-Le panneau patient est à gauche de l'image et peut être masqué pour agrandir l'aperçu. Le formulaire défile séparément et le bouton de capture reste accessible en bas. Les outils d'image sont regroupés sous le direct, sur une ou deux lignes selon la largeur ; **Réglages** ouvre les contrôles de la caméra. Les images de référence s'ouvrent depuis **Références** dans la bibliothèque. Les paramètres et leur diagnostic s'empilent dans les fenêtres étroites. La taille minimale est de 800 × 600 pixels.
+Le panneau patient est à gauche de l'image et peut être masqué pour agrandir l'aperçu. Le formulaire défile séparément et le bouton de capture reste accessible en bas. Les outils d'image sont regroupés sous le direct, sur une ou deux lignes selon la largeur ; **Réglages** ouvre les contrôles de la caméra. Le réglage d’angle s’ouvre au-dessus de ces commandes. La molette et le curseur de zoom restent synchronisés dans le direct et dans les images de référence. Les images de référence s'ouvrent depuis **Références** dans la bibliothèque. Les paramètres et leur diagnostic s'empilent dans les fenêtres étroites. La taille minimale est de 800 × 600 pixels.
 
 En plein écran, la capture reste en bas et **Quitter le plein écran** en haut à
 droite. Ces commandes réapparaissent au mouvement de la souris ou avec `Tab`,
@@ -234,8 +246,7 @@ après un clic dans l'image. Les commandes de lecture et la timeline des vidéos
 enregistrées restent sous l'image dans la visionneuse.
 
 Les commandes et informations sur l'image partagent la même police, le même
-fond sombre et les mêmes arrondis. Leur largeur suit le texte et celui-ci reste
-centré. Les messages de capture restent dans la zone vidéo et leurs actions
+fond sombre et les mêmes arrondis. Les menus et leurs options s’alignent à gauche, avec une flèche centrée et des lignes espacées. Les filtres de dossier et de dates gardent une largeur compacte ; **Calendrier** ouvre le sélecteur de date. **Dossiers et séances** recherche un patient puis une date ; **Afficher les fichiers** ouvre le dossier sur le disque. Les messages de capture restent dans la zone vidéo et leurs actions
 s'alignent au centre, même avec un nom de fichier sur plusieurs lignes.
 
 ### Raccourcis clavier
@@ -272,7 +283,7 @@ Le matériel de référence actuellement diagnostiqué est :
 
 Sur l'exemplaire testé le 1er octobre 2026, le mode le plus détaillé exposé est le **1280 × 1024 MJPEG à 8 FPS annoncés par le périphérique**. Le diagnostic du binaire à jour a reçu et décodé trois images dans ce mode ; ce court essai ne mesure pas la cadence soutenue. Le 30 FPS à cette résolution n'est pas exposé par ce matériel.
 
-Sur l'exemplaire étudié, le bouton Snapshot n'apparaît pas comme un périphérique HID séparé. Aucun des trois backends n'émet actuellement son événement vers l'application. L'utiliser demandera l'identification du signal matériel, une implémentation propre à chaque plateforme et des essais sur appareil réel.
+Sur l'exemplaire étudié, le bouton Snapshot n'apparaît pas comme un périphérique HID séparé. Le 6 octobre 2026, trois pressions réelles ont été corrélées aux paquets USB `02 01 00 01`, suivis de `02 01 00 00` au relâchement, sur l'endpoint `0x81`. Sous Linux, une passerelle locale transmet ces événements au backend V4L2. Les réceptions Windows et macOS sont intégrées au code, mais nécessitent encore une validation physique sur chacun de ces systèmes.
 
 ## Architecture technique
 
@@ -295,6 +306,13 @@ Organisation du workspace :
 - `iriscope-imaging` : décodage et transformations d'image, sans dépendance au cœur applicatif ;
 - `iriscope-app` : application Slint.
 
+`helpers/linux/` contient la passerelle du bouton DE400, son service et sa
+documentation. `scripts/install-de400-button.sh` et
+`scripts/uninstall-de400-button.sh` gèrent uniquement cette installation système.
+Dans le backend Linux, `button.rs` reçoit les événements ; `platform.rs` conserve
+la gestion V4L2 du flux et des contrôles. `hardware_validation.rs` regroupe les
+essais sur caméra réelle avec des dossiers fictifs et un stockage isolé.
+
 Dans `iriscope-app`, `main.rs` choisit le diagnostic ou l'interface. `lib.rs`
 déclare les modules et `ui.rs` inclut une seule fois l'interface Slint, réutilisée
 par les tests. `gui.rs` assemble la fenêtre ; les contrôleurs caméra, capture,
@@ -311,7 +329,8 @@ AVI. Les modules déclarent leurs dépendances par des imports explicites.
 L'interface est répartie dans `ui/` : `main.slint` conserve la fenêtre et les
 raccourcis, `state.slint` expose l'état partagé, `theme.slint` définit les
 couleurs et espacements, `controls.slint` contient les boutons et curseurs
-réutilisables, et chaque écran ou fenêtre superposée possède son propre
+réutilisables, `combo-box.slint` les menus à sélection explicite et
+`thumbnail-size.slint` le réglage commun des miniatures. Chaque écran ou fenêtre superposée possède son propre
 fichier. Les polices et leurs licences sont conservées dans `ui/fonts/`.
 Cette séparation permet d'ajuster les dimensions et les composants visuels
 sans parcourir un seul grand fichier.
@@ -336,7 +355,25 @@ Il sait notamment :
 
 Les nœuds multi-plane sont également pris en charge pour les formats progressifs linéaires MJPEG, YUYV, BGRA, NV12 et NV12M. Les formats tiled, 10 bits et les nœuds de conversion mémoire-à-mémoire ne sont pas proposés. Les tests de disposition mémoire sont automatisés ; les ioctls multi-plane restent à vérifier sur un appareil correspondant. Le DE400 utilise le chemin mono-plane.
 
-Le bouton physique du DE400 n'est pas encore pris en charge. Sur l'exemplaire branché, le pilote Linux n'expose aucun événement de bouton. L'outil `python3 scripts/diagnose-de400-button.py --seconds 45` permet d'observer les marqueurs STILL_IMAGE des métadonnées UVC pendant trois pressions espacées, après fermeture de l'aperçu IrisScope. Vérifier les chemins `--video` et `--metadata` (par défaut `/dev/video0` et `/dev/video1`) avant lancement. L'outil utilise `v4l2-ctl`, ne conserve aucune image et ne transmet aucune commande USB propriétaire. Un marqueur observé doit être corrélé aux pressions avant toute intégration automatique.
+Le DE400 testé déclare `bTriggerUsage = 0` : le pilote Linux ne crée pas de touche caméra pour son bouton. Ses pressions transmettent cependant des événements sur le canal USB d'interruption. La [passerelle Linux](helpers/linux/README.md) lit uniquement ces événements pour le DE400 `21cd:603b`, sans ouvrir de flux vidéo, modifier la caméra ni enregistrer d'images. Son programme installé appartient à root ; IrisScope conserve les droits habituels de l'utilisateur. L'installation requiert une authentification administrateur et le compte doit appartenir au groupe `video`.
+
+```sh
+sudo bash scripts/install-de400-button.sh
+```
+
+Dans les paramètres, le bouton peut suivre le mode **Photo / Vidéo**, toujours
+prendre une photo ou toujours démarrer/arrêter une vidéo. Une pression maintenue
+ne déclenche qu'une fois. Une vidéo en cours peut toujours être arrêtée lorsque
+le bouton suit le mode, même si le mode affiché a changé. Le bouton logiciel reste
+utilisable avec ou sans passerelle.
+
+Pour retirer uniquement la passerelle : `sudo bash scripts/uninstall-de400-button.sh`.
+Les captures et les paramètres sont conservés.
+
+Le diagnostic `scripts/diagnose-de400-button.py` reste disponible pour les
+métadonnées UVC. Sur l'exemplaire testé, les pressions ne produisent pas de
+marqueur STILL_IMAGE. `sudo python3 scripts/diagnose-de400-usb-status.py` observe
+le canal du bouton pendant 45 secondes ; appuyer après `STATUS_ARMED`.
 
 Les deux tests qui exigent un DE400 branché restent ignorés par les tests automatisés ordinaires.
 
@@ -352,7 +389,7 @@ Le backend Media Foundation sait :
 - participer au suivi connexion / déconnexion ;
 - alimenter le même pipeline photo, vidéo et bibliothèque que les autres plateformes.
 
-Les contrôles d'image utilisent les interfaces IAM lorsqu'elles sont exposées et un repli standard IKsControl sur la même source caméra. Seules les plages et les modes réellement déclarés par le pilote sont présentés. La réinitialisation utilise la valeur native par défaut, ou la valeur constatée à l'ouverture lorsque le pilote n'annonce pas de défaut. Les tests physiques avec le DE400 sous Windows et l'intégration du bouton Snapshot restent à réaliser.
+Les contrôles d'image utilisent les interfaces IAM lorsqu'elles sont exposées et un repli standard IKsControl sur la même source caméra. Seules les plages et les modes réellement déclarés par le pilote sont présentés. La réinitialisation utilise la valeur native par défaut, ou la valeur constatée à l'ouverture lorsque le pilote n'annonce pas de défaut. Le bouton Snapshot dispose d'un abonnement natif optionnel au déclencheur UVC exposé par le pilote. Son fonctionnement avec le DE400 réel reste à vérifier ; la compilation seule ne le confirme pas. Voir [Bouton multiplateforme](docs/BOUTON-MULTIPLATEFORME.md).
 
 ### macOS
 
@@ -365,7 +402,7 @@ Le backend AVFoundation sait :
 - participer au suivi connexion / déconnexion ;
 - alimenter le même pipeline photo, vidéo et bibliothèque que les autres plateformes.
 
-Les contrôles AVFoundation actuellement exposés se limitent aux modes de balance des blancs automatique et d'exposition lorsque la caméra les fournit. Les tests physiques avec le DE400 et l'intégration du bouton Snapshot restent à réaliser.
+Les contrôles AVFoundation actuellement exposés se limitent aux modes de balance des blancs automatique et d'exposition lorsque la caméra les fournit. Le bouton Snapshot dispose d’un récepteur USB natif optionnel ; son état réel est affiché dans le diagnostic après ouverture de la caméra. Le pilote Apple peut refuser l’accès à l’interface du bouton : le direct et les captures logicielles continuent alors de fonctionner. La compilation Mac Intel/Apple Silicon est vérifiable depuis Linux ; la réception réelle du bouton doit encore être testée sur le Mac. Voir [Bouton multiplateforme](docs/BOUTON-MULTIPLATEFORME.md).
 
 ## Principes de performance
 
@@ -406,6 +443,45 @@ atomique se terminent en conservant leur protocole de durabilité.
 
 ## Validation locale
 
+### Captures sur l'appareil réel
+
+Après compilation, fermer toute autre application utilisant la caméra. Les
+commandes suivantes exigent chacune un dossier de destination vide et créent
+uniquement des dossiers patients fictifs, sans modifier les paramètres personnels :
+
+```sh
+target/release/iriscope-app --validate-hardware target/validation-auto
+target/release/iriscope-app --validate-button target/validation-bouton
+```
+
+Le premier scénario prend les photos des deux yeux, réalise deux prises
+rapprochées pour vérifier les noms uniques, enregistre et arrête une vidéo, puis
+prend une photo anonyme. Le second demande deux prises photo avec le bouton
+physique, puis une pression pour démarrer et une pour arrêter la vidéo. Suivre
+les messages `BUTTON_*_READY` du terminal. Les essais vérifient les fichiers
+lisibles, les numéros de dossiers distincts malgré des noms identiques, l'œil,
+la date et l'heure, la finalisation AVI, l'export MP4 avec l'original conservé et
+la sauvegarde/restauration des médias avec leurs associations.
+
+Chaque destination contient `captures/`, `exports/`, `backups/`, `restored/` et
+`validation-report.txt`. Les résultats et captures d'essai ne sont pas inclus
+dans Git. L'export de validation nécessite FFmpeg.
+
+Le [compte rendu Linux du 6 octobre 2026](docs/VALIDATION-LINUX-2026-10-06.md)
+confirme les photos et le démarrage/arrêt vidéo au bouton sur l'appareil réel,
+avec les dossiers, noms, export et sauvegarde/restauration vérifiés.
+
+Le [rapport d'interface du même jour](docs/VALIDATION-INTERFACE-2026-10-06.md)
+décrit les essais de présentation, menus, miniatures, observations et zoom,
+ainsi que les vérifications de compilation Windows et macOS depuis Linux.
+
+Pour les tests natifs sous Xvfb, le backend logiciel permet aussi les instantanés
+de fenêtres cachées :
+
+```sh
+SLINT_BACKEND=winit-software xvfb-run -a cargo test --release --workspace --locked
+```
+
 Les contrôles visuels Linux utilisent des captures synthétiques, deux thèmes et
 quatre tailles de fenêtre, à 100 %, 125 %, 150 % et 200 %. Après installation de
 Pillow, lancer :
@@ -414,13 +490,13 @@ Pillow, lancer :
 xvfb-run -a -s '-screen 0 4096x2304x24 -nolisten tcp' python3 scripts/check-ui-visuals.py
 ```
 
-Les 432 images de référence couvrent la barre caméra, les réglages image, les noms
+Les 784 images de référence couvrent la barre caméra, les réglages image, les noms
 patients longs, les paramètres, le plein écran, les messages de capture longs,
 la correction de dossier, la recherche et la comparaison des photos ainsi que la visionneuse vidéo.
 Elles incluent la progression d’une sauvegarde, son rappel, l’export MP4 et les
 outils photo : notes, références, affichage, choix de comparaison, zoom et loupe,
 ainsi que les dossiers de consultation, le calendrier et l’export photo séparé.
-Le script rend 1 184 vues, dont la bibliothèque, les références et la visionneuse photo.
+Le script rend 1 824 vues, dont les réglages de rotation ouverts, la bibliothèque, les références et la visionneuse photo.
 Une modification visuelle volontaire se valide avec `--update`, puis une revue
 des PNG ; la CI compare sans réécrire les références. `--compare-only` permet de
 comparer les captures déjà générées, sans relancer le rendu.
@@ -453,6 +529,12 @@ jointes à chaque archive. La CI produit ces trois formats sur leurs systèmes
 respectifs et les conserve comme artefacts téléchargeables.
 
 Ces archives sont portables : elles ne créent pas de raccourci ni de mise à jour automatique. `python scripts/package-installer.py` produit aussi un paquet Debian avec entrée de menu, un installateur Windows par utilisateur et un DMG macOS avec accès au dossier Applications. La CI prépare les installateurs avec leurs empreintes, en plus des archives portables. Sous Windows, Inno Setup 6 est requis ; sous macOS, `hdiutil` est requis.
+
+La CI produit des paquets Mac Apple Silicon **et Intel**, ainsi que Windows x64.
+Le guide [Essayer sur Windows et macOS](docs/ESSAIS-WINDOWS-MACOS.md) indique
+quel paquet choisir et comment vérifier la caméra et le bouton sans environnement
+de développement. L’absence de FFmpeg est distinguée d’un échec de capture dans
+les rapports d’essai matériel.
 
 Les paquets créés sans certificat restent non signés. Pour une distribution publique, le script accepte `--windows-certificate` (empreinte d’un certificat déjà installé), ou `--signing-identity` et `--notary-profile` sous macOS (identité Developer ID et profil de trousseau existants). Il signe et vérifie les paquets Windows ; sous macOS, il signe le bundle, soumet la notarisation et agrafe le ticket avant de créer le DMG. Aucun certificat ni mot de passe n’est inclus dans le dépôt. Ces opérations demandent les certificats officiels et les outils natifs ; elles n’ont pas été exécutées dans l’environnement cloud Linux. Les mises à jour restent manuelles. Le
 paquet Linux est construit sur Ubuntu 24.04 et dépend des bibliothèques système

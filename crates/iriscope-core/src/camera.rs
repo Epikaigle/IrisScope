@@ -325,6 +325,11 @@ pub trait CameraDevice: Send {
         None
     }
 
+    /// Reports the current optional hardware button receiver state.
+    fn hardware_button_status(&self) -> Option<String> {
+        None
+    }
+
     /// Stops the active stream. Implementations must also stop safely when dropped.
     ///
     /// # Errors

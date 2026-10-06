@@ -1,0 +1,26 @@
+[Unit]
+Description=IrisScope DE400 physical capture button
+After=systemd-modules-load.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/lib/iriscope/de400_button_bridge.py
+Restart=on-failure
+RestartSec=2
+RuntimeDirectory=iriscope-button
+RuntimeDirectoryMode=0755
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_CHOWN
+ReadWritePaths=/run/iriscope-button
+
+[Install]
+WantedBy=multi-user.target

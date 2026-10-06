@@ -7,6 +7,10 @@ name: CI
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
   native:
     name: ${{ matrix.os }}
@@ -22,6 +26,8 @@ jobs:
           - os: windows-2022
             camera: iriscope-camera-windows
           - os: macos-15
+            camera: iriscope-camera-macos
+          - os: macos-15-intel
             camera: iriscope-camera-macos
     steps:
       - uses: actions/checkout@v4
@@ -42,6 +48,8 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Test full workspace in a virtual display
         if: runner.os == 'Linux'
+        env:
+          SLINT_BACKEND: winit-software
         run: xvfb-run -a cargo test --workspace --locked
       - name: Install visual comparison dependency
         if: runner.os == 'Linux'

@@ -1,0 +1,104 @@
+import { ScrollView } from "std-widgets.slint";
+import { Design } from "./theme.slint";
+import { AppButton } from "./controls.slint";
+
+// Closed menus pass wheel events to their enclosing scroll view. Opening and
+// selecting remain explicit pointer, keyboard or accessibility actions.
+export component AppComboBox inherits Rectangle {
+    in property <[string]> model;
+    in property <bool> enabled: true;
+    in-out property <int> current-index: 0;
+    out property <string> current-value: model.length > 0 ? model[clamp(current-index, 0, model.length - 1)] : "";
+    out property <bool> has-focus: keyboard.has-focus || root.expanded;
+    callback selected(string);
+    private property <bool> expanded: false;
+    min-width: 60px;
+    min-height: 32px;
+    preferred-width: closed-label.preferred-width + 50px;
+    horizontal-stretch: 0;
+    vertical-stretch: 0;
+    background: !root.enabled ? Design.control-disabled : pointer.has-hover ? Design.control-hover : Design.control;
+    border-radius: Design.control-radius;
+    border-width: root.has-focus ? 2px : 1px;
+    border-color: root.has-focus ? Design.focus : Design.border;
+    forward-focus: keyboard;
+    accessible-role: combobox;
+    accessible-enabled: root.enabled;
+    accessible-value: root.current-value;
+    accessible-expandable: true;
+    accessible-expanded: root.expanded;
+    accessible-action-expand => { root.open(); }
+
+    public function select(index: int) {
+        if !root.enabled || root.model.length == 0 { return; }
+        root.current-index = clamp(index, 0, root.model.length - 1);
+        root.selected(root.current-value);
+    }
+    public function open() {
+        if root.enabled && root.model.length > 0 {
+            root.expanded = true;
+            menu.show();
+        }
+    }
+    HorizontalLayout {
+        padding-left: 12px; padding-right: 10px; spacing: 8px;
+        closed-label := Text { min-width: 0px; horizontal-stretch: 1; text: root.current-value; horizontal-alignment: left; overflow: elide; vertical-alignment: center; color: root.enabled ? Design.text : Design.text-muted; font-size: 13px; }
+        Rectangle {
+            width: 12px; horizontal-stretch: 0; background: transparent;
+            Path {
+                width: 12px; height: 8px; y: (parent.height - self.height) / 2;
+                viewbox-width: 12; viewbox-height: 8;
+                stroke: Design.text-muted; stroke-width: 1.5px;
+                MoveTo { x: 1; y: 2; } LineTo { x: 6; y: 6; } LineTo { x: 11; y: 2; }
+            }
+        }
+    }
+    pointer := TouchArea {
+        enabled: root.enabled;
+        clicked => { keyboard.focus(); root.open(); }
+        scroll-event(event) => { reject }
+    }
+    keyboard := FocusScope {
+        width: 0px;
+        enabled: root.enabled;
+        changed has-focus => { if self.has-focus { root.expanded = false; } }
+        key-pressed(event) => {
+            if event.text == Key.Return || event.text == " " { root.open(); return accept; }
+            if event.text == Key.DownArrow { root.select(root.current-index + 1); return accept; }
+            if event.text == Key.UpArrow { root.select(root.current-index - 1); return accept; }
+            return reject;
+        }
+    }
+    menu := PopupWindow {
+        x: 0px; y: root.height + 4px;
+        width: max(root.width, options.preferred-width);
+        height: min(root.model.length * 36px + 12px, 268px);
+        close-policy: close-on-click-outside;
+        forward-focus: popup-focus;
+        popup-focus := FocusScope {
+            focus-changed-event => { root.expanded = self.has-focus; }
+            key-pressed(event) => {
+                if event.text == Key.Escape { menu.close(); return accept; }
+                if event.text == Key.Return { root.select(root.current-index); menu.close(); return accept; }
+                if event.text == Key.DownArrow { root.select(root.current-index + 1); return accept; }
+                if event.text == Key.UpArrow { root.select(root.current-index - 1); return accept; }
+                return reject;
+            }
+            Rectangle {
+                background: Design.surface-raised; border-width: 1px; border-color: Design.border; border-radius: Design.control-radius;
+                ScrollView {
+                    horizontal-scrollbar-policy: always-off;
+                    options := VerticalLayout {
+                        padding: 8px; spacing: 4px; alignment: start;
+                        for value[index] in root.model: AppButton {
+                            height: 32px; horizontal-stretch: 1;
+                            compact: true; left-aligned: true;
+                            text: value; checkable: true; selected: index == root.current-index;
+                            clicked => { root.select(index); menu.close(); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -1,3 +1,6 @@
+import { ReferencePane } from "./reference-pane.slint";
+import { ZoomControl } from "./zoom-control.slint";
+import { RotationControl } from "./rotation-control.slint";
 import { DateField } from "./date-field.slint";
 import { AppButton, AppSlider } from "./controls.slint";
 import { AppState } from "./state.slint";
@@ -49,7 +52,7 @@ export component ViewerTools inherits Rectangle {
                     AppButton { height: 32px; elide-text: true; compact: true; overlay: true; text: AppState.viewer-review-busy ? "Enregistrement…" : "Enregistrer"; enabled: AppState.viewer-review-dirty && !AppState.viewer-review-busy && !AppState.viewer-review-load-error; clicked => { AppState.save-viewer-review(); } }
                 }
                 if AppState.viewer-autosave-paused: AppButton { height: 32px; elide-text: true; compact: true; overlay: true; text: "Fermer sans enregistrer"; clicked => { AppState.viewer-review-dirty = false; AppState.dismiss-viewer(); } }
-                Text { text: AppState.viewer-review-status; color: AppState.viewer-autosave-paused || AppState.viewer-review-load-error ? Design.overlay-danger : Design.overlay-success; font-size: 12px; wrap: word-wrap; }
+                Text { height: 24px; vertical-stretch: 0; overflow: elide; text: AppState.viewer-review-status; color: AppState.viewer-autosave-paused || AppState.viewer-review-load-error ? Design.overlay-danger : Design.overlay-success; font-size: 12px; accessible-label: self.text; }
                 Text { text: "Enregistrement automatique · original conservé."; color: Design.overlay-text-secondary; font-size: 12px; wrap: word-wrap; }
                 if AppState.viewer-annotations.length > 0: VerticalLayout { alignment: start; spacing: 4px;
                     for a[i] in AppState.viewer-annotations: HorizontalLayout {
@@ -65,19 +68,26 @@ export component ViewerTools inherits Rectangle {
                     AppButton { height: 32px; elide-text: true; compact: true; overlay: true; text: "Carte"; checkable: true; selected: AppState.iridology-reference-mode == 0; clicked => { AppState.iridology-reference-mode = 0; } }
                     AppButton { height: 32px; elide-text: true; compact: true; overlay: true; text: "Signes"; checkable: true; selected: AppState.iridology-reference-mode == 1; clicked => { AppState.iridology-reference-mode = 1; } }
                 }
-                Rectangle {
-                    height: 240px; clip: true; background: Design.preview;
-                    private property <image> reference-image: AppState.iridology-reference-mode == 0 ? AppState.iridology-map-image : AppState.iridology-symbols-image;
-                    private property <float> zoom: AppState.iridology-reference-zoom/100.0;
-                    Image { source: parent.reference-image; width: parent.width*parent.zoom; height: parent.height*parent.zoom; x: (parent.width - self.width)/2 + AppState.iridology-reference-pan-x; y: (parent.height - self.height)/2 + AppState.iridology-reference-pan-y; image-fit: contain; }
-                    TouchArea {
-                        private property <length> start-x; private property <length> start-y;
-                        changed pressed => { if self.pressed { self.start-x = AppState.iridology-reference-pan-x; self.start-y = AppState.iridology-reference-pan-y; } }
-                        moved => { if self.pressed { AppState.iridology-reference-pan-x = clamp(self.start-x+self.mouse-x - self.pressed-x,-parent.width*(parent.zoom - 1)/2,parent.width*(parent.zoom - 1)/2); AppState.iridology-reference-pan-y = clamp(self.start-y+self.mouse-y - self.pressed-y,-parent.height*(parent.zoom - 1)/2,parent.height*(parent.zoom - 1)/2); } }
-                    }
-                    if (AppState.iridology-reference-mode == 0 && !AppState.has-iridology-map) || (AppState.iridology-reference-mode == 1 && !AppState.has-iridology-symbols): Text { width: 100%; height: 100%; text: "Ajoutez votre image de référence dans les paramètres."; color: Design.overlay-text-secondary; wrap: word-wrap; horizontal-alignment: center; vertical-alignment: center; }
+                reference-preview := ReferencePane {
+                    height: 240px;
+                    // The panel can be created while its ScrollView computes
+                    // layout. Its zoom bounds need a width independent of that
+                    // layout's preferred size to avoid a circular evaluation.
+                    width: max(0px, root.width - 26px);
+                    horizontal-stretch: 0;
+                    source: AppState.iridology-reference-mode == 0 ? AppState.iridology-map-image : AppState.iridology-symbols-image;
+                    loaded: AppState.iridology-reference-mode == 0 ? AppState.has-iridology-map : AppState.has-iridology-symbols;
+                    zoom <=> AppState.iridology-reference-zoom;
+                    pan-x <=> AppState.iridology-reference-pan-x;
+                    pan-y <=> AppState.iridology-reference-pan-y;
+                    if !reference-preview.loaded: Text { width: 100%; height: 100%; text: "Ajoutez votre image de référence dans les paramètres."; color: Design.overlay-text-secondary; wrap: word-wrap; horizontal-alignment: center; vertical-alignment: center; }
                 }
-                AppSlider { overlay: true; label: "Zoom de la référence"; minimum: 100; maximum: 400; step: 10; value: AppState.iridology-reference-zoom; released(v) => { AppState.iridology-reference-zoom = round(v); AppState.iridology-reference-pan-x = 0px; AppState.iridology-reference-pan-y = 0px; } }
+                ZoomControl {
+                    overlay: true; label: "Zoom de la référence"; maximum: 400;
+                    zoom <=> AppState.iridology-reference-zoom;
+                    enabled: AppState.iridology-reference-mode == 0 ? AppState.has-iridology-map : AppState.has-iridology-symbols;
+                    adjusted => { AppState.iridology-reference-pan-x = 0px; AppState.iridology-reference-pan-y = 0px; }
+                }
                 AppButton { height: 32px; elide-text: true; compact: true; overlay: true; text: "Importer une référence…"; enabled: !AppState.file-dialog-pending && !AppState.presentation-mode; clicked => { AppState.browse-settings-path(AppState.iridology-reference-mode == 0 ? 1 : 2); } }
                 AppButton { height: 32px; elide-text: true; compact: true; overlay: true; text: AppState.viewer-guides ? "Masquer les cercles repères" : "Afficher les cercles repères"; clicked => { AppState.viewer-guides = !AppState.viewer-guides; } }
                 if AppState.viewer-guides: VerticalLayout { alignment: start; spacing: 6px;
@@ -93,7 +103,7 @@ export component ViewerTools inherits Rectangle {
                 Text { text: "Contraste · " + AppState.viewer-contrast; color: Design.overlay-text-secondary; }
                 AppSlider { overlay: true; label: "Contraste d’affichage"; minimum: -100; maximum: 100; value: AppState.viewer-contrast; enabled: !AppState.viewer-adjusting; released(v) => { AppState.viewer-contrast = round(v); AppState.viewer-show-original = false; AppState.viewer-display-changed(); } }
                 HorizontalLayout { alignment: start; spacing: 4px;
-                    AppButton { height: 32px; elide-text: true; compact: true; overlay: true; text: "Rotation 90°"; enabled: !AppState.viewer-adjusting; clicked => { AppState.viewer-rotation = mod(AppState.viewer-rotation+90,360); AppState.viewer-show-original = false; AppState.viewer-display-changed(); } }
+                    RotationControl { overlay: true; angle <=> AppState.viewer-rotation; enabled: !AppState.viewer-loading; adjusted => { AppState.viewer-show-original = false; AppState.viewer-display-changed(); } }
                     AppButton { height: 32px; elide-text: true; compact: true; overlay: true; text: "Miroir"; checkable: true; selected: AppState.viewer-mirror; enabled: !AppState.viewer-adjusting; clicked => { AppState.viewer-mirror = !AppState.viewer-mirror; AppState.viewer-show-original = false; AppState.viewer-display-changed(); } }
                 }
                 AppButton { height: 32px; elide-text: true; compact: true; overlay: true; text: "Original"; checkable: true; selected: AppState.viewer-show-original; enabled: !AppState.viewer-adjusting; clicked => { AppState.viewer-show-original = !AppState.viewer-show-original; AppState.viewer-display-changed(); } }

@@ -1,17 +1,19 @@
+import { ThumbnailSizeControl } from "./thumbnail-size.slint";
+import { AppComboBox } from "./combo-box.slint";
 import { DateField } from "./date-field.slint";
 import { AppButton, Tooltip } from "./controls.slint";
 import { Design } from "./theme.slint";
-import { ScrollView, ListView, LineEdit, ComboBox } from "std-widgets.slint";
+import { ScrollView, ListView, LineEdit } from "std-widgets.slint";
 import { AppState } from "./state.slint";
 
 export component LibraryPage inherits Rectangle {
-    private property <int> library-grid-columns: AppState.thumbnail-size == 1 ? (root.width < 700px ? 1 : root.width < 1100px ? 2 : root.width < 1500px ? 3 : 4) : clamp(floor((root.width - 2 * root.content-inset - 4px) / (AppState.thumbnail-size == 0 ? 220px : 440px)),1,6);
     private property <length> content-inset: root.width < 900px ? 16px : 24px;
-    private property <length> card-width: (root.width - 2 * root.content-inset - 16px - (root.library-grid-columns - 1) * 12px) / root.library-grid-columns;
-    private property <length> thumbnail-height: clamp((root.card-width - 24px) * 0.6, AppState.thumbnail-size == 0 ? 100px : AppState.thumbnail-size == 2 ? 180px : 150px,AppState.thumbnail-size == 0 ? 150px : AppState.thumbnail-size == 2 ? 320px : 224px);
-    private property <length> list-row-height: AppState.thumbnail-size == 0 ? 88px : AppState.thumbnail-size == 2 ? 136px : 100px;
-    private property <length> list-image-width: AppState.thumbnail-size == 0 ? 72px : AppState.thumbnail-size == 2 ? 144px : 96px;
-    private property <length> list-image-height: AppState.thumbnail-size == 0 ? 54px : AppState.thumbnail-size == 2 ? 108px : 72px;
+    private property <length> card-width: min(AppState.effective-thumbnail-width * 1px + 28px, root.width - 2 * root.content-inset - 16px);
+    private property <int> library-grid-columns: clamp(floor((root.width - 2 * root.content-inset - 4px) / (root.card-width + 12px)), 1, 32);
+    private property <length> thumbnail-height: round((root.card-width - 28px) / 1px * 0.75) * 1px;
+    private property <length> list-image-width: clamp(AppState.effective-thumbnail-width * 0.4px, 48px, 192px);
+    private property <length> list-image-height: round(root.list-image-width / 1px * 0.75) * 1px;
+    private property <length> list-row-height: max(80px, root.list-image-height + 28px);
     private property <string> confirmation-patient-id: "";
     private property <string> confirmation-capture-path: "";
     private property <string> confirmation-file-version: "";
@@ -61,8 +63,8 @@ export component LibraryPage inherits Rectangle {
                 height: 32px;
                 vertical-stretch: 0;
                 spacing: 8px;
-                AppButton { height: 36px; compact: true; text: "Dossiers / Séances"; clicked => { AppState.open-consultation(); } }
-            AppButton {
+                AppButton { height: 32px; compact: true; text: "Dossiers / Séances"; clicked => { AppState.open-consultation(); } }
+                AppButton {
                     height: 32px;
                     compact: true;
                     quiet: true;
@@ -81,7 +83,7 @@ export component LibraryPage inherits Rectangle {
                 AppButton {
                     height: 32px;
                     compact: true;
-                    text: "Ouvrir le dossier";
+                    text: "Afficher les fichiers";
                     clicked => { AppState.open-capture-directory(); }
                 }
             }
@@ -235,10 +237,51 @@ export component LibraryPage inherits Rectangle {
                     AppState.library-filter-changed(3);
                 }
             }
-            Rectangle { min-width: 0px; horizontal-stretch: 1; background: transparent; }
-            ComboBox { width: 114px; height: 32px; model:["Petites","Moyennes","Grandes"]; current-index:AppState.thumbnail-size;
-                accessible-label:"Taille des miniatures"; selected(value)=>{AppState.thumbnail-size=self.current-index;AppState.interface-edited();}
+            AppComboBox {
+                width: 160px; height: 32px;
+                model: ["Tous les yeux", "Œil gauche", "Œil droit", "Œil non renseigné"];
+                current-index <=> AppState.library-query-eye;
+                accessible-label: "Filtrer par œil";
+                selected => { AppState.apply-library-query(); }
             }
+            AppComboBox {
+                width: 146px; height: 32px; model: ["Plus récentes", "Plus anciennes"];
+                current-index <=> AppState.library-query-sort;
+                accessible-label: "Trier les captures par date";
+                selected => { AppState.apply-library-query(); }
+            }
+            Rectangle { min-width: 0px; horizontal-stretch: 1; background: transparent; }
+        }
+        HorizontalLayout {
+            height: 56px; vertical-stretch: 0; spacing: 8px;
+            VerticalLayout {
+                width: 146px; horizontal-stretch: 0; spacing: 4px;
+                Text { height: 16px; text: "Dossier"; color: Design.text-secondary; font-size: 12px; }
+                LineEdit {
+                    height: 36px; min-width: 0px;
+                    text <=> AppState.library-query-dossier;
+                    placeholder-text: "D-000123";
+                    accessible-label: "Rechercher un numéro de dossier";
+                    changed has-focus => { AppState.focused-text-fields = max(0, AppState.focused-text-fields + (self.has-focus ? 1 : -1)); }
+                    accepted => { AppState.apply-library-query(); }
+                }
+            }
+            DateField { width: 194px; horizontal-stretch: 0; label: "Du"; target: 1; below-clearance: 48px; value <=> AppState.library-query-from; }
+            DateField { width: 194px; horizontal-stretch: 0; label: "Au"; target: 2; below-clearance: 48px; value <=> AppState.library-query-to; }
+            VerticalLayout {
+                padding-top: 20px; spacing: 0px; horizontal-stretch: 0;
+                AppButton { height: 36px; compact: true; text: "Appliquer"; clicked => { AppState.apply-library-query(); } }
+            }
+            VerticalLayout {
+                padding-top: 20px; spacing: 0px; horizontal-stretch: 0;
+                AppButton { height: 36px; compact: true; quiet: true; text: "Effacer";
+                    clicked => { AppState.library-query-dossier = ""; AppState.library-query-from = ""; AppState.library-query-to = ""; AppState.library-query-eye = 0; AppState.library-query-sort = 0; AppState.apply-library-query(); }
+                }
+            }
+            Rectangle { min-width: 0px; horizontal-stretch: 1; background: transparent; }
+        }
+        HorizontalLayout {
+            height: 36px; vertical-stretch: 0; spacing: 12px;
             HorizontalLayout {
                 height: 32px;
                 vertical-stretch: 0;
@@ -262,40 +305,9 @@ export component LibraryPage inherits Rectangle {
                     clicked => { AppState.library-view = 1; }
                 }
             }
-        }
-
-
-        HorizontalLayout {
-            height: 36px; vertical-stretch: 0; spacing: 8px;
-            LineEdit {
-                min-width: 100px; horizontal-stretch: 1;
-                text <=> AppState.library-query-dossier;
-                placeholder-text: "Dossier D-000123";
-                accessible-label: "Rechercher un numéro de dossier";
-                changed has-focus => { AppState.focused-text-fields = max(0, AppState.focused-text-fields + (self.has-focus ? 1 : -1)); }
-                accepted => { AppState.apply-library-query(); }
-            }
-            ComboBox {
-                width: 160px; model: ["Tous les yeux", "Œil gauche", "Œil droit", "Œil non renseigné"];
-                current-index <=> AppState.library-query-eye;
-                accessible-label: "Filtrer par œil";
-                selected => { AppState.apply-library-query(); }
-            }
-            ComboBox {
-                width: 160px; model: ["Plus récentes", "Plus anciennes"];
-                current-index <=> AppState.library-query-sort;
-                accessible-label: "Trier les captures par date";
-                selected => { AppState.apply-library-query(); }
-            }
-        }
-        HorizontalLayout {
-            height: 56px; vertical-stretch: 0; spacing: 8px;
-            DateField { horizontal-stretch: 1; label: "Du"; target: 1; value <=> AppState.library-query-from; }
-            DateField { horizontal-stretch: 1; label: "Au"; target: 2; value <=> AppState.library-query-to; }
-            AppButton { height: 36px; compact: true; text: "Appliquer"; clicked => { AppState.apply-library-query(); } }
-            AppButton { height: 36px; compact: true; quiet: true; text: "Effacer";
-                clicked => { AppState.library-query-dossier = ""; AppState.library-query-from = ""; AppState.library-query-to = ""; AppState.library-query-eye = 0; AppState.library-query-sort = 0; AppState.apply-library-query(); }
-            }
+            Text { text: "Miniatures"; color: Design.text-secondary; font-size: 12px; vertical-alignment: center; }
+            ThumbnailSizeControl { width: min(400px, root.width - 2 * root.content-inset - 236px); }
+            Rectangle { min-width: 0px; horizontal-stretch: 1; background: transparent; }
         }
         if AppState.library-query-error != "": Text { text: AppState.library-query-error; color: Design.danger; font-size: 12px; wrap: word-wrap; vertical-stretch: 0; }
 
@@ -614,13 +626,13 @@ export component LibraryPage inherits Rectangle {
             horizontal-scrollbar-policy: always-off;
 
             GridLayout {
-                width: library-grid.visible-width;
+                width: root.library-grid-columns * root.card-width + (root.library-grid-columns - 1) * 12px;
                 spacing: 12px;
 
                 for item[index] in AppState.library-items: Rectangle {
                     row: index / root.library-grid-columns;
                     col: Math.mod(index, root.library-grid-columns);
-                    width: (library-grid.visible-width - (root.library-grid-columns - 1) * 12px) / root.library-grid-columns;
+                    width: root.card-width;
                     horizontal-stretch: 0;
                     height: root.thumbnail-height + 116px;
                     border-radius: Design.card-radius;
@@ -736,6 +748,7 @@ export component LibraryPage inherits Rectangle {
                             spacing: 6px;
                             if item.can-open-in-app: AppButton {
                                 height: 32px;
+                                min-width: 0px; horizontal-stretch: 1; elide-text: true;
                                 compact: true;
                                 text: "Ouvrir";
                                 accessibility-label: "Ouvrir " + item.title + " dans IrisScope";
@@ -745,6 +758,7 @@ export component LibraryPage inherits Rectangle {
                             }
                             AppButton {
                                 height: 32px;
+                                min-width: 0px; horizontal-stretch: 1; elide-text: true;
                                 compact: true;
                                 quiet: item.can-open-in-app;
                                 primary: !item.can-open-in-app && AppState.selected-library-path == item.file-path;

@@ -6,11 +6,15 @@ La visionneuse sert à examiner les captures, comparer des prises de vue et cons
 
 - **Ajuster** : photo entière ; un double-clic produit le même résultat.
 - **100 %** : taille réelle, un pixel de la photo pour un pixel physique de l’écran, y compris avec une échelle de bureau agrandie.
-- **Molette**, **−/+**, **curseur** : zoom de 10 à 800 %. La molette conserve la zone sous le pointeur, sauf lorsqu’une limite de déplacement est atteinte.
+- **Molette**, **−/+**, **curseur** : zoom de 10 à 800 %. Le curseur met à jour l'image pendant le glissement, par pas de 1 %, sans attendre le relâchement. La molette conserve la zone sous le pointeur, sauf lorsqu’une limite de déplacement est atteinte.
 - **Glisser** ou **flèches** : déplacement dans l’image. **Loupe** : agrandissement local ×2,5 du cadrage affiché, sans créer de détail supplémentaire.
 - **Plein écran** : agrandir la fenêtre. Échap quitte le plein écran avant de fermer la photo.
 - **Image seule** : libérer l’espace des barres d’outils et du panneau latéral. Les commandes se masquent après trois secondes sans interaction. Un mouvement dans l’image ou le bouton **Commandes** les fait réapparaître. Échap rétablit d’abord la vue complète, puis quitte le plein écran, puis ferme la photo.
 - **Présenter** : montrer l’iris en masquant noms, numéros de dossier, légendes de fichiers, notes et annotations. L’œil reste indiqué. **Fin présentation** rétablit l’accès aux informations privées ; Échap fait de même depuis la caméra, après la fermeture des autres vues. Ce mode masque l’affichage local ; les exports et fichiers existants conservent leurs données.
+
+Les images du panneau **Références** et de la bibliothèque utilisent aussi la molette, le glissement et les flèches. Leur zoom va de 100 à 400 %, avec un curseur synchronisé même après une modification à la molette. **Ajuster** recentre l’image complète.
+
+Le réglage **Rotation** ouvre ses commandes à côté du panneau photo ; dans le direct, elles s’ouvrent au-dessus de la barre d’outils. La fenêtre reste dans les limites de l’application.
 
 ## Notes et annotations
 
@@ -53,7 +57,9 @@ Les journées sont des regroupements de captures et de notes, sans agenda. Le st
 
 ## Adapter l’interface
 
-Dans **Paramètres → Interface et affichage**, choisir le thème, la mémorisation de la disposition, l’ouverture des photos en **Image seule** et les miniatures **Petites / Moyennes / Grandes**. La taille se règle aussi depuis la bibliothèque et s’applique à la grille comme à la liste.
+Dans **Paramètres → Interface et affichage**, choisir le thème, la mémorisation de la disposition, l’ouverture des photos en **Image seule** et les miniatures **Petites / Moyennes / Grandes**, ou une largeur de 80 à 480 pixels avec le curseur, par pas d'un pixel logique. La taille se règle aussi depuis la bibliothèque et s’applique à la grille comme à la liste.
+
+Les états d'enregistrement des observations partagent une ligne de hauteur fixe. Une modification, une sauvegarde ou un long message d'erreur ne décale plus la photo. Le détail d'un message tronqué est disponible au survol.
 
 Les séparateurs des panneaux patient, photo et dossiers se glissent horizontalement. Ils limitent la largeur pour conserver une zone d’image utilisable. Au clavier, les flèches ajustent la largeur ; un double-clic rétablit la largeur adaptative. Le panneau patient se masque sur place et le panneau photo se ferme avec **×**.
 

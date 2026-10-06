@@ -37,6 +37,13 @@ fn main() {
     let scenarios = [
         "camera-idle",
         "camera-active",
+        "camera-rotation",
+        "camera-angle-popup",
+        "camera-presentation-idle",
+        "viewer-rotation",
+        "viewer-angle-popup",
+        "library-menu",
+        "dossier-empty",
         "camera-collapsed",
         "camera-recording",
         "camera-controls",
@@ -80,6 +87,8 @@ fn main() {
         "viewer-loading-notes",
         "viewer-resized",
         "library-small",
+        "library-custom",
+        "library-minimum",
         "library-large",
         "library-list-large",
         "settings-advanced",
@@ -285,6 +294,8 @@ fn main() {
                     | "viewer-resized"
                     | "viewer-photo-export"
                     | "viewer-references"
+                    | "viewer-rotation"
+                    | "viewer-angle-popup"
                     | "viewer-display"
                     | "viewer-chooser"
                     | "viewer-zoom"
@@ -343,6 +354,22 @@ fn main() {
                             state.set_has_iridology_map(true);
                             state.set_iridology_map_image(image.clone());
                             state.set_viewer_guides(true);
+                        }
+                        if matches!(scenario, "viewer-rotation" | "viewer-angle-popup") {
+                            state.set_viewer_panel(3);
+                            state.set_viewer_rotation(37);
+                            let pixels = image.to_rgb8().unwrap();
+                            let (w, h, rgb) = iriscope_imaging::apply_transforms(
+                                pixels.as_bytes(),
+                                pixels.width(),
+                                pixels.height(),
+                                37,
+                                false,
+                                false,
+                            );
+                            window.set_viewer_image(Image::from_rgb8(
+                                SharedPixelBuffer::<Rgb8Pixel>::clone_from_slice(&rgb, w, h),
+                            ));
                         }
                         if scenario == "viewer-display" {
                             state.set_viewer_panel(3);
@@ -528,7 +555,6 @@ Observations générales de la séance."
                 }
                 if scenario == "calendar-filter" {
                     state.set_current_tab(2);
-                    state.set_calendar_open(true);
                     state.set_calendar_caption("Février 2024".into());
                     state.set_calendar_days(ModelRc::new(VecModel::from(
                         (0..42)
@@ -551,7 +577,18 @@ Observations générales de la séance."
                     )));
                 }
                 window.show().unwrap();
+                if matches!(scenario, "camera-rotation" | "camera-angle-popup") {
+                    state.set_rotation_angle(37);
+                }
+                if scenario == "dossier-empty" {
+                    state.set_consultation_open(true);
+                }
+                if scenario == "camera-presentation-idle" {
+                    state.set_iris_fullscreen(true);
+                    state.set_presentation_mode(true);
+                }
                 if scenario == "camera-presentation" {
+                    state.set_iris_fullscreen(true);
                     state.set_presentation_mode(true);
                     window.set_patient_first_name("Alice".into());
                     window.set_patient_last_name("Martin".into());
@@ -560,6 +597,7 @@ Observations générales de la séance."
                     window.set_recording_duration("00:42".into());
                 }
                 if scenario == "presentation-notes-error" {
+                    state.set_iris_fullscreen(true);
                     state.set_presentation_mode(true);
                     state.set_consultation_open(true);
                     state.set_consultation_paused(true);
@@ -591,6 +629,12 @@ Observations générales de la séance."
                 }
                 if scenario == "library-small" {
                     state.set_thumbnail_size(0);
+                }
+                if scenario == "library-custom" {
+                    state.set_thumbnail_width(187);
+                }
+                if scenario == "library-minimum" {
+                    state.set_thumbnail_width(80);
                 }
                 if scenario == "library-large" || scenario == "library-list-large" {
                     state.set_thumbnail_size(2);
@@ -624,6 +668,65 @@ Observations générales de la séance."
                     window.window().dispatch_event(WindowEvent::PointerMoved {
                         position: LogicalPosition::new(width as f32 / 2.0, height as f32 / 2.0),
                     });
+                }
+                if scenario == "library-menu" {
+                    let position =
+                        LogicalPosition::new(435.0, if width < 924 { 172.0 } else { 180.0 });
+                    window.window().dispatch_event(WindowEvent::PointerPressed {
+                        position,
+                        button: PointerEventButton::Left,
+                    });
+                    window
+                        .window()
+                        .dispatch_event(WindowEvent::PointerReleased {
+                            position,
+                            button: PointerEventButton::Left,
+                        });
+                }
+                if scenario == "calendar-filter" {
+                    let position =
+                        LogicalPosition::new(335.0, if width < 924 { 238.0 } else { 246.0 });
+                    window.window().dispatch_event(WindowEvent::PointerPressed {
+                        position,
+                        button: PointerEventButton::Left,
+                    });
+                    window
+                        .window()
+                        .dispatch_event(WindowEvent::PointerReleased {
+                            position,
+                            button: PointerEventButton::Left,
+                        });
+                    assert!(
+                        state.get_calendar_open(),
+                        "calendar fixture must open its contextual popup"
+                    );
+                }
+                if scenario == "camera-angle-popup" {
+                    let position = LogicalPosition::new(width as f32 - 356.0, height as f32 - 36.0);
+                    window.window().dispatch_event(WindowEvent::PointerPressed {
+                        position,
+                        button: PointerEventButton::Left,
+                    });
+                    window
+                        .window()
+                        .dispatch_event(WindowEvent::PointerReleased {
+                            position,
+                            button: PointerEventButton::Left,
+                        });
+                }
+                if scenario == "viewer-angle-popup" {
+                    let panel_width = if width < 1000 { 252.0 } else { 300.0 };
+                    let position = LogicalPosition::new(width as f32 - panel_width + 52.0, 378.0);
+                    window.window().dispatch_event(WindowEvent::PointerPressed {
+                        position,
+                        button: PointerEventButton::Left,
+                    });
+                    window
+                        .window()
+                        .dispatch_event(WindowEvent::PointerReleased {
+                            position,
+                            button: PointerEventButton::Left,
+                        });
                 }
                 slint::platform::update_timers_and_animations();
                 let mut snapshot = window.window().take_snapshot().unwrap();

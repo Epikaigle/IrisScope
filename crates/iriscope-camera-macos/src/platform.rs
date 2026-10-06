@@ -2,11 +2,11 @@ use std::{
     collections::HashMap,
     slice,
     sync::{
-        Arc, Condvar, Mutex,
+        Arc, Mutex,
         mpsc::{self, Receiver, SyncSender, TrySendError},
     },
     thread::{self, JoinHandle},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use av_foundation::{
@@ -57,6 +57,7 @@ use objc2::{
 use objc2_foundation::{NSDictionary, NSNumber, NSObject, NSObjectProtocol, NSString};
 
 use crate::capabilities::{frame_rate_from_duration_parts, merge_mode, pixel_format_from_ostype};
+use crate::events::EventMailbox;
 
 /// Native macOS camera backend using `AVFoundation`.
 #[derive(Debug, Default)]
@@ -202,6 +203,10 @@ impl CameraDevice for MacAvFoundationDevice {
         )
     }
 
+    fn hardware_button_status(&self) -> Option<String> {
+        self.events.button_status()
+    }
+
     fn stop_stream(&mut self) -> CameraResult<()> {
         let (response_sender, response_receiver) = mpsc::sync_channel(1);
         self.request_worker(
@@ -268,97 +273,6 @@ pub fn create_backend() -> Box<dyn CameraBackend> {
 struct OpenedDevice {
     descriptor: CameraDescriptor,
     capabilities: CameraCapabilities,
-}
-
-#[derive(Default)]
-struct EventMailbox {
-    state: Mutex<EventMailboxState>,
-    available: Condvar,
-}
-
-#[derive(Default)]
-struct EventMailboxState {
-    pending: Option<CameraResult<CameraEvent>>,
-    closed: bool,
-}
-
-impl EventMailbox {
-    fn publish(&self, event: CameraResult<CameraEvent>) {
-        let mut state = self
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if state.closed {
-            return;
-        }
-        if matches!(&event, Ok(CameraEvent::Frame(_)))
-            && state
-                .pending
-                .as_ref()
-                .is_some_and(|pending| !matches!(pending, Ok(CameraEvent::Frame(_))))
-        {
-            return;
-        }
-        state.pending = Some(event);
-        self.available.notify_one();
-    }
-
-    fn clear(&self) {
-        let mut state = self
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        state.pending = None;
-    }
-
-    fn close(&self) {
-        let mut state = self
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        state.closed = true;
-        self.available.notify_all();
-    }
-
-    fn next_event(&self, timeout: Duration) -> CameraResult<CameraEvent> {
-        let started = Instant::now();
-        let mut state = self
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-
-        loop {
-            if let Some(event) = state.pending.take() {
-                return event;
-            }
-            if state.closed {
-                return Err(CameraError::new(
-                    CameraErrorKind::Disconnected,
-                    "AVFoundation camera worker stopped",
-                ));
-            }
-
-            let remaining = timeout.saturating_sub(started.elapsed());
-            if remaining.is_zero() {
-                return Err(CameraError::new(
-                    CameraErrorKind::TimedOut,
-                    "timed out waiting for an AVFoundation camera event",
-                ));
-            }
-
-            let waited = self
-                .available
-                .wait_timeout(state, remaining)
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            state = waited.0;
-            if waited.1.timed_out() && state.pending.is_none() {
-                return Err(CameraError::new(
-                    CameraErrorKind::TimedOut,
-                    "timed out waiting for an AVFoundation camera event",
-                ));
-            }
-        }
-    }
 }
 
 fn open_video_device(device_id: &CameraDeviceId) -> CameraResult<MacAvFoundationDevice> {
@@ -452,7 +366,7 @@ fn mac_device_worker(
         match command {
             WorkerCommand::Start(configuration, response_sender) => {
                 if let Some(stream) = active_stream.take() {
-                    stop_mac_stream(&stream);
+                    stop_mac_stream(stream);
                 }
                 events.clear();
                 let result = start_mac_stream(&device, &configuration, Arc::clone(events));
@@ -468,7 +382,7 @@ fn mac_device_worker(
             }
             WorkerCommand::Stop(response_sender) => {
                 if let Some(stream) = active_stream.take() {
-                    stop_mac_stream(&stream);
+                    stop_mac_stream(stream);
                 }
                 events.clear();
                 let _ = response_sender.send(Ok(()));
@@ -487,7 +401,7 @@ fn mac_device_worker(
     }
 
     if let Some(stream) = active_stream {
-        stop_mac_stream(&stream);
+        stop_mac_stream(stream);
     }
 }
 
@@ -497,6 +411,7 @@ struct MacStream {
     _output: Retained<AVCaptureVideoDataOutput>,
     _delegate: Retained<FrameDelegate>,
     _queue: DispatchRetained<DispatchQueue>,
+    button: Option<crate::button::ButtonReceiver>,
 }
 
 fn start_mac_stream(
@@ -515,7 +430,7 @@ fn start_mac_stream(
     let output = AVCaptureVideoDataOutput::new();
     output.set_always_discards_late_video_frames(true);
 
-    let delegate = FrameDelegate::new(events, configuration.clone());
+    let delegate = FrameDelegate::new(Arc::clone(&events), configuration.clone());
     let delegate_protocol = ProtocolObject::from_ref(&*delegate);
     let queue = DispatchQueue::new("com.iriscope.camera.frames", DispatchQueueAttr::SERIAL);
     output.set_sample_buffer_delegate(delegate_protocol, &queue);
@@ -558,10 +473,12 @@ fn start_mac_stream(
         _output: output,
         _delegate: delegate,
         _queue: queue,
+        button: crate::button::ButtonReceiver::start(&device.unique_id().to_string(), events),
     })
 }
 
-fn stop_mac_stream(stream: &MacStream) {
+fn stop_mac_stream(mut stream: MacStream) {
+    drop(stream.button.take());
     stream.session.stop_running();
 }
 

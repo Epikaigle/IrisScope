@@ -9,7 +9,7 @@ use std::{
     io,
     path::PathBuf,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
 };
@@ -381,28 +381,21 @@ pub(super) fn transform(mut image: image::RgbImage, settings: DisplaySettings) -
             .round()
             .clamp(0.0, 255.0) as u8;
     }
-    let image = match settings.rotation {
-        90 => image::imageops::rotate90(&image),
-        180 => image::imageops::rotate180(&image),
-        270 => image::imageops::rotate270(&image),
-        _ => image,
-    };
+    let image = iriscope_imaging::rotate_rgb(image, settings.rotation);
     if settings.mirror {
         image::imageops::flip_horizontal(&image)
     } else {
         image
     }
 }
-pub(super) fn projected_review(review: &PhotoReview, settings: DisplaySettings) -> PhotoReview {
-    let point = |x: f32, y: f32| {
-        let (x, y) = match settings.rotation {
-            90 => (1.0 - y, x),
-            180 => (1.0 - x, 1.0 - y),
-            270 => (y, 1.0 - x),
-            _ => (x, y),
-        };
-        (if settings.mirror { 1.0 - x } else { x }, y)
-    };
+pub(super) fn projected_review(
+    review: &PhotoReview,
+    settings: DisplaySettings,
+    dimensions: (u32, u32),
+) -> PhotoReview {
+    let geometry =
+        iriscope_imaging::RotationGeometry::new(dimensions.0, dimensions.1, settings.rotation);
+    let point = |x: f32, y: f32| geometry.project(x, y, settings.mirror);
     let mut result = review.clone();
     for annotation in &mut result.annotations {
         (annotation.x, annotation.y) = point(annotation.x, annotation.y);
@@ -420,64 +413,124 @@ fn bind_display(window: &MainWindow, runtime: &AppRuntime) {
                     .set_viewer_device_scale(win.window().scale_factor());
             }
         });
-    let weak = window.as_weak();
+    let renderer = Arc::new(DisplayRenderer {
+        weak: window.as_weak(),
+        generation: Arc::clone(&runtime.viewer_generation),
+        revision: AtomicU64::new(0),
+        state: Mutex::new(DisplayRenderQueue::default()),
+    });
     let jobs = Arc::clone(&runtime.background_jobs);
-    let generation = Arc::clone(&runtime.viewer_generation);
-    let revision = Arc::new(AtomicU64::new(0));
+    let weak = window.as_weak();
     window
         .global::<AppState>()
         .on_viewer_display_changed(move || {
             let Some(win) = weak.upgrade() else {
                 return;
             };
-            let s = win.global::<AppState>();
-            let Some(pixels) = s.get_viewer_original().to_rgb8() else {
+            let state = win.global::<AppState>();
+            let Some(pixels) = state.get_viewer_original().to_rgb8() else {
                 return;
             };
-            let settings = display_settings(&win);
-            let id = revision.fetch_add(1, Ordering::AcqRel) + 1;
-            let opened = generation.load(Ordering::Acquire);
-            s.set_viewer_adjusting(true);
-            let weak = weak.clone();
-            let revision = Arc::clone(&revision);
-            let generation = Arc::clone(&generation);
-            if !jobs.submit(move || {
-                if revision.load(Ordering::Acquire) != id
-                    || generation.load(Ordering::Acquire) != opened
-                {
-                    return;
-                }
-                let Some(image) = image::RgbImage::from_raw(
-                    pixels.width(),
-                    pixels.height(),
-                    pixels.as_bytes().to_vec(),
-                ) else {
-                    return;
-                };
-                let image = transform(image, settings);
-                let pixels = slint::SharedPixelBuffer::<slint::Rgb8Pixel>::clone_from_slice(
-                    image.as_raw(),
-                    image.width(),
-                    image.height(),
+            let request = DisplayRequest {
+                pixels,
+                settings: display_settings(&win),
+                revision: renderer.revision.fetch_add(1, Ordering::AcqRel) + 1,
+                generation: renderer.generation.load(Ordering::Acquire),
+            };
+            state.set_viewer_adjusting(true);
+            let mut queue = renderer
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            queue.latest = Some(request);
+            if queue.scheduled {
+                return;
+            }
+            queue.scheduled = true;
+            drop(queue);
+            let worker = Arc::clone(&renderer);
+            if !jobs.submit(move || worker.run()) {
+                let mut queue = renderer
+                    .state
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                queue.latest = None;
+                queue.scheduled = false;
+                state.set_viewer_adjusting(false);
+                state.set_viewer_feedback_error(true);
+                state.set_viewer_feedback(
+                    "Affichage indisponible. Réessayez dans un instant.".into(),
                 );
-                let _ = weak.upgrade_in_event_loop(move |win| {
-                    if revision.load(Ordering::Acquire) == id
-                        && generation.load(Ordering::Acquire) == opened
-                    {
-                        win.set_viewer_image(slint::Image::from_rgb8(pixels));
-                        let s = win.global::<AppState>();
-                        s.set_viewer_adjusting(false);
-                        s.set_viewer_pan_x(0.0);
-                        s.set_viewer_pan_y(0.0);
-                    }
-                });
-            }) {
-                s.set_viewer_adjusting(false);
-                s.set_viewer_feedback_error(true);
-                s.set_viewer_feedback("Affichage indisponible. Réessayez dans un instant.".into());
             }
         });
 }
+
+struct DisplayRequest {
+    pixels: slint::SharedPixelBuffer<slint::Rgb8Pixel>,
+    settings: DisplaySettings,
+    revision: u64,
+    generation: u64,
+}
+#[derive(Default)]
+struct DisplayRenderQueue {
+    latest: Option<DisplayRequest>,
+    scheduled: bool,
+}
+struct DisplayRenderer {
+    weak: slint::Weak<MainWindow>,
+    generation: Arc<AtomicU64>,
+    revision: AtomicU64,
+    state: Mutex<DisplayRenderQueue>,
+}
+impl DisplayRenderer {
+    fn current(&self, request: &DisplayRequest) -> bool {
+        self.revision.load(Ordering::Acquire) == request.revision
+            && self.generation.load(Ordering::Acquire) == request.generation
+    }
+    fn run(self: Arc<Self>) {
+        loop {
+            let request = {
+                let mut queue = self
+                    .state
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let Some(request) = queue.latest.take() else {
+                    queue.scheduled = false;
+                    return;
+                };
+                request
+            };
+            if !self.current(&request) {
+                continue;
+            }
+            let Some(image) = image::RgbImage::from_raw(
+                request.pixels.width(),
+                request.pixels.height(),
+                request.pixels.as_bytes().to_vec(),
+            ) else {
+                continue;
+            };
+            let image = transform(image, request.settings);
+            let pixels = slint::SharedPixelBuffer::<slint::Rgb8Pixel>::clone_from_slice(
+                image.as_raw(),
+                image.width(),
+                image.height(),
+            );
+            let renderer = Arc::clone(&self);
+            let _ = self.weak.upgrade_in_event_loop(move |win| {
+                if renderer.generation.load(Ordering::Acquire) == request.generation {
+                    win.set_viewer_image(slint::Image::from_rgb8(pixels));
+                    let state = win.global::<AppState>();
+                    // Show intermediate frames during a drag, and only finish when caught up.
+                    state.set_viewer_adjusting(!renderer.current(&request));
+                    state.set_viewer_pan_x(0.0);
+                    state.set_viewer_pan_y(0.0);
+                }
+            });
+        }
+    }
+}
+
 type ComparisonRow = (
     String,
     String,

@@ -107,6 +107,7 @@ impl CameraBackend for WindowsMediaFoundationBackend {
 struct WindowsCameraDevice {
     descriptor: CameraDescriptor,
     capabilities: CameraCapabilities,
+    button_status: Option<String>,
     command_sender: SyncSender<WorkerCommand>,
     events: Arc<EventMailbox>,
     worker: Option<JoinHandle<()>>,
@@ -141,6 +142,10 @@ impl CameraDevice for WindowsCameraDevice {
 
     fn capabilities(&self) -> &CameraCapabilities {
         &self.capabilities
+    }
+
+    fn hardware_button_status(&self) -> Option<String> {
+        self.button_status.clone()
     }
 
     fn start_stream(&mut self, configuration: &StreamConfiguration) -> CameraResult<()> {
@@ -273,14 +278,25 @@ fn expired_control_command() -> CameraError {
 struct OpenedDevice {
     descriptor: CameraDescriptor,
     capabilities: CameraCapabilities,
+    button_status: Option<String>,
 }
 
 struct WorkerDevice {
+    button: Option<crate::button::NativeButton>,
+    button_status: Option<String>,
     source: IMFMediaSource,
     source_reader: IMFSourceReader,
     descriptor: CameraDescriptor,
     capabilities: CameraCapabilities,
     controls: NativeControls,
+}
+
+impl WorkerDevice {
+    fn reset_button(&self) {
+        if let Some(button) = &self.button {
+            button.reset();
+        }
+    }
 }
 
 #[derive(Default)]
@@ -292,10 +308,23 @@ struct EventMailbox {
 #[derive(Default)]
 struct EventMailboxState {
     pending: Option<CameraResult<CameraEvent>>,
+    buttons: std::collections::VecDeque<CameraEvent>,
     closed: bool,
 }
 
 impl EventMailbox {
+    fn publish_button(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if state.closed || state.buttons.len() >= 16 {
+            return;
+        }
+        state.buttons.push_back(CameraEvent::HardwareButtonPressed);
+        self.available.notify_one();
+    }
+
     fn publish_frame(&self, frame: CapturedFrame) {
         let mut state = self
             .state
@@ -324,6 +353,7 @@ impl EventMailbox {
             return;
         }
 
+        state.buttons.clear();
         state.pending = Some(event);
         self.available.notify_all();
     }
@@ -334,6 +364,7 @@ impl EventMailbox {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         state.pending = None;
+        state.buttons.clear();
     }
 
     fn close(&self) {
@@ -342,6 +373,7 @@ impl EventMailbox {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         state.closed = true;
+        state.buttons.clear();
         self.available.notify_all();
     }
 
@@ -353,6 +385,13 @@ impl EventMailbox {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
 
         loop {
+            let terminal = state
+                .pending
+                .as_ref()
+                .is_some_and(|event| !matches!(event, Ok(CameraEvent::Frame(_))));
+            if !terminal && let Some(event) = state.buttons.pop_front() {
+                return Ok(event);
+            }
             if let Some(event) = state.pending.take() {
                 return event;
             }
@@ -376,7 +415,7 @@ impl EventMailbox {
                 .wait_timeout(state, remaining)
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             state = waited.0;
-            if waited.1.timed_out() && state.pending.is_none() {
+            if waited.1.timed_out() && state.pending.is_none() && state.buttons.is_empty() {
                 return Err(CameraError::new(
                     CameraErrorKind::TimedOut,
                     "timed out waiting for a Media Foundation camera event",
@@ -414,6 +453,7 @@ fn open_video_device(device_id: &CameraDeviceId) -> CameraResult<WindowsCameraDe
         Ok(Ok(opened)) => Ok(WindowsCameraDevice {
             descriptor: opened.descriptor,
             capabilities: opened.capabilities,
+            button_status: opened.button_status,
             command_sender,
             events,
             worker: Some(worker),
@@ -471,6 +511,7 @@ fn device_worker(
     let opened = OpenedDevice {
         descriptor: worker_device.descriptor.clone(),
         capabilities: worker_device.capabilities.clone(),
+        button_status: worker_device.button_status.clone(),
     };
     if ready_sender.send(Ok(opened)).is_err() {
         shutdown_worker_device(worker_device);
@@ -512,6 +553,7 @@ fn run_worker_loop(
                 WorkerCommand::Start(requested, response_sender) => {
                     let result = configure_stream(&worker_device.source_reader, &requested);
                     if result.is_ok() {
+                        worker_device.reset_button();
                         events.clear();
                         configuration = Some(requested);
                         sequence_number = 0;
@@ -521,6 +563,7 @@ fn run_worker_loop(
                     let _ = response_sender.send(result);
                 }
                 WorkerCommand::Stop(response_sender) => {
+                    worker_device.reset_button();
                     let result = flush_source_reader(&worker_device.source_reader);
                     streaming = false;
                     configuration = None;
@@ -561,6 +604,14 @@ fn run_worker_loop(
             streaming = false;
             continue;
         };
+
+        if worker_device
+            .button
+            .as_ref()
+            .is_some_and(crate::button::NativeButton::take_press)
+        {
+            events.publish_button();
+        }
 
         match read_next_frame(
             &worker_device.source_reader,
@@ -899,7 +950,28 @@ fn open_on_worker(requested_id: &str) -> CameraResult<WorkerDevice> {
     let controls = NativeControls::discover(&source);
     capabilities.controls = controls.descriptors();
 
+    let (button, button_status) = if descriptor
+        .usb
+        .as_ref()
+        .is_some_and(|usb| usb.vendor_id == 0x21cd && usb.product_id == 0x603b)
+    {
+        match crate::button::NativeButton::discover(&source) {
+            Ok(button) => (
+                Some(button),
+                Some("Bouton DE400 : abonnement natif Windows actif. Une pression réelle doit confirmer la réception.".to_owned()),
+            ),
+            Err(error) => (
+                None,
+                Some(format!("Bouton DE400 indisponible avec ce pilote Windows : {error}. La capture à l’écran reste disponible.")),
+            ),
+        }
+    } else {
+        (None, None)
+    };
+
     Ok(WorkerDevice {
+        button,
+        button_status,
         source,
         source_reader,
         descriptor,
@@ -909,6 +981,7 @@ fn open_on_worker(requested_id: &str) -> CameraResult<WorkerDevice> {
 }
 
 fn shutdown_worker_device(worker_device: WorkerDevice) {
+    drop(worker_device.button);
     drop(worker_device.source_reader);
     shutdown_source(&worker_device.source);
 }
@@ -1436,6 +1509,7 @@ mod tests {
     fn terminal_event_replaces_a_stale_frame() {
         let mailbox = EventMailbox::default();
         mailbox.publish_frame(frame(1));
+        mailbox.publish_button();
         mailbox.publish_terminal(Ok(CameraEvent::Disconnected));
 
         assert_eq!(
@@ -1448,6 +1522,7 @@ mod tests {
     fn clearing_mailbox_discards_previous_stream_frame() {
         let mailbox = EventMailbox::default();
         mailbox.publish_frame(frame(1));
+        mailbox.publish_button();
         mailbox.clear();
 
         assert_eq!(
@@ -1457,6 +1532,26 @@ mod tests {
                 .kind(),
             CameraErrorKind::TimedOut
         );
+    }
+
+    #[test]
+    fn camera_frames_do_not_replace_pending_button_presses() {
+        let mailbox = EventMailbox::default();
+        mailbox.publish_frame(frame(1));
+        mailbox.publish_button();
+        mailbox.publish_frame(frame(2));
+        mailbox.publish_button();
+        mailbox.publish_frame(frame(3));
+        for _ in 0..2 {
+            assert_eq!(
+                mailbox.next_event(Duration::ZERO),
+                Ok(CameraEvent::HardwareButtonPressed)
+            );
+        }
+        let CameraEvent::Frame(frame) = mailbox.next_event(Duration::ZERO).unwrap() else {
+            panic!("the latest frame follows both button presses");
+        };
+        assert_eq!(frame.sequence_number, 3);
     }
 
     #[test]

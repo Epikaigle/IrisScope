@@ -1,5 +1,5 @@
 import { ResizeHandle } from "./resize-handle.slint";
-import { AppButton, AppSlider } from "./controls.slint";
+import { AppButton, AppSlider, Tooltip } from "./controls.slint";
 import { AppState } from "./state.slint";
 import { Design } from "./theme.slint";
 import { PhotoPane } from "./photo-pane.slint";
@@ -12,6 +12,8 @@ export component ViewerOverlay inherits Rectangle {
     background: Design.overlay-surface;
     TouchArea { clicked => {} }
     private property <bool> controls-shown: AppState.viewer-is-video || !AppState.image-only || AppState.photo-controls-visible;
+    private property <float> zoom-value: AppState.viewer-fit ? current-pane.actual-zoom : AppState.viewer-zoom;
+    changed zoom-value => { zoom-slider.value = root.zoom-value; }
     private property <length> panel-width: clamp(AppState.viewer-panel-width == 0 ? (root.width < 1000px ? 252px : 300px) : AppState.viewer-panel-width * 1px,252px,max(252px,min(480px,root.width - 500px)));
     private property <bool> toolbar-interacting: fullscreen-button.active-interaction || image-button.active-interaction || presentation-button.active-interaction || export-button.active-interaction || close-button.active-interaction || fit-button.active-interaction || original-size-button.active-interaction || zoom-out-button.active-interaction || zoom-in-button.active-interaction || zoom-slider.active-interaction || loupe-button.active-interaction || previous-button.active-interaction || next-button.active-interaction || retained-button.active-interaction || notes-button.active-interaction || references-button.active-interaction || display-button.active-interaction || comparison-button.active-interaction;
     changed toolbar-interacting => { AppState.photo-controls-interacting = root.toolbar-interacting; if root.toolbar-interacting { AppState.show-photo-controls(); } }
@@ -37,7 +39,7 @@ export component ViewerOverlay inherits Rectangle {
             fit-button := AppButton { compact: true; overlay: true; text: "Ajuster"; checkable: true; selected: AppState.viewer-fit; enabled: !AppState.viewer-loading; clicked => { AppState.fit-viewer(); } }
             original-size-button := AppButton { compact: true; overlay: true; text: "100 %"; tooltip: "Taille réelle : un pixel photo par pixel écran"; checkable: true; selected: !AppState.viewer-fit && AppState.viewer-zoom == 100; enabled: !AppState.viewer-loading; clicked => { AppState.viewer-fit = false; AppState.viewer-zoom = 100; AppState.viewer-pan-x = 0px; AppState.viewer-pan-y = 0px; AppState.link-view(false); } }
             zoom-out-button := AppButton { compact: true; overlay: true; text: "−"; accessibility-label: "Réduire le zoom"; enabled: !AppState.viewer-loading; clicked => { current-pane.zoom-at(round((AppState.viewer-fit ? current-pane.actual-zoom : AppState.viewer-zoom)/1.2),current-pane.width/2,current-pane.height/2); } }
-            zoom-slider := AppSlider { overlay: true; label: "Zoom de la photo en pourcentage de pixels"; minimum: 10; maximum: 800; step: 10; value: AppState.viewer-fit ? current-pane.actual-zoom : AppState.viewer-zoom; enabled: !AppState.viewer-loading; released(v) => { current-pane.zoom-at(round(v), current-pane.width/2, current-pane.height/2); } }
+            zoom-slider := AppSlider { overlay: true; label: "Zoom de la photo en pourcentage de pixels"; minimum: 10; maximum: 800; step: 1; value: AppState.viewer-fit ? current-pane.actual-zoom : AppState.viewer-zoom; enabled: !AppState.viewer-loading; changed => { current-pane.zoom-at(round(self.value), current-pane.width/2, current-pane.height/2); } }
             Text { width: 56px; text: AppState.viewer-fit ? "Ajusté" : AppState.viewer-zoom + " %"; color: Design.overlay-text-secondary; font-size: 12px; vertical-alignment: center; horizontal-alignment: center; }
             zoom-in-button := AppButton { compact: true; overlay: true; text: "+"; accessibility-label: "Augmenter le zoom"; enabled: !AppState.viewer-loading; clicked => { current-pane.zoom-at(round((AppState.viewer-fit ? current-pane.actual-zoom : AppState.viewer-zoom)*1.2),current-pane.width/2,current-pane.height/2); } }
             loupe-button := AppButton { collapse-when-hidden: true; visible: !AppState.viewer-is-video; compact: true; overlay: true; text: "Loupe"; checkable: true; selected: AppState.viewer-loupe; clicked => { AppState.viewer-loupe = !AppState.viewer-loupe; } }
@@ -65,15 +67,19 @@ export component ViewerOverlay inherits Rectangle {
         }
             }
         }
-        if !AppState.viewer-is-video && (AppState.viewer-review-dirty || AppState.viewer-review-busy || AppState.viewer-review-load-error || AppState.viewer-autosave-paused): Text {
-            text: AppState.viewer-review-status; color: AppState.viewer-autosave-paused || AppState.viewer-review-load-error ? Design.overlay-danger : Design.overlay-text-secondary;
-            font-size: 12px; wrap: word-wrap; vertical-stretch: 0;
+        // A fixed status row prevents autosave transitions from moving the photo.
+        review-feedback := Text {
+            height: !AppState.viewer-is-video && root.controls-shown ? 24px : 0px;
+            vertical-stretch: 0;
+            text: AppState.presentation-mode
+                ? (AppState.viewer-feedback-error || AppState.viewer-autosave-paused || AppState.viewer-review-load-error ? "Une erreur est survenue. Quittez la présentation pour consulter les détails." : AppState.viewer-review-status)
+                : AppState.viewer-feedback-error ? AppState.viewer-feedback : AppState.viewer-review-dirty || AppState.viewer-review-busy || AppState.viewer-feedback == "" ? AppState.viewer-review-status : AppState.viewer-feedback;
+            color: AppState.viewer-feedback-error || AppState.viewer-autosave-paused || AppState.viewer-review-load-error ? Design.overlay-danger : Design.overlay-text-secondary;
+            font-size: 12px; overflow: elide; vertical-alignment: center;
+            accessible-label: self.text;
+            status-hover := TouchArea { }
+            Tooltip { text: review-feedback.text; active: status-hover.has-hover; }
         }
-        if AppState.presentation-mode && AppState.consultation-paused: Text {
-            text: "Notes de séance non enregistrées. Quittez la présentation pour retrouver le brouillon.";
-            color: Design.overlay-danger; font-size: 12px; wrap: word-wrap; vertical-stretch: 0;
-        }
-        if AppState.viewer-feedback != "": Text { text: AppState.presentation-mode ? (AppState.viewer-feedback-error ? "Une erreur est survenue. Quittez la présentation pour consulter les détails." : "Photo prête") : AppState.viewer-feedback; color: AppState.viewer-feedback-error ? Design.overlay-danger : Design.overlay-text-secondary; font-size: 12px; wrap: word-wrap; vertical-stretch: 0; }
         if AppState.export-feedback != "": HorizontalLayout {
             spacing: 8px; vertical-stretch: 0;
             Text { min-width: 0px; horizontal-stretch: 1; text: AppState.presentation-mode ? (AppState.export-feedback-error ? "Échec de l’export. Quittez la présentation pour consulter les détails." : AppState.export-busy ? "Export en cours…" : "Export terminé") : AppState.export-feedback; color: AppState.export-feedback-error ? Design.overlay-danger : Design.overlay-text-secondary; font-size: 12px; wrap: word-wrap; }

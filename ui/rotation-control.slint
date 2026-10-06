@@ -1,0 +1,69 @@
+import { LineEdit } from "std-widgets.slint";
+import { AppButton, AppSlider } from "./controls.slint";
+import { Design } from "./theme.slint";
+import { PopupBounds } from "./popup-bounds.slint";
+
+// A compact entry point, with both continuous adjustment and exact degree input.
+export component RotationControl inherits AppButton {
+    in-out property <int> angle: 0;
+    in property <bool> short-label: false;
+    in property <length> left-limit: 8px;
+    in property <length> right-limit: PopupBounds.width - 8px;
+    in property <length> above-clearance: 0px;
+    callback adjusted(int);
+    // In photo tools, use the adjacent image area; in the camera, stay above
+    // the bottom toolbar so all its commands remain reachable.
+    out property <length> popup-left: clamp(root.overlay ? root.absolute-position.x - 300px : root.absolute-position.x + (root.width - 280px) / 2, root.left-limit, root.right-limit - 280px);
+    out property <length> popup-top: clamp(root.overlay ? root.absolute-position.y : root.absolute-position.y - 182px - root.above-clearance, 8px, PopupBounds.height - 182px);
+    compact: true;
+    text: (root.short-label ? "" : "Rotation ") + root.angle + "°";
+    accessibility-label: "Régler précisément l’angle de rotation";
+    tooltip: "Rotation de 0 à 359° · curseur ou saisie au degré près";
+    clicked => { rotation-menu.show(); }
+    public function set-angle(value: int) {
+        root.angle = clamp(value, 0, 359);
+        root.adjusted(root.angle);
+    }
+    rotation-menu := PopupWindow {
+        x: root.popup-left - root.absolute-position.x;
+        y: root.popup-top - root.absolute-position.y;
+        width: 280px; height: 174px;
+        close-policy: close-on-click-outside;
+        forward-focus: popup-focus;
+        popup-focus := FocusScope {
+            KeyBinding { keys: @keys(Escape); activated => { rotation-menu.close(); } }
+        Rectangle {
+            private property <int> current-angle: root.angle;
+            changed current-angle => { angle-slider.value = self.current-angle; degree-input.text = self.current-angle + ""; }
+            background: root.overlay ? Design.overlay-panel : Design.surface-raised;
+            border-width: 1px; border-color: root.overlay ? Design.overlay-border : Design.border;
+            border-radius: Design.control-radius;
+            VerticalLayout { padding: 12px; spacing: 8px;
+                HorizontalLayout { height: 32px; spacing: 6px;
+                    Text { text: "Angle"; color: root.overlay ? Design.overlay-text : Design.text; vertical-alignment: center; }
+                    degree-input := LineEdit {
+                        width: 68px; text: root.angle + ""; accessible-label: "Angle de rotation en degrés";
+                        accepted => { if self.text.is-float() { root.set-angle(round(self.text.to-float())); } }
+                    }
+                    Text { text: "°"; color: root.overlay ? Design.overlay-text : Design.text; vertical-alignment: center; }
+                    Rectangle { horizontal-stretch: 1; background: transparent; }
+                    AppButton { compact: true; overlay: root.overlay; text: "Fermer"; clicked => {rotation-menu.close();} }
+                }
+                angle-slider := AppSlider {
+                    height: 32px; overlay: root.overlay; label: "Angle de rotation en degrés";
+                    minimum: 0; maximum: 359; step: 1; value: root.angle;
+                    changed => { root.set-angle(round(self.value)); }
+                }
+                HorizontalLayout { height: 32px; spacing: 4px;
+                    for angle in [0,90,180,270]: AppButton {
+                        horizontal-stretch: 1; compact: true; overlay: root.overlay; text: angle + "°";
+                        selected: root.angle == angle; checkable: true;
+                        clicked => { root.set-angle(angle); }
+                    }
+                }
+                Text { text: "Flèches du clavier : ajuster de 1°"; font-size: 11px; color: root.overlay ? Design.overlay-text-secondary : Design.text-secondary; }
+            }
+        }
+        }
+    }
+}

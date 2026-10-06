@@ -37,6 +37,9 @@ pub fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 pub(crate) fn install_controllers(main_window: &MainWindow, runtime: &AppRuntime) {
+    main_window
+        .global::<crate::ui::AppState>()
+        .set_hardware_button_status(crate::app_helpers::hardware_button_status().into());
     patient_controller::install(main_window, runtime);
     library_controller::install(main_window, runtime);
     capture_controller::install(main_window, runtime);

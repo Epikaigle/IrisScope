@@ -1,5 +1,8 @@
 //! Image decoding and processing for `IrisScope`.
 
+mod rotation;
+pub use rotation::{RotationGeometry, rotate_rgb};
+
 use std::{error::Error, fmt};
 
 use image::{ColorType, ImageEncoder, imageops::FilterType};
@@ -465,12 +468,10 @@ pub fn apply_transforms(
         return (width, height, pixels.to_vec());
     };
 
-    let mut transformed = match rotation_degrees % 360 {
-        90 => image::imageops::rotate90(&image_buffer),
-        180 => image::imageops::rotate180(&image_buffer),
-        270 => image::imageops::rotate270(&image_buffer),
-        _ => image_buffer,
-    };
+    let mut transformed = rotate_rgb(
+        image_buffer,
+        i32::try_from(rotation_degrees % 360).unwrap_or(0),
+    );
 
     if mirror_h {
         transformed = image::imageops::flip_horizontal(&transformed);

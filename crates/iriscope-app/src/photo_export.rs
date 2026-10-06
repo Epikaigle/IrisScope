@@ -500,9 +500,12 @@ pub(super) fn install(window: &MainWindow, runtime: &AppRuntime) {
                     )
                     .ok_or_else(|| io::Error::other("Image indisponible."))?;
                     let bytes = if kind == 0 {
+                        let dimensions = original.dimensions();
                         let img = photo_tools::transform(original, settings);
-                        let img =
-                            annotated(img, &photo_tools::projected_review(&review, settings))?;
+                        let img = annotated(
+                            img,
+                            &photo_tools::projected_review(&review, settings, dimensions),
+                        )?;
                         iriscope_imaging::encode_rgb8_png(img.as_raw(), img.width(), img.height())
                             .map_err(io::Error::other)?
                     } else {

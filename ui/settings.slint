@@ -1,6 +1,8 @@
+import { ThumbnailSizeControl } from "./thumbnail-size.slint";
+import { AppComboBox } from "./combo-box.slint";
 import { AppButton } from "./controls.slint";
 import { Design } from "./theme.slint";
-import { LineEdit, ComboBox, ScrollView } from "std-widgets.slint";
+import { LineEdit, ScrollView } from "std-widgets.slint";
 import { AppState } from "./state.slint";
 
 // Values remain beside labels, without stretching to match the settings form.
@@ -61,7 +63,7 @@ component SettingsField inherits VerticalLayout {
             placeholder-text: root.placeholder;
             changed has-focus => {
                 AppState.focused-text-fields = Math.max(0,
-                    AppState.focused-text-fields + (self.has-focus ? 1 : -1));
+                AppState.focused-text-fields + (self.has-focus ? 1 : -1));
             }
             accepted(value) => {
                 if root.enabled && (value != root.value || AppState.settings-feedback-is-error) {
@@ -91,9 +93,9 @@ export component SettingsPage inherits Rectangle {
     private property <bool> stacked: root.width < 1040px;
     private property <length> available-width: max(0px, settings-scroll.visible-width - 48px);
     private property <length> settings-width: root.stacked ? root.available-width
-        : (root.available-width - 24px) * 0.62;
+    : (root.available-width - 24px) * 0.50;
     private property <length> diagnostics-width: root.stacked ? root.available-width
-        : (root.available-width - 24px) * 0.38;
+    : (root.available-width - 24px) * 0.50;
 
     function select-theme(mode: int) {
         if AppState.settings-theme != mode || AppState.settings-feedback-is-error {
@@ -238,123 +240,6 @@ export component SettingsPage inherits Rectangle {
                             }
                         }
 
-                Rectangle {
-                    border-radius: Design.card-radius; background: Design.surface;
-                    border-width: 1px; border-color: Design.border;
-                    height: interface-content.preferred-height; vertical-stretch: 0;
-                    interface-content := VerticalLayout { padding: 20px; spacing: 12px; alignment: start;
-                        Text {text: "Interface et affichage"; font-size: 16px; font-weight: 600; color: Design.text; vertical-stretch: 0;}
-                                VerticalLayout {
-                                    vertical-stretch: 0;
-                                    spacing: 8px;
-                                    Text {
-                                        text: "Thème de l’interface";
-                                        color: Design.text-secondary;
-                                        font-size: 13px;
-                                        font-weight: 600;
-                                        vertical-stretch: 0;
-                                    }
-                                    HorizontalLayout {
-                                        alignment: start;
-                                        spacing: 8px;
-                                        vertical-stretch: 0;
-                                        AppButton {
-                                            text: "Système";
-                                            checkable: true;
-                                            selected: AppState.settings-theme == 0;
-                                            clicked => { root.select-theme(0); }
-                                        }
-                                        AppButton {
-                                            text: "Clair";
-                                            checkable: true;
-                                            selected: AppState.settings-theme == 1;
-                                            clicked => { root.select-theme(1); }
-                                        }
-                                        AppButton {
-                                            text: "Sombre";
-                                            checkable: true;
-                                            selected: AppState.settings-theme == 2;
-                                            clicked => { root.select-theme(2); }
-                                        }
-                                    }
-                                }
-
-                        HorizontalLayout { height: 36px; spacing: 12px; vertical-stretch: 0;
-                            Text {min-width:0px; horizontal-stretch:1; text:"Mémoriser la disposition"; color:Design.text; wrap:word-wrap; vertical-alignment:center;}
-                            AppButton {compact:true; checkable:true; selected:AppState.remember-layout; text:AppState.remember-layout ? "Activée" : "Désactivée"; clicked=>{AppState.remember-layout=!AppState.remember-layout;AppState.interface-edited();}}
-                        }
-                        Text {text:"Panneaux ouverts, largeurs et vue grille ou liste sont retrouvés au prochain lancement. Faites glisser les séparateurs pour ajuster les panneaux."; color:Design.text-muted; font-size:12px; wrap:word-wrap; vertical-stretch:0;}
-                        HorizontalLayout { height: 36px; spacing: 12px; vertical-stretch: 0;
-                            Text {min-width:0px; horizontal-stretch:1; text:"Image seule à l’ouverture des photos"; color:Design.text; wrap:word-wrap; vertical-alignment:center;}
-                            AppButton {compact:true; checkable:true; selected:AppState.image-only; text:AppState.image-only ? "Activée" : "Désactivée"; clicked=>{AppState.toggle-image-only();}}
-                        }
-                        Text {text:"Les commandes se masquent après 3 secondes. Bougez la souris ou utilisez « Commandes » pour les retrouver. Échap revient à la vue complète."; color:Design.text-muted; font-size:12px; wrap:word-wrap; vertical-stretch:0;}
-                        HorizontalLayout { height: 36px; spacing: 12px; vertical-stretch: 0;
-                            Text {min-width:0px; horizontal-stretch:1; text:"Taille des miniatures"; color:Design.text; vertical-alignment:center;}
-                            ComboBox {width:180px; model:["Petites","Moyennes","Grandes"]; current-index:AppState.thumbnail-size; selected(value)=>{AppState.thumbnail-size=self.current-index;AppState.interface-edited();}}
-                        }
-                        HorizontalLayout { height: 36px; spacing: 12px; vertical-stretch: 0;
-                            Text {min-width:0px; horizontal-stretch:1; text:"Montrer l’iris au patient"; color:Design.text; wrap:word-wrap; vertical-alignment:center;}
-                            AppButton {compact:true; text:"Présenter"; clicked=>{AppState.toggle-presentation();}}
-                        }
-                        Text {text:"La présentation masque les noms, numéros de dossier, fichiers, notes et annotations. Les indicateurs de capture et les erreurs restent visibles. Quittez ce mode pour accéder aux dossiers."; color:Design.text-muted; font-size:12px; wrap:word-wrap; vertical-stretch:0;}
-                        AppButton {text:"Réinitialiser la disposition"; compact:true; clicked=>{AppState.reset-interface();}}
-                    }
-                }
-
-                        Rectangle {
-                            border-radius: Design.card-radius;
-                            background: Design.surface;
-                            border-width: 1px;
-                            border-color: Design.border;
-                            height: display-content.preferred-height;
-                            vertical-stretch: 0;
-                            display-content := VerticalLayout {
-                                spacing: 16px;
-                                padding: 20px;
-                                alignment: start;
-                                Text {
-                                    text: "Caméra";
-                                    font-size: 16px;
-                                    font-weight: 600;
-                                    color: Design.text;
-                                    vertical-stretch: 0;
-                                }
-                                VerticalLayout {
-                                    vertical-stretch: 0;
-                                    spacing: 8px;
-                                    Text {
-                                        text: "Qualité du direct et des vidéos";
-                                        color: Design.text-secondary;
-                                        font-size: 13px;
-                                        font-weight: 600;
-                                        vertical-stretch: 0;
-                                    }
-                                    ComboBox {
-                                        height: 40px;
-                                        vertical-stretch: 0;
-                                        model: ["Maximale — résolution", "Équilibrée", "Fluide — images par seconde"];
-                                        current-index: AppState.settings-video-quality;
-                                        enabled: !AppState.recording-busy && !AppState.storage-busy;
-                                        accessible-label: "Qualité du direct et des vidéos";
-                                        selected(value) => {
-                                            AppState.update-video-quality(value == "Équilibrée" ? 1
-                                                : value == "Fluide — images par seconde" ? 2 : 0);
-                                        }
-                                    }
-                                    Text {
-                                        text: AppState.recording-busy
-                                            ? "La qualité et le dossier seront modifiables une fois la vidéo terminée."
-                                            : "Changer de qualité redémarre brièvement le flux. Le mode actif est indiqué dans le diagnostic.";
-                                        color: Design.text-muted;
-                                        font-size: 12px;
-                                        wrap: word-wrap;
-                                        vertical-stretch: 0;
-                                    }
-                                }
-                            }
-                        }
-
                         Rectangle {
                             border-radius: Design.card-radius;
                             background: Design.surface;
@@ -407,77 +292,195 @@ export component SettingsPage inherits Rectangle {
                         }
                     }
 
-                    Rectangle {
+                    VerticalLayout {
                         row: root.stacked ? 1 : 0;
                         col: root.stacked ? 0 : 1;
                         width: root.diagnostics-width;
-                        border-radius: Design.card-radius;
-                        background: Design.surface;
-                        border-width: 1px;
-                        border-color: Design.border;
-                        height: diagnostic-content.preferred-height;
-                        vertical-stretch: 0;
-
-                        diagnostic-content := VerticalLayout {
-                            spacing: 16px;
-                            padding: 20px;
-                            alignment: start;
-                            HorizontalLayout { height: 36px; spacing: 8px; vertical-stretch: 0;
-                            Text { min-width: 0px; horizontal-stretch: 1;
-                                text: "Diagnostic caméra";
-                                font-size: 16px;
-                                font-weight: 600;
-                                color: Design.text;
-                                vertical-stretch: 0;
-                            }
-                            AppButton {compact:true; text:AppState.advanced-settings-expanded ? "Replier" : "Détails"; checkable:true; selected:AppState.advanced-settings-expanded; clicked=>{AppState.advanced-settings-expanded=!AppState.advanced-settings-expanded;AppState.interface-edited();}}
-                            }
-                            Text {
-                                text: AppState.status-text == "" ? "Iridoscope déconnecté" : AppState.status-text;
-                                color: AppState.camera-connected ? Design.success : Design.text-muted;
-                                font-size: 13px;
-                                font-weight: 600;
-                                wrap: word-wrap;
-                                vertical-stretch: 0;
-                            }
-
-                            if !AppState.camera-connected: Text {
-                                text: "Branchez l’iridoscope pour consulter les informations du périphérique et du flux.";
-                                color: Design.text-muted;
-                                font-size: 12px;
-                                wrap: word-wrap;
-                                vertical-stretch: 0;
-                            }
-
-                            if AppState.camera-connected && AppState.advanced-settings-expanded: VerticalLayout {
-                                spacing: 12px;
+                        spacing: 16px; alignment: start; vertical-stretch: 0;
+                        Rectangle {
+                            border-radius: Design.card-radius;
+                            background: Design.surface;
+                            border-width: 1px;
+                            border-color: Design.border;
+                            height: display-content.preferred-height;
+                            vertical-stretch: 0;
+                            display-content := VerticalLayout {
+                                spacing: 16px;
+                                padding: 20px;
                                 alignment: start;
-                                vertical-stretch: 0;
-                                DiagnosticRow { label: "Périphérique"; value: AppState.diagnostics.device-name; }
-                                DiagnosticRow { label: "Identifiant"; value: AppState.diagnostics.device-id; }
-                                DiagnosticRow { label: "Pilote"; value: AppState.diagnostics.backend-name; }
-                                DiagnosticRow { label: "Identité USB"; value: AppState.diagnostics.usb-info; }
-                                Rectangle { height: 1px; vertical-stretch: 0; background: Design.border; }
-                                DiagnosticRow { label: "Format"; value: AppState.diagnostics.active-format; }
-                                DiagnosticRow { label: "Résolution"; value: AppState.diagnostics.active-resolution; }
-                                DiagnosticRow { label: "Cadence du mode"; value: AppState.diagnostics.active-fps; }
-                                DiagnosticRow {
-                                    label: "Cadence mesurée";
-                                    value: AppState.is-streaming ? AppState.diagnostics.measured-fps : "Flux en pause";
-                                    highlight: AppState.is-streaming;
+                                Text {
+                                    text: "Caméra";
+                                    font-size: 16px;
+                                    font-weight: 600;
+                                    color: Design.text;
+                                    vertical-stretch: 0;
                                 }
-                                DiagnosticRow { label: "Décodage"; value: AppState.diagnostics.decode-time-ms; }
-                                DiagnosticRow { label: "Images reçues"; value: "" + AppState.diagnostics.frame-count; }
-                                DiagnosticRow { label: "Images ignorées"; value: "" + AppState.diagnostics.dropped-frames; }
+                                VerticalLayout {
+                                    vertical-stretch: 0;
+                                    spacing: 8px;
+                                    Text {
+                                        text: "Qualité du direct et des vidéos";
+                                        color: Design.text-secondary;
+                                        font-size: 13px;
+                                        font-weight: 600;
+                                        vertical-stretch: 0;
+                                    }
+                                    AppComboBox {
+                                        height: 36px;
+                                        vertical-stretch: 0;
+                                        model: ["Maximale — résolution", "Équilibrée", "Fluide — images par seconde"];
+                                        current-index <=> AppState.settings-video-quality;
+                                        enabled: !AppState.recording-busy && !AppState.storage-busy;
+                                        accessible-label: "Qualité du direct et des vidéos";
+                                        selected(value) => {
+                                            AppState.update-video-quality(value == "Équilibrée" ? 1
+                                            : value == "Fluide — images par seconde" ? 2 : 0);
+                                        }
+                                    }
+                                    Text {
+                                        text: AppState.recording-busy
+                                        ? "La qualité et le dossier seront modifiables une fois la vidéo terminée."
+                                        : "Changer de qualité redémarre brièvement le flux. Le mode actif est indiqué dans le diagnostic.";
+                                        color: Design.text-muted;
+                                        font-size: 12px;
+                                        wrap: word-wrap;
+                                        vertical-stretch: 0;
+                                    }
+                                }
                             }
+                        }
+                        Rectangle {
+                            border-radius: Design.card-radius; background: Design.surface;
+                            border-width: 1px; border-color: Design.border;
+                            height: interface-content.preferred-height; vertical-stretch: 0;
+                            interface-content := VerticalLayout { padding: 20px; spacing: 12px; alignment: start;
+                                Text {text: "Interface et affichage"; font-size: 16px; font-weight: 600; color: Design.text; vertical-stretch: 0;}
+                                VerticalLayout {
+                                    vertical-stretch: 0;
+                                    spacing: 8px;
+                                    Text {
+                                        text: "Thème de l’interface";
+                                        color: Design.text-secondary;
+                                        font-size: 13px;
+                                        font-weight: 600;
+                                        vertical-stretch: 0;
+                                    }
+                                    HorizontalLayout {
+                                        alignment: start;
+                                        spacing: 8px;
+                                        vertical-stretch: 0;
+                                        AppButton {
+                                            text: "Système";
+                                            checkable: true;
+                                            selected: AppState.settings-theme == 0;
+                                            clicked => { root.select-theme(0); }
+                                        }
+                                        AppButton {
+                                            text: "Clair";
+                                            checkable: true;
+                                            selected: AppState.settings-theme == 1;
+                                            clicked => { root.select-theme(1); }
+                                        }
+                                        AppButton {
+                                            text: "Sombre";
+                                            checkable: true;
+                                            selected: AppState.settings-theme == 2;
+                                            clicked => { root.select-theme(2); }
+                                        }
+                                    }
+                                }
 
-                            Rectangle { height: 1px; vertical-stretch: 0; background: Design.border; }
-                            Text {
-                                text: "Bouton Snapshot du DE400 : détection indisponible pour le moment. Utilisez la capture dans l’application ou les raccourcis clavier.";
-                                color: Design.text-muted;
-                                font-size: 12px;
-                                wrap: word-wrap;
-                                vertical-stretch: 0;
+                                HorizontalLayout { height: 36px; spacing: 12px; vertical-stretch: 0;
+                                    Text {min-width:0px; horizontal-stretch:1; text:"Mémoriser la disposition"; color:Design.text; wrap:word-wrap; vertical-alignment:center;}
+                                    AppButton {compact:true; checkable:true; selected:AppState.remember-layout; text:AppState.remember-layout ? "Activée" : "Désactivée"; clicked=>{AppState.remember-layout=!AppState.remember-layout;AppState.interface-edited();}}
+                                }
+                                Text {text:"Panneaux ouverts, largeurs et vue grille ou liste sont retrouvés au prochain lancement. Faites glisser les séparateurs pour ajuster les panneaux."; color:Design.text-muted; font-size:12px; wrap:word-wrap; vertical-stretch:0;}
+                                HorizontalLayout { height: 36px; spacing: 12px; vertical-stretch: 0;
+                                    Text {min-width:0px; horizontal-stretch:1; text:"Image seule à l’ouverture des photos"; color:Design.text; wrap:word-wrap; vertical-alignment:center;}
+                                    AppButton {compact:true; checkable:true; selected:AppState.image-only; text:AppState.image-only ? "Activée" : "Désactivée"; clicked=>{AppState.toggle-image-only();}}
+                                }
+                                Text {text:"Les commandes se masquent après 3 secondes. Bougez la souris ou utilisez « Commandes » pour les retrouver. Échap revient à la vue complète."; color:Design.text-muted; font-size:12px; wrap:word-wrap; vertical-stretch:0;}
+                                VerticalLayout { spacing: 8px; vertical-stretch: 0;
+                                    Text {text:"Taille des miniatures"; color:Design.text-secondary; font-size:13px; font-weight:600;}
+                                    ThumbnailSizeControl { height: 36px; }
+                                }
+                                HorizontalLayout { height: 36px; spacing: 12px; vertical-stretch: 0;
+                                    Text {min-width:0px; horizontal-stretch:1; text:"Montrer l’iris au patient"; color:Design.text; wrap:word-wrap; vertical-alignment:center;}
+                                    AppButton {compact:true; text:"Présenter"; clicked=>{AppState.toggle-presentation();}}
+                                }
+                                Text {text:"La présentation masque les noms, numéros de dossier, fichiers, notes et annotations. Les indicateurs de capture et les erreurs restent visibles. Quittez ce mode pour accéder aux dossiers."; color:Design.text-muted; font-size:12px; wrap:word-wrap; vertical-stretch:0;}
+                                AppButton {text:"Réinitialiser la disposition"; compact:true; clicked=>{AppState.reset-interface();}}
+                            }
+                        }
+                        Rectangle {
+                            border-radius: Design.card-radius;
+                            background: Design.surface;
+                            border-width: 1px;
+                            border-color: Design.border;
+                            height: diagnostic-content.preferred-height;
+                            vertical-stretch: 0;
+
+                            diagnostic-content := VerticalLayout {
+                                spacing: 16px;
+                                padding: 20px;
+                                alignment: start;
+                                HorizontalLayout { height: 36px; spacing: 8px; vertical-stretch: 0;
+                                    Text { min-width: 0px; horizontal-stretch: 1;
+                                        text: "Diagnostic caméra";
+                                        font-size: 16px;
+                                        font-weight: 600;
+                                        color: Design.text;
+                                        vertical-stretch: 0;
+                                    }
+                                    AppButton {compact:true; text:AppState.advanced-settings-expanded ? "Replier" : "Détails"; checkable:true; selected:AppState.advanced-settings-expanded; clicked=>{AppState.advanced-settings-expanded=!AppState.advanced-settings-expanded;AppState.interface-edited();}}
+                                }
+                                Text {
+                                    text: AppState.status-text == "" ? "Iridoscope déconnecté" : AppState.status-text;
+                                    color: AppState.camera-connected ? Design.success : Design.text-muted;
+                                    font-size: 13px;
+                                    font-weight: 600;
+                                    wrap: word-wrap;
+                                    vertical-stretch: 0;
+                                }
+
+                                if !AppState.camera-connected: Text {
+                                    text: "Branchez l’iridoscope pour consulter les informations du périphérique et du flux.";
+                                    color: Design.text-muted;
+                                    font-size: 12px;
+                                    wrap: word-wrap;
+                                    vertical-stretch: 0;
+                                }
+
+                                if AppState.camera-connected && AppState.advanced-settings-expanded: VerticalLayout {
+                                    spacing: 12px;
+                                    alignment: start;
+                                    vertical-stretch: 0;
+                                    DiagnosticRow { label: "Périphérique"; value: AppState.diagnostics.device-name; }
+                                    DiagnosticRow { label: "Identifiant"; value: AppState.diagnostics.device-id; }
+                                    DiagnosticRow { label: "Pilote"; value: AppState.diagnostics.backend-name; }
+                                    DiagnosticRow { label: "Identité USB"; value: AppState.diagnostics.usb-info; }
+                                    Rectangle { height: 1px; vertical-stretch: 0; background: Design.border; }
+                                    DiagnosticRow { label: "Format"; value: AppState.diagnostics.active-format; }
+                                    DiagnosticRow { label: "Résolution"; value: AppState.diagnostics.active-resolution; }
+                                    DiagnosticRow { label: "Cadence du mode"; value: AppState.diagnostics.active-fps; }
+                                    DiagnosticRow {
+                                        label: "Cadence mesurée";
+                                        value: AppState.is-streaming ? AppState.diagnostics.measured-fps : "Flux en pause";
+                                        highlight: AppState.is-streaming;
+                                    }
+                                    DiagnosticRow { label: "Décodage"; value: AppState.diagnostics.decode-time-ms; }
+                                    DiagnosticRow { label: "Images reçues"; value: "" + AppState.diagnostics.frame-count; }
+                                    DiagnosticRow { label: "Images ignorées"; value: "" + AppState.diagnostics.dropped-frames; }
+                                }
+
+                                Rectangle { height: 1px; vertical-stretch: 0; background: Design.border; }
+                                Text {
+                                    text: AppState.hardware-button-status;
+                                    color: Design.text-muted;
+                                    font-size: 12px;
+                                    wrap: word-wrap;
+                                    vertical-stretch: 0;
+                                }
                             }
                         }
                     }

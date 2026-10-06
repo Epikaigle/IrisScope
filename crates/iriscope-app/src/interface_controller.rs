@@ -18,8 +18,16 @@ fn apply(window: &MainWindow, preferences: &InterfacePreferences) {
     state.set_preferred_photo_panel(preferences.photo_panel);
     state.set_library_view(preferences.library_view);
     state.set_thumbnail_size(preferences.thumbnail_size);
+    state.set_thumbnail_width(preferences.thumbnail_width);
     state.set_advanced_settings_expanded(preferences.advanced_settings_expanded);
+    if state.get_presentation_mode() && !preferences.presentation_mode {
+        state.set_iris_fullscreen(state.get_presentation_return_fullscreen());
+    }
     state.set_presentation_mode(preferences.presentation_mode);
+    if preferences.presentation_mode {
+        state.set_presentation_return_fullscreen(state.get_iris_fullscreen());
+        state.set_iris_fullscreen(true);
+    }
     state.set_image_only(preferences.image_only);
     state.set_photo_controls_visible(true);
     state.set_interface_ready(true);
@@ -36,6 +44,7 @@ fn snapshot(window: &MainWindow) -> InterfacePreferences {
         photo_panel: state.get_preferred_photo_panel(),
         library_view: state.get_library_view(),
         thumbnail_size: state.get_thumbnail_size(),
+        thumbnail_width: state.get_thumbnail_width(),
         advanced_settings_expanded: state.get_advanced_settings_expanded(),
         presentation_mode: state.get_presentation_mode(),
         image_only: state.get_image_only(),
@@ -93,6 +102,8 @@ pub(super) fn install(window: &MainWindow, runtime: &AppRuntime) {
             let enabled = !state.get_presentation_mode();
             if enabled {
                 state.set_presentation_return_tab(state.get_current_tab());
+                state.set_presentation_return_fullscreen(state.get_iris_fullscreen());
+                state.set_iris_fullscreen(true);
             }
             state.set_presentation_mode(enabled);
             state.set_viewer_tool(0);
@@ -106,6 +117,7 @@ pub(super) fn install(window: &MainWindow, runtime: &AppRuntime) {
                     state.invoke_close_consultation();
                 }
             } else {
+                state.set_iris_fullscreen(state.get_presentation_return_fullscreen());
                 state.set_current_tab(state.get_presentation_return_tab());
             }
             state.invoke_preview_tab_changed(

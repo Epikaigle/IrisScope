@@ -1,4 +1,6 @@
-import { AppButton, AppSlider } from "./controls.slint";
+import { ReferencePane } from "./reference-pane.slint";
+import { ZoomControl } from "./zoom-control.slint";
+import { AppButton } from "./controls.slint";
 import { AppState } from "./state.slint";
 import { Design } from "./theme.slint";
 
@@ -9,19 +11,6 @@ export component MapOverlay inherits Rectangle {
     init => { map-close-button.focus(); }
     private property <bool> reference-loaded: AppState.iridology-reference-mode == 0
         ? AppState.has-iridology-map : AppState.has-iridology-symbols;
-    private property <length> pan-limit-x: max(0px,
-        reference-area.width * (AppState.iridology-reference-zoom - 100) / 200);
-    private property <length> pan-limit-y: max(0px,
-        reference-area.height * (AppState.iridology-reference-zoom - 100) / 200);
-    changed pan-limit-x => {
-        AppState.iridology-reference-pan-x = clamp(AppState.iridology-reference-pan-x,
-            -root.pan-limit-x, root.pan-limit-x);
-    }
-    changed pan-limit-y => {
-        AppState.iridology-reference-pan-y = clamp(AppState.iridology-reference-pan-y,
-            -root.pan-limit-y, root.pan-limit-y);
-    }
-
     function reset-view() {
         AppState.iridology-reference-zoom = 100;
         AppState.iridology-reference-pan-x = 0px;
@@ -127,36 +116,20 @@ export component MapOverlay inherits Rectangle {
                                 font-size: 12px;
                                 vertical-alignment: center;
                             }
-                            AppSlider {
-                                label: "Zoom de l’image de référence";
-                                overlay: true;
-                                width: root.width < 900px ? 180px : 140px;
-                                height: 32px;
-                                minimum: 100;
-                                maximum: 200;
-                                value: AppState.iridology-reference-zoom;
-                                enabled: root.reference-loaded;
-                                changed => {
-                                    AppState.iridology-reference-zoom = round(self.value);
-                                    AppState.iridology-reference-pan-x = 0px;
-                                    AppState.iridology-reference-pan-y = 0px;
+                            Rectangle {
+                                width: root.width < 900px ? 310px : 270px;
+                                height: 40px;
+                                background: transparent;
+                                ZoomControl {
+                                    y: (parent.height - self.height) / 2;
+                                    width: 100%;
+                                    label: "Zoom de l’image de référence";
+                                    overlay: true;
+                                    maximum: 400;
+                                    zoom <=> AppState.iridology-reference-zoom;
+                                    enabled: root.reference-loaded;
+                                    adjusted => { AppState.iridology-reference-pan-x = 0px; AppState.iridology-reference-pan-y = 0px; }
                                 }
-                            }
-                            Text {
-                                width: 48px;
-                                text: AppState.iridology-reference-zoom + " %";
-                                color: Design.overlay-text;
-                                font-size: 12px;
-                                horizontal-alignment: right;
-                                vertical-alignment: center;
-                            }
-                            AppButton {
-                                text: "Ajuster";
-                                accessibility-label: "Ajuster l’image de référence à la fenêtre";
-                                compact: true;
-                                overlay: true;
-                                enabled: root.reference-loaded && AppState.iridology-reference-zoom != 100;
-                                clicked => { root.reset-view(); }
                             }
                         }
                     }
@@ -168,29 +141,19 @@ export component MapOverlay inherits Rectangle {
                     vertical-stretch: 1;
                     accessible-role: groupbox;
                     accessible-label: "Image de référence. Utilisez les flèches pour déplacer la vue agrandie.";
-                    forward-focus: reference-pan-focus;
                     background: #080d0b;
                     border-radius: Design.card-radius;
                     border-width: 1px;
                     border-color: Design.overlay-border;
                     clip: true;
 
-                    if AppState.iridology-reference-mode == 0 && AppState.has-iridology-map: Image {
-                        source: AppState.iridology-map-image;
-                        width: parent.width * AppState.iridology-reference-zoom / 100.0;
-                        height: parent.height * AppState.iridology-reference-zoom / 100.0;
-                        x: (parent.width - self.width) / 2 + AppState.iridology-reference-pan-x;
-                        y: (parent.height - self.height) / 2 + AppState.iridology-reference-pan-y;
-                        image-fit: contain;
-                    }
-
-                    if AppState.iridology-reference-mode == 1 && AppState.has-iridology-symbols: Image {
-                        source: AppState.iridology-symbols-image;
-                        width: parent.width * AppState.iridology-reference-zoom / 100.0;
-                        height: parent.height * AppState.iridology-reference-zoom / 100.0;
-                        x: (parent.width - self.width) / 2 + AppState.iridology-reference-pan-x;
-                        y: (parent.height - self.height) / 2 + AppState.iridology-reference-pan-y;
-                        image-fit: contain;
+                    ReferencePane {
+                        x: 1px; y: 1px; width: parent.width - 2px; height: parent.height - 2px;
+                        source: AppState.iridology-reference-mode == 0 ? AppState.iridology-map-image : AppState.iridology-symbols-image;
+                        loaded: root.reference-loaded;
+                        zoom <=> AppState.iridology-reference-zoom;
+                        pan-x <=> AppState.iridology-reference-pan-x;
+                        pan-y <=> AppState.iridology-reference-pan-y;
                     }
 
                     if !root.reference-loaded: VerticalLayout {
@@ -232,77 +195,13 @@ export component MapOverlay inherits Rectangle {
                         }
                     }
 
-                    TouchArea {
-                        enabled: AppState.iridology-reference-zoom > 100 && root.reference-loaded;
-                        private property <length> pan-start-x;
-                        private property <length> pan-start-y;
-                        changed pressed => {
-                            if self.pressed {
-                                reference-pan-focus.focus();
-                                self.pan-start-x = AppState.iridology-reference-pan-x;
-                                self.pan-start-y = AppState.iridology-reference-pan-y;
-                            }
-                        }
-                        moved => {
-                            if self.pressed {
-                                AppState.iridology-reference-pan-x = clamp(
-                                    self.pan-start-x + self.mouse-x - self.pressed-x,
-                                    -root.pan-limit-x, root.pan-limit-x);
-                                AppState.iridology-reference-pan-y = clamp(
-                                    self.pan-start-y + self.mouse-y - self.pressed-y,
-                                    -root.pan-limit-y, root.pan-limit-y);
-                            }
-                        }
-                    }
 
-                    reference-pan-focus := FocusScope {
-                        width: 0px;
-                        height: 0px;
-                        enabled: root.reference-loaded && AppState.iridology-reference-zoom > 100;
-                        KeyBinding { keys: @keys(Escape); activated => { AppState.dismiss-top-overlay(); } }
-                        key-pressed(event) => {
-                            if event.text == Key.LeftArrow {
-                                AppState.iridology-reference-pan-x = clamp(
-                                    AppState.iridology-reference-pan-x + 24px,
-                                    -root.pan-limit-x, root.pan-limit-x);
-                                return accept;
-                            }
-                            if event.text == Key.RightArrow {
-                                AppState.iridology-reference-pan-x = clamp(
-                                    AppState.iridology-reference-pan-x - 24px,
-                                    -root.pan-limit-x, root.pan-limit-x);
-                                return accept;
-                            }
-                            if event.text == Key.UpArrow {
-                                AppState.iridology-reference-pan-y = clamp(
-                                    AppState.iridology-reference-pan-y + 24px,
-                                    -root.pan-limit-y, root.pan-limit-y);
-                                return accept;
-                            }
-                            if event.text == Key.DownArrow {
-                                AppState.iridology-reference-pan-y = clamp(
-                                    AppState.iridology-reference-pan-y - 24px,
-                                    -root.pan-limit-y, root.pan-limit-y);
-                                return accept;
-                            }
-                            return reject;
-                        }
-                    }
-
-                    if reference-pan-focus.has-focus: Rectangle {
-                        width: 100%;
-                        height: 100%;
-                        border-radius: Design.card-radius;
-                        border-width: 2px;
-                        border-color: Design.overlay-text;
-                        background: transparent;
-                    }
                 }
 
                 if root.reference-loaded: Text {
                     text: AppState.iridology-reference-zoom > 100
                         ? "Déplacez la vue en glissant l’image ou avec les flèches du clavier. Ajuster rétablit l’image complète."
-                        : "Augmentez le zoom pour explorer les détails de votre référence.";
+                        : "Utilisez la molette ou le curseur pour explorer les détails de votre référence.";
                     color: Design.overlay-text-muted;
                     font-size: 12px;
                     wrap: word-wrap;

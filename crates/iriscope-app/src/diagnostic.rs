@@ -45,6 +45,7 @@ pub fn run_diagnose() {
     };
 
     println!("\nOpening device: {} [{}]", target.display_name, target.id);
+    println!("{}", crate::app_helpers::hardware_button_status());
     let mut dev = match backend.open(&target.id) {
         Ok(dev) => dev,
         Err(err) => {
@@ -160,6 +161,9 @@ pub fn run_diagnose() {
         }
     }
 
+    if let Some(status) = dev.hardware_button_status() {
+        println!("{status}");
+    }
     let elapsed = start_time.elapsed();
     let _ = dev.stop_stream();
     println!(

@@ -85,9 +85,12 @@ export global AppState {
     in-out property <int> consultation-panel-width: 0;
     in-out property <int> preferred-photo-panel: 0;
     in-out property <int> thumbnail-size: 1;
+    in-out property <int> thumbnail-width: 0;
+    out property <int> effective-thumbnail-width: thumbnail-width > 0 ? thumbnail-width : thumbnail-size == 0 ? 144 : thumbnail-size == 2 ? 360 : 240;
     in-out property <bool> advanced-settings-expanded: false;
     in-out property <bool> presentation-mode: false;
     in-out property <int> presentation-return-tab: 0;
+    in-out property <bool> presentation-return-fullscreen: false;
     in-out property <bool> image-only: false;
     in-out property <bool> photo-controls-visible: true;
     in-out property <bool> photo-controls-interacting: false;
@@ -137,6 +140,7 @@ export global AppState {
     in-out property <string> settings-capture-directory: "";
     in-out property <string> settings-filename-template: "";
     in-out property <int> settings-button-mode: 0;
+    in-out property <string> hardware-button-status: "Bouton physique : état à vérifier selon le système.";
     in-out property <int> settings-video-quality: 0;
     in-out property <int> settings-theme: 0;
     in-out property <string> settings-iridology-map-path: "";
@@ -421,8 +425,8 @@ export global AppState {
         else if AppState.viewer-open { AppState.dismiss-viewer(); }
         else if AppState.library-map-open { AppState.library-map-open = false; }
         else if AppState.image-controls-open { AppState.image-controls-open = false; }
-        else if AppState.iris-fullscreen { AppState.iris-fullscreen = false; }
         else if AppState.presentation-mode { AppState.toggle-presentation(); }
+        else if AppState.iris-fullscreen { AppState.iris-fullscreen = false; }
     }
 
     public function show-viewport-controls() {

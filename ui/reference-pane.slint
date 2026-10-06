@@ -1,0 +1,72 @@
+import { Design } from "./theme.slint";
+
+// Both the library and the photo tools use the same wheel/drag geometry.
+export component ReferencePane inherits Rectangle {
+    in property <image> source;
+    in property <bool> loaded: root.source.width > 0 && root.source.height > 0;
+    in property <int> maximum-zoom: 400;
+    in-out property <int> zoom: 100;
+    in-out property <length> pan-x: 0px;
+    in-out property <length> pan-y: 0px;
+    out property <length> pan-limit-x: max(0px, (picture.width - root.width) / 2);
+    out property <length> pan-limit-y: max(0px, (picture.height - root.height) / 2);
+    changed pan-limit-x => { root.pan-x = clamp(root.pan-x, -root.pan-limit-x, root.pan-limit-x); }
+    changed pan-limit-y => { root.pan-y = clamp(root.pan-y, -root.pan-limit-y, root.pan-limit-y); }
+    background: Design.preview;
+    clip: true;
+    min-width: 0px;
+    min-height: 0px;
+    accessible-role: groupbox;
+    accessible-label: "Image de référence. Molette pour zoomer, glissement ou flèches pour déplacer la vue.";
+    forward-focus: pan-focus;
+    picture := Image {
+        source: root.source;
+        private property <length> fit-pixel: min(root.width / max(1, root.source.width), root.height / max(1, root.source.height));
+        width: max(1, root.source.width) * self.fit-pixel * root.zoom / 100;
+        height: max(1, root.source.height) * self.fit-pixel * root.zoom / 100;
+        x: (root.width - self.width) / 2 + clamp(root.pan-x, -root.pan-limit-x, root.pan-limit-x);
+        y: (root.height - self.height) / 2 + clamp(root.pan-y, -root.pan-limit-y, root.pan-limit-y);
+        image-fit: contain;
+        visible: root.loaded;
+    }
+    TouchArea {
+        enabled: root.loaded;
+        private property <length> start-x;
+        private property <length> start-y;
+        changed pressed => {
+            if self.pressed { pan-focus.focus(); self.start-x = root.pan-x; self.start-y = root.pan-y; }
+        }
+        moved => {
+            if self.pressed {
+                root.pan-x = clamp(self.start-x + self.mouse-x - self.pressed-x, -root.pan-limit-x, root.pan-limit-x);
+                root.pan-y = clamp(self.start-y + self.mouse-y - self.pressed-y, -root.pan-limit-y, root.pan-limit-y);
+            }
+        }
+        scroll-event(event) => {
+            if event.delta-y == 0px { return reject; }
+            let next = clamp(root.zoom + (event.delta-y > 0px ? 10 : -10), 100, root.maximum-zoom);
+            let ratio = next * 1.0 / root.zoom;
+            let anchor-x = self.mouse-x - root.width / 2;
+            let anchor-y = self.mouse-y - root.height / 2;
+            let next-pan-x = anchor-x - (anchor-x - root.pan-x) * ratio;
+            let next-pan-y = anchor-y - (anchor-y - root.pan-y) * ratio;
+            root.zoom = next;
+            root.pan-x = clamp(next-pan-x, -root.pan-limit-x, root.pan-limit-x);
+            root.pan-y = clamp(next-pan-y, -root.pan-limit-y, root.pan-limit-y);
+            return accept;
+        }
+    }
+    pan-focus := FocusScope {
+        width: 0px; height: 0px; enabled: root.loaded;
+        key-pressed(event) => {
+            if event.text == Key.LeftArrow { root.pan-x = clamp(root.pan-x + 24px, -root.pan-limit-x, root.pan-limit-x); return accept; }
+            if event.text == Key.RightArrow { root.pan-x = clamp(root.pan-x - 24px, -root.pan-limit-x, root.pan-limit-x); return accept; }
+            if event.text == Key.UpArrow { root.pan-y = clamp(root.pan-y + 24px, -root.pan-limit-y, root.pan-limit-y); return accept; }
+            if event.text == Key.DownArrow { root.pan-y = clamp(root.pan-y - 24px, -root.pan-limit-y, root.pan-limit-y); return accept; }
+            return reject;
+        }
+    }
+    if pan-focus.has-focus: Rectangle {
+        border-width: 2px; border-color: Design.overlay-text; background: transparent;
+    }
+}

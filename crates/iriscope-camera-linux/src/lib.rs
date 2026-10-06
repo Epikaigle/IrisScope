@@ -7,6 +7,9 @@ pub const BACKEND_NAME: &str = "V4L2";
 mod platform;
 
 #[cfg(target_os = "linux")]
+mod button;
+
+#[cfg(target_os = "linux")]
 mod mplane;
 
 #[cfg(target_os = "linux")]

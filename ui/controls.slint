@@ -79,6 +79,7 @@ export component AppButton inherits Rectangle {
     // Long device-provided labels may shrink without widening the whole panel.
     in property <bool> elide-text: false;
     in property <bool> wrap-text: false;
+    in property <bool> left-aligned: false;
     in property <bool> overlay: false;
     in property <bool> danger: false;
     in property <bool> checkable: false;
@@ -147,7 +148,7 @@ export component AppButton inherits Rectangle {
             font-size: root.compact && !root.overlay ? 12px : Design.control-font-size;
             font-weight: Design.control-font-weight;
             letter-spacing: 0.1px;
-            horizontal-alignment: center;
+            horizontal-alignment: root.left-aligned ? left : center;
             vertical-alignment: center;
     }
 
@@ -194,11 +195,11 @@ export component AppButton inherits Rectangle {
     }
 
     if root.has-focus && root.enabled: Rectangle {
-        x: -3px;
-        y: -3px;
-        width: parent.width + 6px;
-        height: parent.height + 6px;
-        border-radius: Design.control-radius + 3px;
+        x: 2px;
+        y: 2px;
+        width: max(0px, parent.width - 4px);
+        height: max(0px, parent.height - 4px);
+        border-radius: max(0px, Design.control-radius - 2px);
         border-width: 2px;
         border-color: root.overlay ? Design.overlay-accent : Design.focus;
         background: transparent;

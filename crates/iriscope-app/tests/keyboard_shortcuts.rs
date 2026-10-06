@@ -85,7 +85,7 @@ fn escape(window: &MainWindow) {
 
 fn camera_panel_and_image_popup_have_clickable_controls(window: &MainWindow) {
     // At 1024×720 the image toolbar has two rows below the preview.
-    click(window, 875.0, 684.0);
+    click(window, 792.0, 684.0);
     assert!(window.get_image_controls_open());
     window.set_is_streaming(true);
     window.set_zoom_level(150);
@@ -154,11 +154,21 @@ fn library_modes_open_capture_and_close_map() {
         }
     });
 
-    // The view switch now shares the filter row below the page header.
-    click(&window, 974.0, 168.0);
+    let before_calendar = window.window().take_snapshot().unwrap();
+    window.global::<AppState>().set_calendar_open(true);
+    let with_calendar = window.window().take_snapshot().unwrap();
+    assert_eq!(
+        before_calendar.as_bytes(),
+        with_calendar.as_bytes(),
+        "calendar state must never hide the main library or its navigation"
+    );
+    window.global::<AppState>().set_calendar_open(false);
+
+    // View controls share a compact row with thumbnail sizing below the filters.
+    click(&window, 110.0, 282.0);
     assert_eq!(window.get_library_view(), 1);
     // Focus the card through its thumbnail, away from the open action buttons.
-    click(&window, 40.0, 326.0);
+    click(&window, 40.0, 342.0);
     card_keyboard_selection_preserves_capture_identity(&window, " ");
     assert_eq!((opens.get(), external_opens.get()), (0, 0));
     click(&window, 875.0, 362.0);
@@ -166,7 +176,7 @@ fn library_modes_open_capture_and_close_map() {
     click(&window, 950.0, 362.0);
     assert_eq!(external_opens.get(), 1);
 
-    click(&window, 924.0, 168.0);
+    click(&window, 50.0, 282.0);
     assert_eq!(window.get_library_view(), 0);
     click(&window, 200.0, 416.0);
     card_keyboard_selection_preserves_capture_identity(&window, "\n");

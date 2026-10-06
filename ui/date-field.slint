@@ -1,43 +1,101 @@
 import { AppButton } from "./controls.slint";
 import { LineEdit } from "std-widgets.slint";
 import { AppState } from "./state.slint";
+import { PopupBounds } from "./popup-bounds.slint";
 import { Design } from "./theme.slint";
-export component DateField inherits VerticalLayout {
+
+component CalendarPanel inherits Rectangle {
+    in property <bool> overlay: false;
+    background: root.overlay ? Design.overlay-panel : Design.surface-raised;
+    border-radius: Design.control-radius;
+    border-width: 1px;
+    border-color: root.overlay ? Design.overlay-border : Design.border;
+    VerticalLayout {
+        padding: 10px; spacing: 6px;
+        HorizontalLayout {
+            height: 32px; spacing: 4px;
+            AppButton { height: 32px; compact: true; overlay: root.overlay; text: "‹"; accessibility-label: "Mois précédent"; clicked => { AppState.calendar-step(-1); } }
+            Text { min-width: 0px; horizontal-stretch: 1; text: AppState.calendar-caption; color: root.overlay ? Design.overlay-text : Design.text; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+            AppButton { height: 32px; compact: true; overlay: root.overlay; text: "›"; accessibility-label: "Mois suivant"; clicked => { AppState.calendar-step(1); } }
+        }
+        Rectangle {
+            height: 16px;
+            for label[i] in ["Lu","Ma","Me","Je","Ve","Sa","Di"]: Text {
+                x: i * parent.width / 7; width: parent.width / 7; height: 100%; text: label;
+                color: root.overlay ? Design.overlay-text-secondary : Design.text-secondary;
+                horizontal-alignment: center; vertical-alignment: center;
+            }
+        }
+        Rectangle {
+            height: 168px;
+            for day[i] in AppState.calendar-days: AppButton {
+                x: mod(i,7) * parent.width / 7; y: floor(i/7) * 28px;
+                width: parent.width / 7 - 2px; height: 26px;
+                compact: true; quiet: true; overlay: root.overlay;
+                text: day.day; enabled: day.enabled; selected: day.selected; checkable: true;
+                accessibility-label: day.date; clicked => { AppState.select-calendar-date(day.date); }
+            }
+        }
+        HorizontalLayout {
+            height: 32px; spacing: 8px;
+            AppButton { height: 32px; compact: true; overlay: root.overlay; text: "Effacer"; clicked => { AppState.select-calendar-date(""); } }
+            Rectangle { horizontal-stretch: 1; background: transparent; }
+            AppButton { height: 32px; compact: true; overlay: root.overlay; text: "Fermer"; clicked => { AppState.calendar-open = false; } }
+        }
+    }
+}
+
+export component DateField inherits Rectangle {
     in property <string> label;
     in property <int> target;
     in property <bool> overlay: false;
+    in property <length> below-clearance: 0px;
     in-out property <string> value;
-    min-width: 0px; spacing: 4px;
-    Text { height: 16px; text: root.label; color: root.overlay ? Design.overlay-text-secondary : Design.text-secondary; font-size: 12px; }
-    HorizontalLayout { height: 36px; spacing: 4px;
-        LineEdit { min-width: 0px; horizontal-stretch: 1; height: 36px; text <=> root.value; placeholder-text: "JJ/MM/AAAA"; accessible-label: root.label + " (jour, mois, année)"; changed has-focus => {AppState.focused-text-fields = max(0,AppState.focused-text-fields + (self.has-focus ? 1 : -1));} accepted => { if root.target < 3 {AppState.apply-library-query();} } }
-        AppButton { compact: true; overlay: root.overlay; text: "…"; accessibility-label: "Choisir une date dans le calendrier : " + root.label; tooltip: "Ouvrir le calendrier"; clicked => {AppState.open-calendar(root.target);} }
+    min-width: 0px; height: 56px; vertical-stretch: 0;
+    background: transparent;
+    private property <bool> owns-calendar: AppState.calendar-open && AppState.calendar-target == root.target;
+    changed owns-calendar => { if !root.owns-calendar { calendar-menu.close(); } }
+    out property <length> popup-left: clamp(root.overlay ? root.absolute-position.x - 340px : calendar-button.absolute-position.x + calendar-button.width - 320px, 8px, PopupBounds.width - 328px);
+    out property <length> popup-top: clamp(root.overlay ? calendar-button.absolute-position.y
+        : calendar-button.absolute-position.y + calendar-button.height + 294px + root.below-clearance <= PopupBounds.height - 8px
+            ? calendar-button.absolute-position.y + calendar-button.height + 6px + root.below-clearance
+            : calendar-button.absolute-position.y - 294px, 8px, PopupBounds.height - 296px);
+    VerticalLayout {
+        spacing: 4px;
+        Text { height: 16px; text: root.label; color: root.overlay ? Design.overlay-text-secondary : Design.text-secondary; font-size: 12px; }
+        HorizontalLayout {
+            height: 36px; spacing: 4px;
+            LineEdit {
+                min-width: 0px; horizontal-stretch: 1; height: 36px;
+                text <=> root.value; placeholder-text: "JJ/MM/AAAA";
+                accessible-label: root.label + " (jour, mois, année)";
+                changed has-focus => { AppState.focused-text-fields = max(0, AppState.focused-text-fields + (self.has-focus ? 1 : -1)); }
+                accepted => { if root.target < 3 { AppState.apply-library-query(); } }
+            }
+            calendar-button := AppButton {
+                height: 36px; compact: true; overlay: root.overlay; text: "Calendrier";
+                accessibility-label: "Choisir une date dans le calendrier : " + root.label;
+                tooltip: "Ouvrir le calendrier";
+                // Outside dismissal restores focus to the anchor button.
+                changed has-focus => { if self.has-focus && root.owns-calendar { AppState.calendar-open = false; } }
+                clicked => {
+                    AppState.open-calendar(root.target);
+                    AppState.calendar-target = root.target;
+                    AppState.calendar-open = true;
+                    calendar-menu.show();
+                }
+            }
+        }
     }
-}
-export component CalendarOverlay inherits Rectangle {
-    background: #00000080;
-    TouchArea { clicked => {AppState.calendar-open = false;} }
-    Rectangle {
-        width: 352px; height: 384px; x: (parent.width - self.width)/2; y: (parent.height - self.height)/2;
-        background: Design.surface; border-radius: Design.panel-radius; border-width: 1px; border-color: Design.border;
-        TouchArea { clicked => {} }
-        VerticalLayout { padding: 16px; spacing: 10px;
-            HorizontalLayout { height: 36px; spacing: 4px;
-                AppButton { compact: true; text: "‹"; accessibility-label: "Mois précédent"; clicked => {AppState.calendar-step(-1);} }
-                Text { min-width: 0px; horizontal-stretch: 1; text: AppState.calendar-caption; color: Design.text; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
-                AppButton { compact: true; text: "›"; accessibility-label: "Mois suivant"; clicked => {AppState.calendar-step(1);} }
-            }
-            Rectangle { height: 24px;
-                for label[i] in ["Lu","Ma","Me","Je","Ve","Sa","Di"]: Text { x: i*parent.width/7; width: parent.width/7; height: 100%; text: label; color: Design.text-secondary; horizontal-alignment: center; }
-            }
-            Rectangle { height: 216px;
-                for day[i] in AppState.calendar-days: AppButton { x: mod(i,7)*parent.width/7; y: floor(i/7)*36px; width: parent.width/7 - 2px; height: 34px; compact: true; quiet: true; text: day.day; enabled: day.enabled; selected: day.selected; checkable: true; accessibility-label: day.date; clicked => {AppState.select-calendar-date(day.date);} }
-            }
-            HorizontalLayout { height: 36px; spacing: 8px;
-                AppButton { compact: true; text: "Effacer"; clicked => {AppState.select-calendar-date("");} }
-                Rectangle { horizontal-stretch: 1; background: transparent; }
-                AppButton { compact: true; text: "Fermer"; clicked => {AppState.calendar-open = false;} }
-            }
+    calendar-menu := PopupWindow {
+        x: root.popup-left - root.absolute-position.x;
+        y: root.popup-top - root.absolute-position.y;
+        width: 320px; height: 288px;
+        close-policy: close-on-click-outside;
+        forward-focus: calendar-focus;
+        calendar-focus := FocusScope {
+            KeyBinding { keys: @keys(Escape); activated => { AppState.calendar-open = false; calendar-menu.close(); } }
+            CalendarPanel { overlay: root.overlay; }
         }
     }
 }
