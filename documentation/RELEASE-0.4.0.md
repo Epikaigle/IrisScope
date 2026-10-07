@@ -1,4 +1,4 @@
-# IrisScope 0.4.0
+# Iriscope 0.4.0
 
 Cette version permet d’adapter l’espace de travail pour la capture, l’examen d’images et la présentation au patient.
 
@@ -11,18 +11,18 @@ Cette version permet d’adapter l’espace de travail pour la capture, l’exam
 - Rotation précise de 0 à 359°, zoom immédiat et molette synchronisée dans le direct et les références.
 - Calendriers contextuels, bibliothèque compacte et menus alignés qui ne changent plus de sélection à la molette.
 - Ajouts et suppressions externes détectés même lorsque le système retarde la mise à jour de la date du dossier, notamment sous Windows.
-- Site de présentation avec modèle 3D du DE400, captures de l’interface et publication GitHub Pages manuelle depuis `main`.
+- Site de présentation de l’application avec modèle 3D du DE400 à l’accueil, captures de l’interface et publication GitHub Pages depuis `main /docs`.
 - Bouton physique DE400 validé sous Linux avec une passerelle locale ; récepteurs Windows et macOS intégrés, à confirmer sur les appareils réels.
 
 Les options sont regroupées dans **Paramètres → Interface et affichage**. **Réinitialiser la disposition** conserve le thème, le stockage, les dossiers, les notes et les images. Aucun réglage supplémentaire ne masque l’aide existante.
 
 ## Installer et mettre à jour
 
-Fermer IrisScope, sauvegarder la bibliothèque, puis remplacer l’application. Les anciennes configurations sont compatibles ; les nouvelles options ont des valeurs par défaut. Aucun dossier ni média n’est rouvert automatiquement. Le mode présentation mémorisé rétablit sa vue plein écran pour conserver le masquage des informations personnelles.
+Fermer Iriscope, sauvegarder la bibliothèque, puis remplacer l’application. Les anciennes configurations sont compatibles ; les nouvelles options ont des valeurs par défaut. Aucun dossier ni média n’est rouvert automatiquement. Le mode présentation mémorisé rétablit sa vue plein écran pour conserver le masquage des informations personnelles.
 
 Vérifier `VERSION.txt`, `release-info.json`, `iriscope-app --version` et la somme SHA-256 du paquet. Les paquets personnels restent sans signature officielle. La version cloud fournit l’archive portable Linux et le paquet Debian. Les installateurs Windows/macOS nécessitent leurs systèmes natifs.
 
-Le mode présentation protège l’affichage dans IrisScope : les fichiers et exports restent complets. Son état est mémorisé jusqu’à sa désactivation. Les essais du bouton physique Windows et macOS restent à effectuer selon [le protocole matériel](VALIDATION-MATERIELLE.md). Le [guide Windows et macOS](ESSAIS-WINDOWS-MACOS.md) explique l’installation et les essais sans environnement de développement.
+Le mode présentation protège l’affichage dans Iriscope : les fichiers et exports restent complets. Son état est mémorisé jusqu’à sa désactivation. Les essais du bouton physique Windows et macOS restent à effectuer selon [le protocole matériel](VALIDATION-MATERIELLE.md). Le [guide Windows et macOS](ESSAIS-WINDOWS-MACOS.md) explique l’installation et les essais sans environnement de développement.
 
 Les commandes et réglages sont décrits dans [Visionneuse photo](VISIONNEUSE.md).
 

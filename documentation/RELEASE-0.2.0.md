@@ -1,4 +1,4 @@
-# IrisScope 0.2.0 — installation personnelle
+# Iriscope 0.2.0 — installation personnelle
 
 Cette version ajoute la progression et l’annulation des sauvegardes/restaurations,
 l’historique des sauvegardes par dossier, un rappel facultatif après sept jours
@@ -7,7 +7,7 @@ conservés. Le numéro est visible dans les paramètres et avec `iriscope-app --
 
 ## Installer ou mettre à jour
 
-Fermer IrisScope et conserver une sauvegarde avant de remplacer le programme.
+Fermer Iriscope et conserver une sauvegarde avant de remplacer le programme.
 Installer le nouveau paquet ou remplacer l’ancienne application portable.
 Les paramètres restent au même emplacement : `%APPDATA%/IrisScope/settings.json`
 sous Windows, `~/Library/Application Support/IrisScope/settings.json` sous macOS

@@ -1,4 +1,4 @@
-# Essayer IrisScope sur Windows et macOS
+# Essayer Iriscope sur Windows et macOS
 
 Le code se développe depuis Linux. Ces machines servent à vérifier les pilotes,
 les autorisations, l’installation et l’iriscope réel ; Rust et Python ne sont pas
@@ -6,19 +6,28 @@ nécessaires pour ces essais.
 
 ## Choisir et installer le paquet
 
-Sur GitHub, ouvrir [**Actions → CI**](https://github.com/Epikaigle/IrisScope/actions/workflows/ci.yml?query=branch%3Amain),
-puis le dernier passage réussi de **main**. Une connexion à GitHub est nécessaire
-pour télécharger les artefacts, dans la rubrique **Artifacts** en bas de
-l’exécution. Télécharger celui de la machine concernée et extraire son ZIP :
+Sur GitHub, ouvrir [**Actions → CI**](https://github.com/Epikaigle/iriscope-app/actions/workflows/ci.yml?query=branch%3Amain),
+puis la dernière **validation complète réussie** de `main` qui contient la
+rubrique **Artifacts**. Les CI automatiques légères ne produisent pas
+d’installateur. Les paquets déjà vérifiés sont aussi disponibles dans
+[la validation complète du 6 octobre 2026](https://github.com/Epikaigle/iriscope-app/actions/runs/37529803272).
+
+Pour générer des paquets du code actuel, sélectionner **Actions → CI → Run
+workflow**, choisir `main` et laisser **full_validation** cochée. Attendre la
+réussite des quatre plateformes natives. Une connexion à GitHub est nécessaire
+pour télécharger les artefacts dans **Artifacts**, en bas de l’exécution.
+Télécharger celui de la machine concernée et extraire son ZIP :
 
 | Machine | Artefact | Installation |
 | --- | --- | --- |
 | Windows 64 bits | `iriscope-Windows-X64` | Lancer `IrisScope-0.4.0-Setup.exe` |
-| Mac avec puce Apple M1/M2/M3/M4 ou suivante | `iriscope-macOS-ARM64` | Ouvrir le DMG, glisser IrisScope dans Applications |
-| Mac Intel | `iriscope-macOS-X64` | Ouvrir le DMG, glisser IrisScope dans Applications |
+| Mac avec puce Apple M1/M2/M3/M4 ou suivante | `iriscope-macOS-ARM64` | Ouvrir le DMG, glisser `IrisScope.app` dans Applications |
+| Mac Intel | `iriscope-macOS-X64` | Ouvrir le DMG, glisser `IrisScope.app` dans Applications |
 
 Sur Mac, **menu Apple → À propos de ce Mac** indique la puce ou le processeur.
-Les deux paquets Mac ont le même nom de DMG ; choisir d’abord le bon artefact
+Les noms techniques des exécutables et du bundle restent `IrisScope` pour
+préserver la mise à jour des installations existantes ; l’application s’appelle
+Iriscope. Les deux paquets Mac ont le même nom de DMG ; choisir d’abord le bon artefact
 **ARM64** ou **X64**. Les archives portables sont également présentes.
 
 Les paquets d’essai ne sont pas signés. Sur macOS, tenter une première ouverture
@@ -31,7 +40,7 @@ paramètres restent hors du programme.
 ## Essai normal
 
 Fermer les autres logiciels utilisant la caméra, brancher l’iriscope, puis ouvrir
-IrisScope. Avec un dossier fictif, vérifier le direct, une photo de chaque œil et
+Iriscope. Avec un dossier fictif, vérifier le direct, une photo de chaque œil et
 une vidéo. Tester le bouton physique en Photo, puis en Vidéo pour démarrer et arrêter.
 Un appui prolongé doit produire une seule action.
 
@@ -41,7 +50,7 @@ Les contrôles caméra proposés dépendent du pilote ; macOS en expose moins.
 
 ## Diagnostic et essai guidé du bouton
 
-Fermer IrisScope avant d’exécuter ces commandes : elles ouvrent elles-mêmes la caméra.
+Fermer Iriscope avant d’exécuter ces commandes : elles ouvrent elles-mêmes la caméra.
 Le chemin d’essai doit être inexistant ou vide. Il contient uniquement des dossiers
 fictifs et conserve les résultats pour inspection ; les paramètres habituels restent intacts.
 

@@ -7,9 +7,9 @@ pas de périphérique clavier pour ce bouton. Les métadonnées vidéo ne contie
 pas de marqueur STILL_IMAGE pendant les pressions constatées.
 
 La passerelle lit ces événements via `usbmon` et transmet uniquement pression
-et relâchement à IrisScope, sur un socket local associé au port USB de la caméra.
+et relâchement à Iriscope, sur un socket local associé au port USB de la caméra.
 Elle ne capture pas d’images, ne modifie aucun contrôle USB et ne détache pas le
-pilote. Elle n’exige pas de lancer IrisScope en administrateur. Les connexions
+pilote. Elle n’exige pas de lancer Iriscope en administrateur. Les connexions
 sont réservées au groupe système `video`; le socket et le programme installé
 appartiennent à root. Les doublons d’une pression maintenue sont ignorés.
 
@@ -34,7 +34,7 @@ Fichiers installés :
 - `/run/iriscope-button/status.sock` : socket temporaire, recréé par le service.
 
 Le service démarre immédiatement et aux prochains démarrages du PC. `debugfs`
-doit être disponible à `/sys/kernel/debug`. Le compte qui exécute IrisScope doit
+doit être disponible à `/sys/kernel/debug`. Le compte qui exécute Iriscope doit
 appartenir au groupe `video`. Cette intégration concerne Linux ; Windows et
 macOS nécessitent encore leurs essais matériels.
 

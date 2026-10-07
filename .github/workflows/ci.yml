@@ -2,20 +2,131 @@ name: CI
 
 'on':
   push:
-    paths-ignore: ['site/**', 'docs/SITE.md', 'scripts/check-site.py', '.github/workflows/site.yml', '.github/workflows/pages.yml']
+    branches: [main]
+    tags: ['v*']
+    paths: ['Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'rustfmt.toml', 'crates/**', 'ui/**', 'helpers/linux/*.py', 'helpers/linux/*.service', 'scripts/**', 'tests/**', 'docs/**', '.github/workflows/ci.yml']
   pull_request:
-    paths-ignore: ['site/**', 'docs/SITE.md', 'scripts/check-site.py', '.github/workflows/site.yml', '.github/workflows/pages.yml']
+    branches: [main]
+    paths: ['Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'rustfmt.toml', 'crates/**', 'ui/**', 'helpers/linux/*.py', 'helpers/linux/*.service', 'scripts/**', 'tests/**', 'docs/**', '.github/workflows/ci.yml']
+  workflow_dispatch:
+    inputs:
+      full_validation:
+        description: 'Validation complète : Windows, Mac ARM et Intel, Linux, captures et installateurs'
+        type: boolean
+        default: true
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Select relevant checks
+    runs-on: ubuntu-24.04
+    outputs:
+      app: ${{ steps.paths.outputs.app }}
+      site: ${{ steps.paths.outputs.site }}
+      full: ${{ steps.paths.outputs.full }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Select checks from changed paths
+        id: paths
+        env:
+          FULL_VALIDATION: ${{ inputs.full_validation }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+
+          with open(os.environ['GITHUB_EVENT_PATH'], encoding='utf-8') as stream:
+              event = json.load(stream)
+          manual = os.environ['GITHUB_EVENT_NAME'] == 'workflow_dispatch'
+          full = os.environ['GITHUB_REF'].startswith('refs/tags/v') or (
+              manual and os.environ['FULL_VALIDATION'].lower() == 'true'
+          )
+          if manual or full:
+              app = site = True
+          else:
+              base = event.get('pull_request', {}).get('base', {}).get('sha') or event.get('before')
+              head = event.get('pull_request', {}).get('head', {}).get('sha') or os.environ['GITHUB_SHA']
+              available = base and set(base) != {'0'} and subprocess.run(
+                  ['git', 'cat-file', '-e', f'{base}^{{commit}}'],
+                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+              ).returncode == 0
+              command = ['git', 'diff', '--name-only', '-z', base, head] if available else ['git', 'ls-files', '-z']
+              paths = subprocess.check_output(command).decode('utf-8').split('\0')
+              workflow = '.github/workflows/ci.yml' in paths
+              app = workflow or any(
+                  path in ('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'rustfmt.toml')
+                  or path.startswith(('crates/', 'ui/', 'tests/'))
+                  or (path.startswith('scripts/') and path != 'scripts/check-site.py')
+                  or (path.startswith('helpers/linux/') and path.endswith(('.py', '.service')))
+                  for path in paths
+              )
+              site = workflow or any(path.startswith('docs/') or path == 'scripts/check-site.py' for path in paths)
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as stream:
+              for name, value in (('app', app), ('site', site), ('full', full)):
+                  stream.write(f'{name}={str(value).lower()}\n')
+          PY
+
+  app:
+    name: Linux checks
+    needs: changes
+    if: needs.changes.outputs.app == 'true' && needs.changes.outputs.full != 'true'
+    runs-on: ubuntu-24.04
+    env:
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.89.0
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: native-ubuntu-24.04
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Linux build and headless test dependencies
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev libfontconfig1-dev libxkbcommon-x11-dev xvfb xauth ffmpeg
+      - name: Check formatting
+        run: cargo fmt --all --check
+      - name: Lint all workspace targets
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Test full workspace in a virtual display
+        env:
+          SLINT_BACKEND: winit-software
+        run: xvfb-run -a cargo test --workspace --locked
+      - name: Test helper and packaging scripts
+        run: python -m unittest discover -s tests -p 'test_*.py' -v
+
+  site:
+    name: Static site checks
+    needs: changes
+    if: needs.changes.outputs.site == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python scripts/check-site.py
+
   native:
     name: ${{ matrix.os }}
+    needs: changes
+    if: needs.changes.outputs.full == 'true'
     runs-on: ${{ matrix.os }}
     env:
       CARGO_BUILD_JOBS: 2
@@ -80,7 +191,7 @@ jobs:
         run: cargo build --release -p iriscope-app --locked
       - name: Verify package layout and upgrade identifiers
         if: runner.os == 'Linux'
-        run: python -m unittest discover -s tests -p 'test_packaging.py' -v
+        run: python -m unittest discover -s tests -p 'test_*.py' -v
       - name: Package portable application
         run: python scripts/package-release.py
       - name: Package Linux installer
@@ -98,31 +209,3 @@ jobs:
           name: iriscope-${{ runner.os }}-${{ runner.arch }}
           path: dist/*
           if-no-files-found: error
-
-  cross-check:
-    name: Cross-check ${{ matrix.target }}
-    runs-on: ubuntu-24.04
-    env:
-      CARGO_BUILD_JOBS: 2
-    strategy:
-      fail-fast: false
-      matrix:
-        target:
-          - x86_64-pc-windows-msvc
-          - x86_64-apple-darwin
-          - aarch64-apple-darwin
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.89.0
-          targets: ${{ matrix.target }}
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: cross-${{ matrix.target }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Install Linux build dependencies
-        run: sudo apt-get update && sudo apt-get install -y libudev-dev libfontconfig1-dev
-      - name: Lint target compilation
-        run: cargo clippy --workspace --all-targets --target ${{ matrix.target }} --locked -- -D warnings

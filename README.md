@@ -1,20 +1,26 @@
-# IrisScope
+# Iriscope
 
-IrisScope est une application desktop native et multiplateforme conçue pour utiliser simplement un **iridoscope Firefly DE400 / Infoxelle Digital Microscope** sous **Linux, Windows et macOS**.
+Iriscope est une application native pour capturer, consulter et organiser des photos et vidéos d’iris sous **Linux, Windows et macOS**. Elle prend en charge la caméra USB **Firefly DE400 / Infoxelle Digital Microscope**.
 
-L'objectif est de remplacer l'ancien logiciel FireflyPro par une application moderne, rapide et très simple à utiliser : on branche le DE400, l'image apparaît immédiatement, on renseigne la personne examinée et l'œil, puis on capture les photos ou vidéos. IrisScope s'occupe automatiquement du nommage, du classement et de la bibliothèque.
+On branche la caméra, on renseigne la personne examinée et l’œil, puis on capture les photos ou vidéos. Iriscope s’occupe automatiquement du nommage, du classement et de la bibliothèque.
 
-> IrisScope est un logiciel de capture, de visualisation et d'organisation d'images. L'utilisateur peut ajouter ses propres images de référence d'iridologie ; aucune planche n'est fournie avec l'application. Ces images sont uniquement des références visuelles et ne constituent pas un outil de diagnostic médical.
+> Iriscope est un logiciel de capture, de visualisation et d'organisation d'images. L'utilisateur peut ajouter ses propres images de référence d'iridologie ; aucune planche n'est fournie avec l'application. Ces images sont uniquement des références visuelles et ne constituent pas un outil de diagnostic médical.
 
-Le [site de présentation](https://github.com/Epikaigle/IrisScope/tree/main/site) contient une vue 3D du DE400 et des
-captures de l’interface. Le [guide GitHub Pages](https://github.com/Epikaigle/IrisScope/blob/main/docs/SITE.md) explique comment
-le publier manuellement depuis `main`, sans branche supplémentaire.
+Le [site de présentation](https://github.com/Epikaigle/iriscope-app/tree/main/docs) contient une vue 3D du DE400 et des
+captures de l’interface. Le [guide GitHub Pages](https://github.com/Epikaigle/iriscope-app/blob/main/documentation/SITE.md) explique comment
+le publier depuis **main /docs**, sans branche supplémentaire.
+
+Le nom de l’application est **Iriscope**, et le dépôt est **iriscope-app**.
+Les anciens noms techniques `IrisScope.exe`, `IrisScope.app`, les répertoires de
+configuration `IrisScope` et les identifiants d’installation sont conservés pour
+que les mises à jour retrouvent les paramètres et remplacent l’application
+existante. Le nom de crate et de commande `iriscope-app` reste identique.
 
 ## Expérience utilisateur visée
 
 L'écran **Caméra** est l'écran principal et doit suffire pour la grande majorité de l'utilisation.
 
-Au lancement, IrisScope doit :
+Au lancement, Iriscope doit :
 
 1. détecter automatiquement le Firefly DE400 ;
 2. ouvrir le meilleur flux vidéo disponible sans demander de choisir une caméra ;
@@ -80,7 +86,7 @@ La saisie reste volontairement minimale :
 
 Une capture anonyme reste possible sans prénom ni nom. Dès qu'un des deux champs est renseigné, les deux doivent l'être pour choisir un dossier. Aucun autre renseignement personnel n'est demandé.
 
-Pendant la saisie, IrisScope propose les dossiers dont les noms correspondent. L'utilisateur choisit **Choisir** pour retrouver une personne déjà enregistrée ou **Créer une autre personne** pour un homonyme. Deux dossiers peuvent donc porter exactement les mêmes prénom et nom : chacun reçoit un numéro stable, par exemple `D-000042`. La date de dernière capture apparaît dans les résultats lorsqu'elle est disponible. L'application ne choisit et ne fusionne jamais deux homonymes automatiquement. Le numéro du dossier sélectionné reste visible pendant la session et les nouvelles captures lui sont associées ; il suffit de choisir une fois le dossier pour une série de prises de vue.
+Pendant la saisie, Iriscope propose les dossiers dont les noms correspondent. L'utilisateur choisit **Choisir** pour retrouver une personne déjà enregistrée ou **Créer une autre personne** pour un homonyme. Deux dossiers peuvent donc porter exactement les mêmes prénom et nom : chacun reçoit un numéro stable, par exemple `D-000042`. La date de dernière capture apparaît dans les résultats lorsqu'elle est disponible. L'application ne choisit et ne fusionne jamais deux homonymes automatiquement. Le numéro du dossier sélectionné reste visible pendant la session et les nouvelles captures lui sont associées ; il suffit de choisir une fois le dossier pour une série de prises de vue.
 
 Pour revoir un patient, saisir son prénom et son nom puis sélectionner le bon numéro, ou saisir directement son numéro dans le champ « Numéro de dossier ». Cette recherche directe reste disponible même s'il existe de nombreux homonymes. En cas de doute, consulter ses captures dans la bibliothèque avant d'enregistrer de nouvelles images. Le numéro de dossier est l'identifiant fiable : les noms servent à la recherche. Les captures anciennes qui n'ont pas de numéro restent sans dossier jusqu'à une attribution explicite.
 
@@ -97,7 +103,7 @@ Les fichiers sont automatiquement nommés avec, lorsqu'ils sont renseignés :
 
 ### Bibliothèque
 
-IrisScope doit permettre de retrouver les captures sans devoir parcourir les dossiers du système.
+Iriscope doit permettre de retrouver les captures sans devoir parcourir les dossiers du système.
 
 La bibliothèque propose actuellement :
 
@@ -121,7 +127,7 @@ Les notes générales sont sauvegardées automatiquement après une pause de 700
 
 Le stockage reste local à l'ordinateur. Aucun compte ou cloud n'est requis. Les
 fichiers, leurs noms, les miniatures affichées et l'index de métadonnées ne
-sont pas chiffrés par IrisScope : les personnes ayant accès au dossier de
+sont pas chiffrés par Iriscope : les personnes ayant accès au dossier de
 captures peuvent consulter ces informations. Le masquage des titres dans la
 bibliothèque est une aide visuelle, pas une protection d'accès.
 
@@ -143,7 +149,7 @@ Les panneaux **Annoter / Notes**, **Références**, **Affichage** et **Comparer*
 
 **Références** affiche la carte ou la planche importée à côté de la photo, avec zoom et déplacement. Les cercles repères facultatifs se centrent manuellement. **Affichage** règle luminosité, contraste, rotation et miroir ; le bouton **Rotation** ouvre un curseur de 0 à 359° et une saisie au degré près, également disponibles dans le direct. Les annotations suivent la rotation et le miroir dans la copie PNG. **Original** permet de comparer et **Réinitialiser l’affichage** remet ces réglages à zéro. Ils ne sont pas enregistrés dans la photo et reviennent à l’original à chaque ouverture.
 
-**Copie PNG annotée…** exporte l’affichage avec les annotations. **Fiche PDF et notes…** exporte l’original annoté, sa légende et les notes, avec la deuxième photo lorsque la comparaison est active. Les notes longues continuent sur plusieurs pages. Les exports conservent les sources et refusent de remplacer un fichier existant. Le détail des outils et de leurs limites figure dans [Visionneuse photo](docs/VISIONNEUSE.md).
+**Copie PNG annotée…** exporte l’affichage avec les annotations. **Fiche PDF et notes…** exporte l’original annoté, sa légende et les notes, avec la deuxième photo lorsque la comparaison est active. Les notes longues continuent sur plusieurs pages. Les exports conservent les sources et refusent de remplacer un fichier existant. Le détail des outils et de leurs limites figure dans [Visionneuse photo](documentation/VISIONNEUSE.md).
 
 Les paramètres proposent **Sauvegarder** et **Restaurer…**. La sauvegarde crée un nouveau dossier complet, incluant les fichiers cachés et les vidéos interrompues, à l’extérieur du dossier des captures. Elle vérifie les fichiers pendant la copie et publie le résultat après sa finalisation. La restauration contrôle les empreintes de tous les fichiers puis crée et ouvre un nouveau dossier, sans remplacer les captures actuelles. Les liens symboliques, sauvegardes incomplètes, chemins invalides et versions inconnues sont refusés. Les sauvegardes ne sont pas chiffrées.
 
@@ -173,7 +179,7 @@ Les écritures très rapprochées peuvent partager les mêmes dates sur disque. 
 
 Les réglages s'ouvrent dans une petite fenêtre en haut à gauche de l'aperçu caméra. L'image reste visible pendant le déplacement des curseurs, et les valeurs choisies sont conservées automatiquement pour les prochains lancements.
 
-Lorsque la caméra / le système le permet, IrisScope agit directement sur les contrôles du DE400 plutôt que d'appliquer artificiellement un filtre après capture.
+Lorsque la caméra / le système le permet, Iriscope agit directement sur les contrôles du DE400 plutôt que d'appliquer artificiellement un filtre après capture.
 
 Réglages visés :
 
@@ -198,7 +204,7 @@ Fonctions d'affichage supplémentaires :
 
 ### Références d'iridologie
 
-IrisScope propose un accès rapide à deux images choisies par l'utilisateur :
+Iriscope propose un accès rapide à deux images choisies par l'utilisateur :
 
 - carte / planche de l'iris ;
 - planche de signes / symboles ;
@@ -271,7 +277,7 @@ Les raccourcis numériques acceptent aussi `Ctrl+Maj+1` à `Ctrl+Maj+5`, notamme
 
 `Tab` parcourt les contrôles avec un focus visible. `Espace` ou `Entrée` sélectionne une capture de la bibliothèque. Après un clic sur une image agrandie, les flèches déplacent la vue ; **Ajuster** recentre l'image à 100 %.
 
-IrisScope n'a pas vocation à devenir un logiciel de cabinet médical complet. Le projet évite volontairement les fonctions qui compliqueraient inutilement l'usage : comptes utilisateurs, cloud obligatoire, agenda, facturation, dossiers médicaux complexes, diagnostic automatique ou IA médicale.
+Iriscope n'a pas vocation à devenir un logiciel de cabinet médical complet. Le projet évite volontairement les fonctions qui compliqueraient inutilement l'usage : comptes utilisateurs, cloud obligatoire, agenda, facturation, dossiers médicaux complexes, diagnostic automatique ou IA médicale.
 
 ## Firefly DE400 testé
 
@@ -359,7 +365,7 @@ Il sait notamment :
 
 Les nœuds multi-plane sont également pris en charge pour les formats progressifs linéaires MJPEG, YUYV, BGRA, NV12 et NV12M. Les formats tiled, 10 bits et les nœuds de conversion mémoire-à-mémoire ne sont pas proposés. Les tests de disposition mémoire sont automatisés ; les ioctls multi-plane restent à vérifier sur un appareil correspondant. Le DE400 utilise le chemin mono-plane.
 
-Le DE400 testé déclare `bTriggerUsage = 0` : le pilote Linux ne crée pas de touche caméra pour son bouton. Ses pressions transmettent cependant des événements sur le canal USB d'interruption. La [passerelle Linux](helpers/linux/README.md) lit uniquement ces événements pour le DE400 `21cd:603b`, sans ouvrir de flux vidéo, modifier la caméra ni enregistrer d'images. Son programme installé appartient à root ; IrisScope conserve les droits habituels de l'utilisateur. L'installation requiert une authentification administrateur et le compte doit appartenir au groupe `video`.
+Le DE400 testé déclare `bTriggerUsage = 0` : le pilote Linux ne crée pas de touche caméra pour son bouton. Ses pressions transmettent cependant des événements sur le canal USB d'interruption. La [passerelle Linux](helpers/linux/README.md) lit uniquement ces événements pour le DE400 `21cd:603b`, sans ouvrir de flux vidéo, modifier la caméra ni enregistrer d'images. Son programme installé appartient à root ; Iriscope conserve les droits habituels de l'utilisateur. L'installation requiert une authentification administrateur et le compte doit appartenir au groupe `video`.
 
 ```sh
 sudo bash scripts/install-de400-button.sh
@@ -393,7 +399,7 @@ Le backend Media Foundation sait :
 - participer au suivi connexion / déconnexion ;
 - alimenter le même pipeline photo, vidéo et bibliothèque que les autres plateformes.
 
-Les contrôles d'image utilisent les interfaces IAM lorsqu'elles sont exposées et un repli standard IKsControl sur la même source caméra. Seules les plages et les modes réellement déclarés par le pilote sont présentés. La réinitialisation utilise la valeur native par défaut, ou la valeur constatée à l'ouverture lorsque le pilote n'annonce pas de défaut. Le bouton Snapshot dispose d'un abonnement natif optionnel au déclencheur UVC exposé par le pilote. Son fonctionnement avec le DE400 réel reste à vérifier ; la compilation seule ne le confirme pas. Voir [Bouton multiplateforme](docs/BOUTON-MULTIPLATEFORME.md).
+Les contrôles d'image utilisent les interfaces IAM lorsqu'elles sont exposées et un repli standard IKsControl sur la même source caméra. Seules les plages et les modes réellement déclarés par le pilote sont présentés. La réinitialisation utilise la valeur native par défaut, ou la valeur constatée à l'ouverture lorsque le pilote n'annonce pas de défaut. Le bouton Snapshot dispose d'un abonnement natif optionnel au déclencheur UVC exposé par le pilote. Son fonctionnement avec le DE400 réel reste à vérifier ; la compilation seule ne le confirme pas. Voir [Bouton multiplateforme](documentation/BOUTON-MULTIPLATEFORME.md).
 
 ### macOS
 
@@ -406,7 +412,7 @@ Le backend AVFoundation sait :
 - participer au suivi connexion / déconnexion ;
 - alimenter le même pipeline photo, vidéo et bibliothèque que les autres plateformes.
 
-Les contrôles AVFoundation actuellement exposés se limitent aux modes de balance des blancs automatique et d'exposition lorsque la caméra les fournit. Le bouton Snapshot dispose d’un récepteur USB natif optionnel ; son état réel est affiché dans le diagnostic après ouverture de la caméra. Le pilote Apple peut refuser l’accès à l’interface du bouton : le direct et les captures logicielles continuent alors de fonctionner. La compilation Mac Intel/Apple Silicon est vérifiable depuis Linux ; la réception réelle du bouton doit encore être testée sur le Mac. Voir [Bouton multiplateforme](docs/BOUTON-MULTIPLATEFORME.md).
+Les contrôles AVFoundation actuellement exposés se limitent aux modes de balance des blancs automatique et d'exposition lorsque la caméra les fournit. Le bouton Snapshot dispose d’un récepteur USB natif optionnel ; son état réel est affiché dans le diagnostic après ouverture de la caméra. Le pilote Apple peut refuser l’accès à l’interface du bouton : le direct et les captures logicielles continuent alors de fonctionner. La compilation Mac Intel/Apple Silicon est vérifiable depuis Linux ; la réception réelle du bouton doit encore être testée sur le Mac. Voir [Bouton multiplateforme](documentation/BOUTON-MULTIPLATEFORME.md).
 
 ## Principes de performance
 
@@ -471,11 +477,11 @@ Chaque destination contient `captures/`, `exports/`, `backups/`, `restored/` et
 `validation-report.txt`. Les résultats et captures d'essai ne sont pas inclus
 dans Git. L'export de validation nécessite FFmpeg.
 
-Le [compte rendu Linux du 6 octobre 2026](docs/VALIDATION-LINUX-2026-10-06.md)
+Le [compte rendu Linux du 6 octobre 2026](documentation/VALIDATION-LINUX-2026-10-06.md)
 confirme les photos et le démarrage/arrêt vidéo au bouton sur l'appareil réel,
 avec les dossiers, noms, export et sauvegarde/restauration vérifiés.
 
-Le [rapport d'interface du même jour](docs/VALIDATION-INTERFACE-2026-10-06.md)
+Le [rapport d'interface du même jour](documentation/VALIDATION-INTERFACE-2026-10-06.md)
 décrit les essais de présentation, menus, miniatures, observations et zoom,
 ainsi que les vérifications de compilation Windows et macOS depuis Linux.
 
@@ -502,7 +508,7 @@ outils photo : notes, références, affichage, choix de comparaison, zoom et lou
 ainsi que les dossiers de consultation, le calendrier et l’export photo séparé.
 Le script rend 1 824 vues, dont les réglages de rotation ouverts, la bibliothèque, les références et la visionneuse photo.
 Une modification visuelle volontaire se valide avec `--update`, puis une revue
-des PNG ; la CI compare sans réécrire les références. `--compare-only` permet de
+des PNG ; la validation complète de CI compare sans réécrire les références. `--compare-only` permet de
 comparer les captures déjà générées, sans relancer le rendu.
 `--release` utilise les scénarios compilés avec optimisation pour accélérer les
 grandes matrices, avec les mêmes comparaisons d’images.
@@ -529,13 +535,13 @@ l'archive `.tar.gz` contient le programme `iriscope-app` à exécuter après
 extraction. Sous Windows, l'archive `.zip` contient `IrisScope.exe`. Sous
 macOS, le `.zip` contient `IrisScope.app` avec la déclaration d'autorisation
 caméra nécessaire à AVFoundation. Les licences des polices embarquées sont
-jointes à chaque archive. La CI produit ces trois formats sur leurs systèmes
+jointes à chaque archive. La validation complète de CI produit ces trois formats sur leurs systèmes
 respectifs et les conserve comme artefacts téléchargeables.
 
-Ces archives sont portables : elles ne créent pas de raccourci ni de mise à jour automatique. `python scripts/package-installer.py` produit aussi un paquet Debian avec entrée de menu, un installateur Windows par utilisateur et un DMG macOS avec accès au dossier Applications. La CI prépare les installateurs avec leurs empreintes, en plus des archives portables. Sous Windows, Inno Setup 6 est requis ; sous macOS, `hdiutil` est requis.
+Ces archives sont portables : elles ne créent pas de raccourci ni de mise à jour automatique. `python scripts/package-installer.py` produit aussi un paquet Debian avec entrée de menu, un installateur Windows par utilisateur et un DMG macOS avec accès au dossier Applications. La validation complète de CI prépare les installateurs avec leurs empreintes, en plus des archives portables. Sous Windows, Inno Setup 6 est requis ; sous macOS, `hdiutil` est requis.
 
-La CI produit des paquets Mac Apple Silicon **et Intel**, ainsi que Windows x64.
-Le guide [Essayer sur Windows et macOS](docs/ESSAIS-WINDOWS-MACOS.md) indique
+La validation complète de CI produit des paquets Mac Apple Silicon **et Intel**, ainsi que Windows x64.
+Le guide [Essayer sur Windows et macOS](documentation/ESSAIS-WINDOWS-MACOS.md) indique
 quel paquet choisir et comment vérifier la caméra et le bouton sans environnement
 de développement. L’absence de FFmpeg est distinguée d’un échec de capture dans
 les rapports d’essai matériel.
@@ -550,7 +556,7 @@ l’empreinte du binaire fourni et la disponibilité du moteur MP4. Les scripts
 refusent un binaire dont `--version` ne correspond pas au manifeste. Les paramètres
 et captures restent hors des fichiers installés ; les identifiants des installateurs
 restent constants lors d’une mise à jour. Les instructions sont dans
-[docs/RELEASE-0.4.0.md](docs/RELEASE-0.4.0.md).
+[documentation/RELEASE-0.4.0.md](documentation/RELEASE-0.4.0.md).
 
 Pour inclure un FFmpeg autonome construit pour le système cible, les deux scripts
 acceptent `--ffmpeg chemin/ffmpeg` et `--ffmpeg-license chemin/COPYING.txt`.
@@ -594,8 +600,29 @@ macOS Intel et macOS Apple Silicon si les cibles Rust correspondantes sont insta
 Clippy compile tous les targets en même temps qu'il les analyse ; une seconde
 passe `cargo check` identique n'est donc pas lancée. Le script utilise un seul
 job par défaut pour limiter la mémoire.
-La CI GitHub exécute aussi les tests et l'analyse statique sur des machines Linux,
-Windows et macOS. Ces vérifications ne remplacent pas les essais avec un DE400 branché
-sur chaque système.
 
-Les mesures reproductibles sont décrites dans [docs/PERFORMANCE.md](docs/PERFORMANCE.md), et les essais avec le DE400 dans [docs/VALIDATION-MATERIELLE.md](docs/VALIDATION-MATERIELLE.md).
+### Vérifications GitHub
+
+Un seul workflow [**CI**](https://github.com/Epikaigle/iriscope-app/actions/workflows/ci.yml)
+gère les contrôles. Lors d’un push sur `main`, il sélectionne uniquement ce qui
+est concerné : formatage, Clippy, tests Rust et Python sous Linux pour le code ;
+contrôle des ressources et du JavaScript pour le site dans `docs/`. Un changement
+limité au README ou à `documentation/` ne lance pas de CI. Ces passages légers
+ne génèrent ni captures visuelles ni installateurs.
+
+Pour préparer des paquets ou vérifier une modification avant diffusion, ouvrir
+**Actions → CI → Run workflow**, sélectionner `main` et laisser
+**full_validation** cochée. Un tag de version `v*` lance également cette
+validation complète : tests et analyse statique natifs sous Linux, Windows,
+macOS Apple Silicon et Intel, comparaisons visuelles sous Linux, puis archives et
+installateurs avec leurs empreintes SHA-256. Les trois anciens contrôles de
+compilation croisée GitHub sont supprimés, puisque ces validations natives
+couvrent déjà les systèmes cibles. La compilation croisée reste disponible
+localement avec `scripts/ci-local.sh`.
+
+Les paquets d’essai sont dans **Artifacts** d’une validation complète réussie.
+Ces vérifications ne remplacent pas les essais avec un DE400 branché sur chaque
+système. Le déploiement du site depuis **main /docs**, une fois Pages activé,
+apparaît séparément dans Actions : il est géré par GitHub Pages.
+
+Les mesures reproductibles sont décrites dans [documentation/PERFORMANCE.md](documentation/PERFORMANCE.md), et les essais avec le DE400 dans [documentation/VALIDATION-MATERIELLE.md](documentation/VALIDATION-MATERIELLE.md).

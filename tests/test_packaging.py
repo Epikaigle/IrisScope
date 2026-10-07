@@ -84,7 +84,7 @@ class PackageTests(unittest.TestCase):
         self.assertNotIn("{userdocs}", script)
         self.assertNotIn("{userappdata}", script)
         self.assertEqual((stage / "ffmpeg.exe").read_bytes(), self.engine.read_bytes())
-        self.assertTrue((stage / "docs/RELEASE-0.2.0.md").is_file())
+        self.assertTrue((stage / "documentation/RELEASE-0.2.0.md").is_file())
 
     def test_macos_installer_restores_executable_modes_without_signing(self):
         stage = self.root / "mac-stage"

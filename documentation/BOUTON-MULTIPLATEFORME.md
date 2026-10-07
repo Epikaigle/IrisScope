@@ -32,7 +32,7 @@ Dans **Paramètres → Diagnostic**, « réception USB macOS active » signifie 
 
 ## Un seul poste de développement
 
-Les modifications des trois backends, de l'interface et des tests se font dans le dépôt Linux. `scripts/ci-local.sh` contrôle le code des cibles Windows x86_64, Mac Intel et Mac Apple Silicon depuis Linux. La CI GitHub construit et teste aussi l'application sur des machines Linux, Windows et macOS ; elle produit leurs paquets natifs. Elle ne possède pas l'iriscope physique.
+Les modifications des trois backends, de l'interface et des tests se font dans le dépôt Linux. `scripts/ci-local.sh` contrôle le code des cibles Windows x86_64, Mac Intel et Mac Apple Silicon depuis Linux. La validation complète GitHub, lancée depuis **Actions → CI → Run workflow** avec **full_validation** cochée ou par un tag `v*`, construit et teste aussi l'application sur des machines Linux, Windows et macOS ; elle produit leurs paquets natifs. Les CI automatiques légères vérifient seulement les fichiers modifiés et ne produisent pas de paquet. GitHub ne possède pas l'iriscope physique.
 
 Un Mac et un PC Windows sont utiles uniquement pour installer le paquet et faire l'essai matériel, sans installer un environnement de développement. Après fermeture des autres applications utilisant la caméra, lancer l'exécutable natif avec `--diagnose`, puis `--validate-button` suivi d'un chemin vers un dossier vide. Sur macOS, vérifier d’abord l’état du récepteur dans le diagnostic. Si l’accès USB est refusé, le scénario de bouton ne peut pas réussir ; `--validate-hardware` vérifie séparément les captures logicielles. Le scénario crée des dossiers fictifs et conserve les paramètres personnels. Voir le [protocole matériel](VALIDATION-MATERIELLE.md).
 

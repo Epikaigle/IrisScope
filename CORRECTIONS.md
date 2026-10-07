@@ -268,7 +268,7 @@ Validation complémentaire dans le cloud Linux, avec des données fictives :
 - **800 vues synthétiques** et **192 comparaisons d’images**, à quatre tailles, deux thèmes et quatre échelles. La comparaison contrôle également la présence des deux images et leur séparation. Le message de capture en plein écran est placé sous les commandes et le contexte du dossier pour éviter leur chevauchement.
 - Application réelle sous Xvfb : nom corrigé avec conservation du numéro et des trois associations ; recherche par date ; sauvegarde et restauration avec empreintes vérifiées ; copie altérée refusée sans remplacement des captures. Les retours de sélection sont simulés via `zenity` ; l’affichage des sélecteurs natifs n’est pas validé par cet essai.
 - Navigation de la visionneuse avec 103 captures fictives : passage dans les deux sens entre la dernière capture de la première page et la première de la suivante, avec conservation de la recherche par dossier. Comparaison de deux photos, zoom et fermeture clavier vérifiés dans l’application.
-- Mesures en release sur 1 000 et 10 000 captures, décodage JPEG et AVI synthétique d’une heure (28 800 images, environ 2,86 Go), avec contrôle de 100 positions de lecture. Résultats et limites dans `docs/PERFORMANCE.md`.
+- Mesures en release sur 1 000 et 10 000 captures, décodage JPEG et AVI synthétique d’une heure (28 800 images, environ 2,86 Go), avec contrôle de 100 positions de lecture. Résultats et limites dans `documentation/PERFORMANCE.md`.
 - Installateur Debian construit, empreinte et permissions vérifiées. Préparation des paquets Windows/macOS contrôlée avec fichiers fictifs, y compris le droit d’exécution du bundle macOS ; leurs outils natifs et l’installation sur ces systèmes restent à tester sur les hôtes correspondants. L’usage personnel retenu ne demande pas de signature officielle.
 
 ## 5 octobre 2026 — harmonisation des commandes et messages vidéo
@@ -332,7 +332,7 @@ existante reste identique. Le paquet ne contient que des fichiers sous `usr/`.
 
 Les essais avec le DE400, le bouton physique et l’installation sur les bureaux
 Windows/macOS restent à effectuer sur les ordinateurs correspondants, selon
-`docs/VALIDATION-MATERIELLE.md`.
+`documentation/VALIDATION-MATERIELLE.md`.
 
 ## 6 octobre 2026 — outils de consultation des photos
 
@@ -343,7 +343,7 @@ Windows/macOS restent à effectuer sur les ordinateurs correspondants, selon
 - Luminosité, contraste, rotation et miroir réversibles, avec retour à l’original. Copie PNG en pleine résolution avec annotations et réglages d’affichage ; fiche PDF avec l’original annoté, notes paginées et éventuelle comparaison.
 - Originaux conservés, refus de remplacer les exports existants et nettoyage des copies temporaires lors de l’annulation. Les panneaux restent accessibles par défilement ; le bouton d’enregistrement des notes est visible dès l’ouverture à 800 × 600.
 
-Les outils et leurs limites sont décrits dans `docs/VISIONNEUSE.md`. Les images
+Les outils et leurs limites sont décrits dans `documentation/VISIONNEUSE.md`. Les images
 de référence et les repères servent à l’observation manuelle.
 
 Validation sous Linux avec des captures fictives : les **219 tests du workspace**
@@ -391,8 +391,8 @@ l’annulation et leur récupération après sauvegarde/restauration.
 Les **six contrôles de structure des paquets** passent, dont un vrai paquet
 Debian extrait ; les outils d’installation Windows/macOS restent simulés dans
 ces contrôles. Les originaux et les paramètres personnels restent hors des
-fichiers installés. Le guide de consultation est dans `docs/VISIONNEUSE.md` et
-les instructions de mise à jour dans `docs/RELEASE-0.3.0.md`.
+fichiers installés. Le guide de consultation est dans `documentation/VISIONNEUSE.md` et
+les instructions de mise à jour dans `documentation/RELEASE-0.3.0.md`.
 
 Les **432 comparaisons visuelles** passent après mise à jour et revue des
 rendus concernés. Les **864 captures fraîches** couvrent 27 scénarios,
@@ -415,3 +415,13 @@ Les préférences d’affichage sont locales, avec reprise des anciennes configu
 La présentation masque les informations privées et les annotations, sans effacer ni modifier les sources. Les notes continuent leur enregistrement ; les erreurs restent signalées sans chemin ni nom personnel. Image seule agrandit l’espace photo et masque les commandes après trois secondes sans interaction ; leur retour reste accessible à la souris et par Échap. Les miniatures ont trois tailles en grille et en liste. Le diagnostic caméra garde son état visible et replie les données techniques par défaut. Aucune option de masquage permanent de l’aide n’a été ajoutée.
 
 Validation 0.4.0 : 223 tests de workspace réussis, deux essais caméra ignorés faute de matériel ; Clippy strict sur Linux, Windows x64 et macOS x64/ARM64. La matrice produit 1 536 rendus (48 scènes, quatre fenêtres, deux thèmes, quatre échelles) et valide 608 comparaisons de référence. Les essais couvrent les séparateurs à la souris, la reprise des préférences, le masquage des données, les raccourcis privés, les échecs de notes et l’ouverture du panneau mémorisé après lecture réelle de la photo et des observations. Six tests d’empaquetage passent ; les outils Windows/macOS sont simulés. Le paquet Debian démarre et se ferme normalement sous Xvfb, conserve les anciennes préférences et un original JPEG, et mémorise le panneau entre deux démarrages. L’archive portable, les ressources et les empreintes sont vérifiées. Les essais natifs Windows/macOS et du bouton physique restent à effectuer sur leurs appareils.
+
+## 7 octobre 2026 — nom, site et vérifications GitHub
+
+- Nom public harmonisé en **Iriscope**, dépôt **iriscope-app**. Les exécutables, bundles, répertoires de configuration et identifiants d’installation existants conservent leurs noms techniques pour préserver les mises à jour et les paramètres.
+- Site centré sur l’application, avec la 3D du DE400 à l’accueil ; site déplacé dans `docs/` et guides techniques dans `documentation/`. Publication GitHub Pages depuis **main /docs**, sans branche supplémentaire, avec `.nojekyll`.
+- Une seule CI automatique cible les changements : contrôles Linux pour le code, contrôle du site pour `docs/`, aucun lancement pour le README ou les guides seuls. Matrice native, captures visuelles et installateurs réservés à la validation complète manuelle ou aux tags `v*`.
+- Les trois cross-checks GitHub redondants et les workflows de site séparés sont retirés. La compilation croisée reste disponible depuis Linux avec `scripts/ci-local.sh`.
+- Les guides expliquent où retrouver les artefacts d’une validation complète et comment en générer de nouveaux. Les essais physiques Windows et macOS restent nécessaires.
+
+Le workflow est contrôlé avec actionlint ; onze scénarios vérifient la sélection des contrôles pour les changements de code, site, documentation, un lancement manuel et un tag de version.

@@ -1,4 +1,4 @@
-# IrisScope 0.3.0 — consultation des photos
+# Iriscope 0.3.0 — consultation des photos
 
 Cette version rassemble les outils photo ajoutés depuis 0.2.0 et les améliorations du parcours de consultation :
 
@@ -12,7 +12,7 @@ Le [guide de la visionneuse et des dossiers](VISIONNEUSE.md) explique les comman
 
 ## Installer ou mettre à jour
 
-Fermer IrisScope, sauvegarder le dossier de captures complet avec ses fichiers cachés, puis installer le paquet ou remplacer l’application portable. Les paramètres et les captures restent hors du programme installé. Les identifiants des installateurs et l’emplacement des paramètres sont conservés : `%APPDATA%/IrisScope/settings.json` sous Windows, `~/Library/Application Support/IrisScope/settings.json` sous macOS et `$XDG_CONFIG_HOME/IrisScope/settings.json` ou `~/.config/IrisScope/settings.json` sous Linux.
+Fermer Iriscope, sauvegarder le dossier de captures complet avec ses fichiers cachés, puis installer le paquet ou remplacer l’application portable. Les paramètres et les captures restent hors du programme installé. Les identifiants des installateurs et l’emplacement des paramètres sont conservés : `%APPDATA%/IrisScope/settings.json` sous Windows, `~/Library/Application Support/IrisScope/settings.json` sous macOS et `$XDG_CONFIG_HOME/IrisScope/settings.json` ou `~/.config/IrisScope/settings.json` sous Linux.
 
 Le numéro apparaît dans les paramètres, `VERSION.txt`, `release-info.json` et `iriscope-app --version`. Vérifier l’empreinte SHA-256 fournie avec le paquet. La distribution personnelle reste sans signature officielle.
 

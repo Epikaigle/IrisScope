@@ -6,9 +6,9 @@
     <meta name="theme-color" content="#101a18" />
     <meta
       name="description"
-      content="IrisScope : capturez, classez et explorez vos images avec le Firefly DE400. Application locale pour Linux, Windows et macOS."
+      content="Iriscope : une application pour capturer, organiser et observer vos photos et vidéos d’iris. Disponible sur Linux, Windows et macOS."
     />
-    <title>IrisScope — Un regard, chaque détail.</title>
+    <title>Iriscope — Photos et vidéos d’iris</title>
     <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="styles.css" />
     <script type="module" src="main.js"></script>
@@ -16,8 +16,8 @@
   <body>
     <a class="skip-link" href="#contenu">Aller au contenu</a>
     <header class="header">
-      <a class="brand" href="#accueil" aria-label="IrisScope, accueil"
-        ><img src="assets/icon.svg" width="30" height="30" alt="" />IrisScope</a
+      <a class="brand" href="#accueil" aria-label="Iriscope, accueil"
+        ><img src="assets/icon.svg" width="30" height="30" alt="" />Iriscope</a
       >
       <button
         class="menu-button"
@@ -28,7 +28,7 @@
         Menu <span aria-hidden="true">☰</span>
       </button>
       <nav id="navigation" aria-label="Navigation principale">
-        <a href="#de400">Le DE400</a><a href="#application">L’application</a
+        <a href="#application">L’application</a
         ><a href="#parcours">Prise en main</a>
         <a class="nav-download" href="#telecharger"
           >Télécharger <span aria-hidden="true">↗</span></a
@@ -39,17 +39,15 @@
       <section class="hero container" id="accueil" aria-labelledby="hero-title">
         <div class="hero-copy">
           <p class="eyebrow">
-            <span class="status-dot" aria-hidden="true"></span> Pour le Firefly
-            DE400
+            <span class="status-dot" aria-hidden="true"></span> L’application pour vos images d’iris
           </p>
-          <h1 id="hero-title">Un regard.<br />Chaque <em>détail.</em></h1>
+          <h1 id="hero-title">Vos iris.<br />Tout <em>simplement.</em></h1>
           <p class="hero-description">
-            De la première image au dossier bien rangé. Capturez vos iris,
-            retrouvez vos photos et observez-les à votre rythme.
+            Capturez des photos et vidéos, retrouvez vos séances et ajoutez vos observations. Une application simple, avec vos fichiers sur votre ordinateur.
           </p>
           <div class="actions">
             <a class="button primary" href="#telecharger"
-              >Découvrir IrisScope <span aria-hidden="true">↗</span></a
+              >Télécharger Iriscope <span aria-hidden="true">↗</span></a
             ><a class="text-link" href="#application"
               >Voir l’application <span aria-hidden="true">↓</span></a
             >
@@ -62,7 +60,7 @@
         </div>
         <div class="device-viewer" id="device-viewer">
           <div class="viewer-heading">
-            <span>Le DE400, sous tous les angles</span
+            <span>Un iriscope en 3D</span
             ><span class="tag" id="view-tag">Vue 3D</span>
           </div>
           <div class="model-stage" id="model-stage">
@@ -116,10 +114,8 @@
             de zoomer.
           </p>
           <p class="model-caption">
-            Reconstitution d’après les photographies du fabricant.
-            <a href="#de400"
-              >Voir l’appareil réel <span aria-hidden="true">↗</span></a
-            >
+            Modèle DE400, reconstitué d’après les photos de
+            <a href="https://fireflyglobal.com/de400-eyescope/" target="_blank" rel="noopener noreferrer">Firefly Global</a>.
           </p>
         </div>
       </section>
@@ -128,91 +124,6 @@
         <p><span>02</span> Retrouver facilement</p>
         <p><span>03</span> Observer précisément</p>
       </div>
-
-      <section
-        class="section container"
-        id="de400"
-        aria-labelledby="device-title"
-      >
-        <div class="section-heading">
-          <p class="eyebrow">L’appareil</p>
-          <h2 id="device-title">Pensé pour votre <em>DE400.</em></h2>
-          <p>
-            La caméra que vous connaissez, avec une application conçue autour de
-            votre séance.
-          </p>
-        </div>
-        <div class="hardware-grid">
-          <figure class="product-photo">
-            <img
-              src="assets/de400/de400-device.jpg"
-              width="800"
-              height="800"
-              loading="lazy"
-              alt="Le DE400 sur son support flexible noir."
-            />
-            <figcaption>Le DE400 et son support flexible.</figcaption>
-          </figure>
-          <div class="hardware-details">
-            <figure class="detail-photo">
-              <img
-                src="assets/de400/de400-tip.jpg"
-                width="800"
-                height="800"
-                loading="lazy"
-                alt="Vue rapprochée de l’œilleton noir et de la molette argentée de mise au point."
-              />
-              <figcaption>
-                Œilleton, mise au point et bouton Snapshot.
-              </figcaption>
-            </figure>
-            <dl class="specs">
-              <div>
-                <dt>Capteur</dt>
-                <dd>1280 × 1024</dd>
-              </div>
-              <div>
-                <dt>Grossissement optique</dt>
-                <dd>Jusqu’à 15×</dd>
-              </div>
-              <div>
-                <dt>Éclairage</dt>
-                <dd>4 LED réglables</dd>
-              </div>
-              <div>
-                <dt>Connexion</dt>
-                <dd>USB 2.0</dd>
-              </div>
-            </dl>
-            <p class="source-note">
-              Caractéristiques et photographies :
-              <a
-                href="https://fireflyglobal.com/de400-eyescope/"
-                target="_blank"
-                rel="noopener noreferrer"
-                >Firefly Global <span aria-hidden="true">↗</span></a
-              >. La résolution et la cadence disponibles dépendent du flux
-              choisi dans l’application.
-            </p>
-          </div>
-        </div>
-        <aside class="button-note">
-          <span class="note-icon" aria-hidden="true">↳</span>
-          <div>
-            <h3>Et le bouton de l’iriscope ?</h3>
-            <p>
-              Photo, démarrage et arrêt de vidéo : validés avec le DE400 réel
-              sous Linux, grâce à la passerelle locale. Les récepteurs Windows
-              et macOS sont intégrés ; leur validation avec l’appareil reste à
-              effectuer sur ces deux systèmes.
-            </p>
-            <a
-              href="https://github.com/Epikaigle/IrisScope/blob/main/docs/ESSAIS-WINDOWS-MACOS.md"
-              >Consulter le guide d’essai <span aria-hidden="true">↗</span></a
-            >
-          </div>
-        </aside>
-      </section>
 
       <section
         class="section application-section"
@@ -274,7 +185,7 @@
                 width="1360"
                 height="860"
                 loading="lazy"
-                alt="Écran Caméra d’IrisScope : choix de l’œil, mode photo ou vidéo et image d’un iris."
+                alt="Écran Caméra d’Iriscope : choix de l’œil, mode photo ou vidéo et image d’un iris."
               />
               <figcaption>
                 Le direct, le dossier et les commandes de capture sur un seul
@@ -293,7 +204,7 @@
                 width="1360"
                 height="860"
                 loading="lazy"
-                alt="Bibliothèque d’IrisScope avec filtres, tri et taille des vignettes ajustable."
+                alt="Bibliothèque d’Iriscope avec filtres, tri et taille des vignettes ajustable."
               />
               <figcaption>
                 Filtrez par dossier, date ou œil et ajustez la taille de votre
@@ -312,7 +223,7 @@
                 width="1360"
                 height="860"
                 loading="lazy"
-                alt="Visionneuse d’IrisScope affichant un iris, avec zoom, annotations et comparaison."
+                alt="Visionneuse d’Iriscope affichant un iris, avec zoom, annotations et comparaison."
               />
               <figcaption>
                 Zoomez, réglez l’angle précisément et ajoutez vos observations.
@@ -320,8 +231,8 @@
             </figure>
           </div>
           <p class="source-note preview-note">
-            Captures de l’interface avec des images de démonstration du
-            fabricant.
+            Captures de l’interface avec des images de démonstration de
+            <a href="https://fireflyglobal.com/de400-eyescope/" target="_blank" rel="noopener noreferrer">Firefly Global</a>.
           </p>
           <div class="feature-grid">
             <article>
@@ -364,9 +275,9 @@
         <ol class="workflow">
           <li>
             <span>1</span>
-            <h3>Branchez votre DE400.</h3>
+            <h3>Branchez votre caméra.</h3>
             <p>
-              Lancez IrisScope. L’application recherche la caméra et ouvre son
+              Lancez Iriscope. L’application recherche la caméra et ouvre son
               flux. Autorisez l’accès à la caméra si votre système le demande.
             </p>
           </li>
@@ -390,7 +301,7 @@
         </ol>
         <a
           class="text-link"
-          href="https://github.com/Epikaigle/IrisScope#readme"
+          href="https://github.com/Epikaigle/iriscope-app#readme"
           >Lire la documentation complète <span aria-hidden="true">↗</span></a
         >
       </section>
@@ -402,13 +313,13 @@
       >
         <div class="container">
           <div class="section-heading">
-            <p class="eyebrow">IrisScope 0.4</p>
+            <p class="eyebrow">Iriscope 0.4</p>
             <h2 id="download-title">
               À installer sur <em>votre ordinateur.</em>
             </h2>
             <p>
               Les paquets d’essai sont produits par GitHub Actions. Ouvrez une
-              exécution réussie de <strong>main</strong>, puis la rubrique
+              validation complète réussie de <strong>main</strong>, puis la rubrique
               <strong>Artifacts</strong> en bas de page. Une connexion GitHub
               est nécessaire pour les télécharger.
             </p>
@@ -439,11 +350,11 @@
           <div class="actions">
             <a
               class="button primary"
-              href="https://github.com/Epikaigle/IrisScope/actions/workflows/ci.yml?query=branch%3Amain"
+              href="https://github.com/Epikaigle/iriscope-app/actions/workflows/ci.yml?query=branch%3Amain"
               >Ouvrir les téléchargements <span aria-hidden="true">↗</span></a
             ><a
               class="text-link"
-              href="https://github.com/Epikaigle/IrisScope/blob/main/docs/ESSAIS-WINDOWS-MACOS.md"
+              href="https://github.com/Epikaigle/iriscope-app/blob/main/documentation/ESSAIS-WINDOWS-MACOS.md"
               >Installation et essais Mac / Windows
               <span aria-hidden="true">↗</span></a
             >
@@ -465,20 +376,20 @@
             width="30"
             height="30"
             alt=""
-          />IrisScope</a
+          />Iriscope</a
         >
         <p>Capturer. Classer. Observer.</p>
       </div>
       <div class="footer-links">
-        <a href="https://github.com/Epikaigle/IrisScope"
+        <a href="https://github.com/Epikaigle/iriscope-app"
           >Code source <span aria-hidden="true">↗</span></a
-        ><a href="https://github.com/Epikaigle/IrisScope/issues"
+        ><a href="https://github.com/Epikaigle/iriscope-app/issues"
           >Signaler un problème <span aria-hidden="true">↗</span></a
         >
       </div>
       <p class="footer-note">
-        Projet indépendant de Firefly Global. IrisScope est un outil de capture
-        et d’observation d’images ; il ne fournit pas de diagnostic médical.
+        Iriscope est une application indépendante de capture et d’observation
+        d’images. Aucun diagnostic médical automatique.
       </p>
     </footer>
   </body>

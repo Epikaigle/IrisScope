@@ -61,7 +61,7 @@ def install_linux(stage, binary, output, version, ffmpeg=None, license_path=None
         executables.add(encoder)
     applications = stage / "usr/share/applications"
     applications.mkdir(parents=True)
-    (applications / "iriscope.desktop").write_text("[Desktop Entry]\nType=Application\nName=IrisScope\nComment=Capture et consultation des images de l’iris\nExec=iriscope\nIcon=iriscope\nTerminal=false\nCategories=Graphics;Photography;\n", encoding="utf-8")
+    (applications / "iriscope.desktop").write_text("[Desktop Entry]\nType=Application\nName=Iriscope\nComment=Capture et consultation des images de l’iris\nExec=iriscope\nIcon=iriscope\nTerminal=false\nCategories=Graphics;Photography;\n", encoding="utf-8")
     icons = stage / "usr/share/icons/hicolor/scalable/apps"
     icons.mkdir(parents=True)
     (icons / "iriscope.svg").write_text(SVG, encoding="utf-8")
@@ -93,7 +93,7 @@ def install_windows(stage, binary, output, version, thumbprint, iscc, ffmpeg=Non
     script = stage / "IrisScope.iss"
     script.write_text(f'''[Setup]
 AppId=app.iriscope.IrisScope
-AppName=IrisScope
+AppName=Iriscope
 AppVersion={version}
 DefaultDirName={{localappdata}}\\Programs\\IrisScope
 PrivilegesRequired=lowest

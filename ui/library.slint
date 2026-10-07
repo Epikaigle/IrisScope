@@ -588,7 +588,7 @@ export component LibraryPage inherits Rectangle {
                                         height: 32px;
                                         compact: true;
                                         text: "Ouvrir";
-                                        accessibility-label: "Ouvrir " + item.title + " dans IrisScope";
+                                        accessibility-label: "Ouvrir " + item.title + " dans Iriscope";
                                         enabled: item.can-open-in-app;
                                         primary: AppState.selected-library-path == item.file-path;
                                         clicked => { AppState.library-map-open = false; AppState.open-capture-file(item.file-path, item.file-version); }
@@ -751,7 +751,7 @@ export component LibraryPage inherits Rectangle {
                                 min-width: 0px; horizontal-stretch: 1; elide-text: true;
                                 compact: true;
                                 text: "Ouvrir";
-                                accessibility-label: "Ouvrir " + item.title + " dans IrisScope";
+                                accessibility-label: "Ouvrir " + item.title + " dans Iriscope";
                                 enabled: item.can-open-in-app;
                                 primary: AppState.selected-library-path == item.file-path;
                                 clicked => { AppState.library-map-open = false; AppState.open-capture-file(item.file-path, item.file-version); }

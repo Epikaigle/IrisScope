@@ -6,7 +6,7 @@ import re
 import subprocess
 from urllib.parse import unquote, urlsplit
 
-SITE = Path(__file__).resolve().parents[1] / "site"
+SITE = Path(__file__).resolve().parents[1] / "docs"
 
 
 class Page(HTMLParser):
@@ -48,7 +48,7 @@ def main():
         pages[document.resolve()] = page
         errors.extend(f"{document.name}: {error}" for error in page.errors)
     if (SITE / "index.html").resolve() not in pages:
-        errors.append("Missing site/index.html")
+        errors.append("Missing docs/index.html")
 
     def check_resource(reference, origin, local_only=True):
         parsed = urlsplit(reference)
