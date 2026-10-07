@@ -31,7 +31,7 @@ jobs:
       site: ${{ steps.paths.outputs.site }}
       full: ${{ steps.paths.outputs.full }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Select checks from changed paths
@@ -83,7 +83,7 @@ jobs:
     env:
       CARGO_BUILD_JOBS: 2
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.89.0
@@ -92,7 +92,7 @@ jobs:
         with:
           key: native-ubuntu-24.04
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: Install Linux build and headless test dependencies
@@ -114,11 +114,11 @@ jobs:
     if: needs.changes.outputs.site == 'true'
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - run: python scripts/check-site.py
@@ -143,7 +143,7 @@ jobs:
           - os: macos-15-intel
             camera: iriscope-camera-macos
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.89.0
@@ -152,7 +152,7 @@ jobs:
         with:
           key: native-${{ matrix.os }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: Install Linux build and headless test dependencies
@@ -176,7 +176,7 @@ jobs:
         run: xvfb-run -a -s '-screen 0 4096x2304x24 -nolisten tcp' python scripts/check-ui-visuals.py --release
       - name: Upload visual captures for review
         if: always() && runner.os == 'Linux'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: iriscope-ui-visuals
           path: target/ui-visuals/
@@ -204,7 +204,7 @@ jobs:
         if: runner.os == 'Windows'
         run: python scripts/package-installer.py --iscc "C:/Program Files (x86)/Inno Setup 6/ISCC.exe"
       - name: Upload portable application and checksum
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: iriscope-${{ runner.os }}-${{ runner.arch }}
           path: dist/*
