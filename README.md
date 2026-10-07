@@ -41,7 +41,7 @@ Aucune étape technique de type « ouvrir la caméra », « choisir /dev/video0 
 - affichage live dès l'ouverture de l'application ;
 - mode **Photo** ou **Vidéo** clairement sélectionnable ;
 - gros bouton logiciel de capture ;
-- bouton physique du DE400 sous Linux via la [passerelle locale](helpers/linux/README.md) ;
+- bouton physique du DE400 sous Linux via la [passerelle locale](helpers/linux/README.md), et sur le Mac Intel testé via le composant USB inclus dans le paquet ;
 - indicateur **REC** et durée d'enregistrement ;
 - dernière capture visible immédiatement ;
 - détection de déconnexion / reconnexion de la caméra ;
@@ -75,7 +75,7 @@ Jean_Dupont_Droit_2026-09-20_18-42-16.jpg
 - durée préservée malgré les images perdues, en maintenant la dernière image jusqu'au prochain horodatage caméra ;
 - affichage du temps d'enregistrement.
 
-Un enregistrement est limité à une heure et à la capacité du conteneur AVI classique (environ 4 Gio). Une interruption trop longue de la caméra arrête l'enregistrement avec un message et conserve le fichier temporaire récupérable.
+La session et les enregistrements n'ont pas de limite de durée arbitraire. Un fichier reste limité par la capacité du conteneur AVI classique (environ 4 Gio). Une interruption trop longue de la caméra arrête l'enregistrement avec un message et conserve le fichier temporaire récupérable.
 
 ### Session et nommage
 
@@ -293,7 +293,7 @@ Le matériel de référence actuellement diagnostiqué est :
 
 Sur l'exemplaire testé le 1er octobre 2026, le mode le plus détaillé exposé est le **1280 × 1024 MJPEG à 8 FPS annoncés par le périphérique**. Le diagnostic du binaire à jour a reçu et décodé trois images dans ce mode ; ce court essai ne mesure pas la cadence soutenue. Le 30 FPS à cette résolution n'est pas exposé par ce matériel.
 
-Sur l'exemplaire étudié, le bouton Snapshot n'apparaît pas comme un périphérique HID séparé. Le 6 octobre 2026, trois pressions réelles ont été corrélées aux paquets USB `02 01 00 01`, suivis de `02 01 00 00` au relâchement, sur l'endpoint `0x81`. Sous Linux, une passerelle locale transmet ces événements au backend V4L2. Les réceptions Windows et macOS sont intégrées au code, mais nécessitent encore une validation physique sur chacun de ces systèmes.
+Sur l'exemplaire étudié, le bouton Snapshot n'apparaît pas comme un périphérique HID séparé. Les pressions réelles correspondent aux paquets USB `02 01 00 01`, suivis de `02 01 00 00` au relâchement, sur l'endpoint `0x81`. Sous Linux, une passerelle locale transmet ces événements au backend V4L2. Sur le Mac Intel testé, le composant USB inclus reçoit la vidéo et le bouton ; deux photos puis le démarrage et l'arrêt d'une vidéo sont validés par quatre appuis réels. La réception Windows reste à vérifier avec l'appareil.
 
 ## Architecture technique
 
@@ -412,7 +412,9 @@ Le backend AVFoundation sait :
 - participer au suivi connexion / déconnexion ;
 - alimenter le même pipeline photo, vidéo et bibliothèque que les autres plateformes.
 
-Les contrôles AVFoundation actuellement exposés se limitent aux modes de balance des blancs automatique et d'exposition lorsque la caméra les fournit. Le bouton Snapshot dispose d’un récepteur USB natif optionnel ; son état réel est affiché dans le diagnostic après ouverture de la caméra. Le pilote Apple peut refuser l’accès à l’interface du bouton : le direct et les captures logicielles continuent alors de fonctionner. La compilation Mac Intel/Apple Silicon est vérifiable depuis Linux ; la réception réelle du bouton doit encore être testée sur le Mac. Voir [Bouton multiplateforme](documentation/BOUTON-MULTIPLATEFORME.md).
+Le paquet Mac inclut un lanceur natif et un composant USB pour le DE400 `21cd:603b`. Après l'authentification administrateur gérée par macOS, le composant reçoit ensemble vidéo, bouton et réglages ; l'interface et les captures restent sous le compte utilisateur. Sur le Mac Intel testé, les huit contrôles réels sont disponibles : luminosité, contraste, saturation, teinte, netteté, gamma, balance des blancs et anti-scintillement. La lecture, la modification, la réinitialisation et la réouverture de la caméra sont validées. Ce chemin utilise le mode 1280 × 1024 YUYV à 8 fps, sans limite de durée de session. Fermer l'application rend le périphérique au pilote Apple ; aucun service permanent n'est installé.
+
+Le chemin AVFoundation reste accessible avec `--avfoundation`. Ses contrôles se limitent aux modes automatiques de balance des blancs et d'exposition annoncés par le pilote. L'ouverture USB ordinaire du bouton est refusée sur le Mac testé (`0xe00002c5`) ; une permission caméra seule ne résout pas ce conflit. Les autres modèles de Mac et Windows nécessitent toujours un essai matériel. Voir [Bouton multiplateforme](documentation/BOUTON-MULTIPLATEFORME.md).
 
 ## Principes de performance
 
@@ -519,7 +521,7 @@ natifs Windows/macOS et la caméra réelle nécessitent des essais sur ces syst�
 
 La distribution retenue pour l’usage personnel est sans signature officielle.
 Construire et installer ces paquets ne nécessite ni certificat payant ni abonnement.
-La signature reste une option du script, pas une condition de cette installation.
+Sur Mac, les scripts appliquent par défaut une signature locale **ad hoc** gratuite. Elle vérifie l'intégrité du paquet, mais ne remplace pas une identité Developer ID ni une notarisation Apple.
 
 Sur chaque système cible, construire puis empaqueter le binaire natif :
 
@@ -527,6 +529,14 @@ Sur chaque système cible, construire puis empaqueter le binaire natif :
 cargo build --release -p iriscope-app --locked
 python scripts/package-release.py
 ```
+
+Sur macOS, construire aussi le lanceur et le composant USB avant l'empaquetage :
+
+```text
+python3 scripts/macos/build-usb-experiment.py
+```
+
+CMake et les outils de compilation Apple sont nécessaires uniquement sur le poste de développement. L'utilisateur du paquet n'a besoin ni de Rust, ni de Python, ni de CMake. Le lancement ordinaire demande une authentification administrateur pour l'accès USB, une fois par ouverture d'Iriscope ; il n'y a pas de renouvellement à heure fixe pendant la session.
 
 Le script crée dans `dist/` une archive et son empreinte SHA-256. Vérifier
 l'empreinte depuis ce dossier avec `cd dist && sha256sum -c *.sha256` sur Linux.
@@ -546,7 +556,7 @@ quel paquet choisir et comment vérifier la caméra et le bouton sans environnem
 de développement. L’absence de FFmpeg est distinguée d’un échec de capture dans
 les rapports d’essai matériel.
 
-Les paquets créés sans certificat restent non signés. Pour une distribution publique, le script accepte `--windows-certificate` (empreinte d’un certificat déjà installé), ou `--signing-identity` et `--notary-profile` sous macOS (identité Developer ID et profil de trousseau existants). Il signe et vérifie les paquets Windows ; sous macOS, il signe le bundle, soumet la notarisation et agrafe le ticket avant de créer le DMG. Aucun certificat ni mot de passe n’est inclus dans le dépôt. Ces opérations demandent les certificats officiels et les outils natifs ; elles n’ont pas été exécutées dans l’environnement cloud Linux. Les mises à jour restent manuelles. Le
+Les paquets Windows créés sans certificat restent non signés ; les paquets Mac reçoivent la signature ad hoc locale. Pour une distribution publique, le script accepte `--windows-certificate` (empreinte d’un certificat déjà installé), ou `--signing-identity` et `--notary-profile` sous macOS (identité Developer ID et profil de trousseau existants). La notarisation exige une véritable identité Developer ID : elle est refusée avec la signature ad hoc. Aucun certificat ni mot de passe n’est inclus dans le dépôt. Aucune inscription payante ni notarisation n'a été réalisée pour cet usage personnel. Les mises à jour restent manuelles. Le
 paquet Linux est construit sur Ubuntu 24.04 et dépend des bibliothèques système
 requises par Slint et V4L2 ; sa compatibilité avec d'autres distributions doit
 être vérifiée séparément.
@@ -607,8 +617,7 @@ Un seul workflow [**CI**](https://github.com/Epikaigle/iriscope-app/actions/work
 gère les contrôles. Lors d’un push sur `main`, il sélectionne uniquement ce qui
 est concerné : formatage, Clippy, tests Rust et Python sous Linux pour le code ;
 contrôle des ressources et du JavaScript pour le site dans `docs/`. Un changement
-limité au README ou à `documentation/` ne lance pas de CI. Ces passages légers
-ne génèrent ni captures visuelles ni installateurs.
+limité au README ne lance pas de CI. La documentation incluse dans les paquets déclenche leur contrôle. Les modifications du backend Mac ou de `scripts/macos/` déclenchent automatiquement la validation native complète des quatre plateformes. Les autres passages légers ne génèrent ni captures visuelles ni installateurs.
 
 Pour préparer des paquets ou vérifier une modification avant diffusion, ouvrir
 **Actions → CI → Run workflow**, sélectionner `main` et laisser

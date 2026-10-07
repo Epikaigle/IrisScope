@@ -4,10 +4,10 @@ name: CI
   push:
     branches: [main]
     tags: ['v*']
-    paths: ['Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'rustfmt.toml', 'crates/**', 'ui/**', 'helpers/linux/*.py', 'helpers/linux/*.service', 'scripts/**', 'tests/**', 'docs/**', '.github/workflows/ci.yml']
+    paths: ['Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'rustfmt.toml', 'crates/**', 'ui/**', 'helpers/linux/*.py', 'helpers/linux/*.service', 'scripts/**', 'tests/**', 'docs/**', 'documentation/**', '.github/workflows/ci.yml']
   pull_request:
     branches: [main]
-    paths: ['Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'rustfmt.toml', 'crates/**', 'ui/**', 'helpers/linux/*.py', 'helpers/linux/*.service', 'scripts/**', 'tests/**', 'docs/**', '.github/workflows/ci.yml']
+    paths: ['Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'rustfmt.toml', 'crates/**', 'ui/**', 'helpers/linux/*.py', 'helpers/linux/*.service', 'scripts/**', 'tests/**', 'docs/**', 'documentation/**', '.github/workflows/ci.yml']
   workflow_dispatch:
     inputs:
       full_validation:
@@ -64,12 +64,13 @@ jobs:
               workflow = '.github/workflows/ci.yml' in paths
               app = workflow or any(
                   path in ('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'rustfmt.toml')
-                  or path.startswith(('crates/', 'ui/', 'tests/'))
+                  or path.startswith(('crates/', 'ui/', 'tests/', 'documentation/'))
                   or (path.startswith('scripts/') and path != 'scripts/check-site.py')
                   or (path.startswith('helpers/linux/') and path.endswith(('.py', '.service')))
                   for path in paths
               )
               site = workflow or any(path.startswith('docs/') or path == 'scripts/check-site.py' for path in paths)
+              full = full or any(path.startswith(('scripts/macos/', 'crates/iriscope-camera-macos/')) for path in paths)
           with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as stream:
               for name, value in (('app', app), ('site', site), ('full', full)):
                   stream.write(f'{name}={str(value).lower()}\n')
@@ -190,8 +191,11 @@ jobs:
       - name: Build native release executable
         run: cargo build --release -p iriscope-app --locked
       - name: Verify package layout and upgrade identifiers
-        if: runner.os == 'Linux'
+        if: runner.os != 'Windows'
         run: python -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Build native DE400 USB video, button and controls components
+        if: runner.os == 'macOS'
+        run: python scripts/macos/build-usb-experiment.py
       - name: Package portable application
         run: python scripts/package-release.py
       - name: Package Linux installer

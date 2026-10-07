@@ -1,7 +1,7 @@
 use crate::app_helpers::{decode_camera_frame_to_rgb8, ranked_stream_configurations};
 use crate::platform_camera;
 use crate::playback::is_de400;
-use iriscope_core::camera::CameraEvent;
+use iriscope_core::camera::{CameraErrorKind, CameraEvent};
 use std::time::{Duration, Instant};
 
 #[allow(clippy::too_many_lines)]
@@ -153,6 +153,10 @@ pub fn run_diagnose() {
             }
             Ok(other) => {
                 println!("  Event: {other:?}");
+            }
+            Err(err) if err.kind() == CameraErrorKind::TimedOut => {
+                // First delivery can take longer than one wait while the Mac's
+                // camera service warms up. Keep the overall five-second bound.
             }
             Err(err) => {
                 eprintln!("  Capture error: {err}");

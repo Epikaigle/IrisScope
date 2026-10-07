@@ -32,8 +32,9 @@ use core_media::{
 };
 use core_video::{
     pixel_buffer::{
-        CVPixelBuffer, kCVPixelBufferLock_ReadOnly, kCVPixelBufferPixelFormatTypeKey,
-        kCVPixelFormatType_32BGRA, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+        CVPixelBuffer, kCVPixelBufferHeightKey, kCVPixelBufferLock_ReadOnly,
+        kCVPixelBufferPixelFormatTypeKey, kCVPixelBufferWidthKey, kCVPixelFormatType_32BGRA,
+        kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
         kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_422YpCbCr8,
         kCVPixelFormatType_422YpCbCr8_yuvs,
     },
@@ -56,7 +57,9 @@ use objc2::{
 };
 use objc2_foundation::{NSDictionary, NSNumber, NSObject, NSObjectProtocol, NSString};
 
-use crate::capabilities::{frame_rate_from_duration_parts, merge_mode, pixel_format_from_ostype};
+use crate::capabilities::{
+    frame_rate_from_duration_parts, frame_rate_in_range, merge_mode, pixel_format_from_ostype,
+};
 use crate::events::EventMailbox;
 
 /// Native macOS camera backend using `AVFoundation`.
@@ -267,6 +270,11 @@ impl Drop for MacAvFoundationDevice {
 /// Creates the native macOS camera backend.
 #[must_use]
 pub fn create_backend() -> Box<dyn CameraBackend> {
+    if let Some(socket) = std::env::var_os("IRISCOPE_DE400_SOCKET")
+        .or_else(|| std::env::var_os("IRISCOPE_EXPERIMENTAL_DE400_SOCKET"))
+    {
+        return Box::new(crate::usb_helper::UsbHelperBackend::new(socket.into()));
+    }
     Box::new(MacAvFoundationBackend::new())
 }
 
@@ -453,7 +461,7 @@ fn start_mac_stream(
         ));
     }
     session.add_output(&output);
-    if let Err(error) = configure_output_format(&output, &configuration.pixel_format) {
+    if let Err(error) = configure_output_format(&output, configuration) {
         session.commit_configuration();
         return Err(error);
     }
@@ -484,9 +492,9 @@ fn stop_mac_stream(mut stream: MacStream) {
 
 fn configure_output_format(
     output: &AVCaptureVideoDataOutput,
-    source_format: &PixelFormat,
+    configuration: &StreamConfiguration,
 ) -> CameraResult<()> {
-    if *source_format == PixelFormat::Mjpeg {
+    if configuration.pixel_format == PixelFormat::Mjpeg {
         // AVFoundation documents an empty dictionary as device-native output.
         // In an MJPEG camera mode this preserves the USB JPEG bytes instead of
         // decoding them into a pixel buffer and re-encoding every capture.
@@ -506,10 +514,21 @@ fn configure_output_format(
         )
     })?;
 
-    // SAFETY: CoreFoundation strings and NSString are toll-free bridged, and this key is static.
-    let key = unsafe { &*kCVPixelBufferPixelFormatTypeKey.cast::<NSString>() };
+    // macOS can downscale video data output to 640x480 even when activeFormat
+    // is 1280x1024. Explicit output dimensions preserve the selected sensor mode.
+    // SAFETY: CoreFoundation strings and NSString are toll-free bridged; the keys are static.
+    let keys = unsafe {
+        [
+            &*kCVPixelBufferPixelFormatTypeKey.cast::<NSString>(),
+            &*kCVPixelBufferWidthKey.cast::<NSString>(),
+            &*kCVPixelBufferHeightKey.cast::<NSString>(),
+        ]
+    };
     let value = NSNumber::new_u32(selected);
-    let settings = NSDictionary::<NSString, NSObject>::from_slices(&[key], &[&*value]);
+    let width = NSNumber::new_u32(configuration.resolution.width);
+    let height = NSNumber::new_u32(configuration.resolution.height);
+    let settings =
+        NSDictionary::<NSString, NSObject>::from_slices(&keys, &[&*value, &*width, &*height]);
     output.set_video_settings(&settings);
     Ok(())
 }
@@ -592,13 +611,20 @@ fn find_matching_format(
             continue;
         }
 
-        let requested = configuration.frame_rate.frames_per_second();
         let supported = format
             .video_supported_frame_rate_ranges()
             .iter()
             .any(|range| {
-                requested + 0.001 >= range.min_frame_rate()
-                    && requested - 0.001 <= range.max_frame_rate()
+                // AVFoundation requires the exact native duration boundaries.
+                // Floating-point comparisons can reject even an advertised rate;
+                // a tolerance can instead accept a rate that makes its setter throw.
+                let Some(minimum) = frame_rate_from_duration(range.max_frame_duration()) else {
+                    return false;
+                };
+                let Some(maximum) = frame_rate_from_duration(range.min_frame_duration()) else {
+                    return false;
+                };
+                frame_rate_in_range(configuration.frame_rate, minimum, maximum)
             });
         if supported {
             return Some(format);

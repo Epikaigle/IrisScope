@@ -30,11 +30,11 @@ préserver la mise à jour des installations existantes ; l’application s’ap
 Iriscope. Les deux paquets Mac ont le même nom de DMG ; choisir d’abord le bon artefact
 **ARM64** ou **X64**. Les archives portables sont également présentes.
 
-Les paquets d’essai ne sont pas signés. Sur macOS, tenter une première ouverture
+Les nouveaux paquets Mac sont signés localement ad hoc, gratuitement, sans notarisation ; les anciens paquets et les paquets Windows sans certificat restent non signés. Sur macOS, tenter une première ouverture
 depuis Applications. Si le développeur n’est pas reconnu, ouvrir **Réglages
 Système → Confidentialité et sécurité**, puis **Ouvrir quand même** pour cette
 application : c’est la [procédure décrite par Apple](https://support.apple.com/fr-fr/102445).
-Autoriser ensuite la caméra lorsque le système le demande. Les captures et
+Le nouveau paquet DE400 demande l'authentification administrateur macOS pour lancer son composant USB. Le mot de passe n'est pas enregistré par Iriscope. La fermeture de l'application arrête le composant et rend l'appareil au pilote Apple. Le chemin `--avfoundation` peut demander l'autorisation caméra classique. Les captures et
 paramètres restent hors du programme.
 
 ## Essai normal
@@ -46,7 +46,7 @@ Un appui prolongé doit produire une seule action.
 
 Vérifier aussi la bibliothèque, les annotations, le zoom à la molette et au curseur,
 la rotation, les calendriers et le retour de Présenter avec le panneau masqué.
-Les contrôles caméra proposés dépendent du pilote ; macOS en expose moins.
+Les contrôles caméra proposés dépendent du matériel. Le nouveau chemin USB Mac expose les huit réglages mesurés sur le DE400 : luminosité, contraste, saturation, teinte, netteté, gamma, balance des blancs et anti-scintillement. Les anciens paquets AVFoundation n'exposent pas ces réglages.
 
 ## Diagnostic et essai guidé du bouton
 

@@ -122,26 +122,13 @@ Name: "desktopicon"; Description: "Créer un raccourci sur le bureau"; Flags: un
     return artifact
 
 
-def install_macos(stage, binary, output, version, identity, notary_profile, ffmpeg=None, license_path=None):
+def install_macos(stage, binary, output, version, identity, notary_profile, ffmpeg=None, license_path=None, usb_dir=None):
     portable = portable_module()
-    archive = stage / "bundle.zip"
-    portable.package_macos(archive, binary, version, ffmpeg, license_path)
-    shutil.unpack_archive(archive, stage)
-    archive.unlink()
-    bundle = stage / "IrisScope.app"
-    # Python's ZIP extraction does not preserve the executable permission.
-    stage.chmod(0o755)
-    executable = bundle / "Contents/MacOS/IrisScope"
-    for path in [bundle, *bundle.rglob("*")]:
-        path.chmod(0o755 if path.is_dir() or path in {executable, bundle / "Contents/MacOS/ffmpeg"} else 0o644)
+    if notary_profile and (not identity or identity == "-"):
+        raise SystemExit("Notarization requires an existing Developer ID signing identity; ad hoc signing is local only")
+    bundle = portable.stage_macos(stage, binary, version, ffmpeg, license_path, usb_dir)
     if identity:
-        entitlements = stage / "camera-entitlements.plist"
-        entitlements.write_text('<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>com.apple.security.device.camera</key><true/></dict></plist>', encoding="utf-8")
-        run("codesign", "--force", "--options", "runtime", "--timestamp", "--entitlements", entitlements, "--sign", identity, bundle)
-        run("codesign", "--verify", "--deep", "--strict", bundle)
-        entitlements.unlink()
-    if notary_profile and not identity:
-        raise SystemExit("Notarization requires --signing-identity")
+        portable.sign_macos(bundle, identity)
     if notary_profile:
         notarize_zip = output / f"IrisScope-{version}-notarize.zip"
         run("ditto", "-c", "-k", "--keepParent", bundle, notarize_zip)
@@ -161,7 +148,8 @@ def main():
     parser.add_argument("--output", type=Path, default=ROOT / "dist")
     parser.add_argument("--windows-certificate", help="Thumbprint of a certificate already installed in the Windows user store")
     parser.add_argument("--iscc", default="ISCC", help="Inno Setup compiler path")
-    parser.add_argument("--signing-identity", help="macOS Developer ID identity already installed in the keychain")
+    parser.add_argument("--signing-identity", default="-", help="Mac identity; '-' uses free local ad hoc signing")
+    parser.add_argument("--macos-usb-dir", type=Path, default=ROOT / "target/macos-button-research")
     parser.add_argument("--notary-profile", help="Existing notarytool keychain profile")
     parser.add_argument("--ffmpeg", type=Path, help="Optional standalone native FFmpeg executable with libx264")
     parser.add_argument("--ffmpeg-license", type=Path, help="License and attribution file for the provided FFmpeg build")
@@ -179,7 +167,7 @@ def main():
         elif platform.system() == "Windows":
             artifact = install_windows(stage, args.binary, args.output, metadata(), args.windows_certificate, args.iscc, args.ffmpeg, args.ffmpeg_license)
         elif platform.system() == "Darwin":
-            artifact = install_macos(stage, args.binary, args.output, metadata(), args.signing_identity, args.notary_profile, args.ffmpeg, args.ffmpeg_license)
+            artifact = install_macos(stage, args.binary, args.output, metadata(), args.signing_identity, args.notary_profile, args.ffmpeg, args.ffmpeg_license, args.macos_usb_dir)
         else:
             raise SystemExit("Unsupported installer host")
     import hashlib

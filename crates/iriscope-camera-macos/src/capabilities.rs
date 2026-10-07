@@ -36,6 +36,18 @@ pub(crate) fn frame_rate_from_duration_parts(
     FrameRate::new(numerator, denominator)
 }
 
+pub(crate) fn frame_rate_in_range(
+    requested: FrameRate,
+    minimum: FrameRate,
+    maximum: FrameRate,
+) -> bool {
+    // Exact cross-products avoid rounding at the native duration boundaries.
+    u64::from(requested.numerator()) * u64::from(minimum.denominator())
+        >= u64::from(minimum.numerator()) * u64::from(requested.denominator())
+        && u64::from(requested.numerator()) * u64::from(maximum.denominator())
+            <= u64::from(maximum.numerator()) * u64::from(requested.denominator())
+}
+
 pub(crate) fn merge_mode(modes: &mut Vec<CameraMode>, mut candidate: CameraMode) {
     if let Some(existing) = modes.iter_mut().find(|mode| {
         mode.pixel_format == candidate.pixel_format && mode.resolution == candidate.resolution
@@ -72,7 +84,34 @@ fn ostype_name(value: u32) -> String {
 mod tests {
     use iriscope_core::capabilities::{CameraMode, FrameRate, PixelFormat, Resolution};
 
-    use super::{fourcc, frame_rate_from_duration_parts, merge_mode, pixel_format_from_ostype};
+    use super::{
+        fourcc, frame_rate_from_duration_parts, frame_rate_in_range, merge_mode,
+        pixel_format_from_ostype,
+    };
+
+    #[test]
+    fn compares_fractional_native_rate_boundaries_without_rounding() {
+        let exact = frame_rate_from_duration_parts(1_000_000, 15_000_015).unwrap();
+        assert!(frame_rate_in_range(exact, exact, exact));
+        assert!(!frame_rate_in_range(
+            FrameRate::new(15, 1).unwrap(),
+            exact,
+            exact
+        ));
+        assert!(!frame_rate_in_range(
+            FrameRate::new(16, 1).unwrap(),
+            exact,
+            exact
+        ));
+        let maximum = FrameRate::new(30, 1).unwrap();
+        assert!(frame_rate_in_range(
+            FrameRate::new(20, 1).unwrap(),
+            exact,
+            maximum
+        ));
+        let large = FrameRate::new(u32::MAX, u32::MAX - 1).unwrap();
+        assert!(frame_rate_in_range(large, large, large));
+    }
 
     #[test]
     fn maps_common_avfoundation_pixel_formats() {

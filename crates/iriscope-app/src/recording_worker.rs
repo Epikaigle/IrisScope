@@ -299,7 +299,6 @@ pub(super) fn stop_recording(
     stopped
 }
 
-const MAX_RECORDING_DURATION: Duration = Duration::from_secs(60 * 60);
 const MAX_TIMING_BURST_FRAMES: u64 = 300;
 const MAX_TIMING_BURST_BYTES: u64 = 64 * 1024 * 1024;
 
@@ -351,9 +350,6 @@ impl RecordingTimeline {
         let elapsed = timestamp
             .checked_sub(first)
             .ok_or_else(|| "Horodatage vidéo antérieur au début de l'enregistrement.".to_owned())?;
-        if elapsed > MAX_RECORDING_DURATION {
-            return Err("Durée maximale d'enregistrement atteinte (1 heure).".to_owned());
-        }
         let scaled = elapsed.as_nanos() * u128::from(self.frame_rate.numerator());
         let denominator = 1_000_000_000_u128 * u128::from(self.frame_rate.denominator());
         // Emit only grid positions strictly before the incoming timestamp.
@@ -1114,6 +1110,19 @@ mod recording_pipeline_tests {
                 .repeated_frames,
             2,
         );
+    }
+
+    #[test]
+    pub(super) fn continuous_recording_has_no_hour_or_day_expiry() {
+        let mut timeline = RecordingTimeline::new(FrameRate::new(1, 1).expect("rate"));
+        for second in 0..=2 * 86_400 {
+            let plan = timeline
+                .observe(Duration::from_secs(second), 100)
+                .expect("continuous frames may continue for days")
+                .expect("new timestamp");
+            assert!(plan.repeated_frames <= 1);
+        }
+        assert_eq!(timeline.next_slot, 2 * 86_400);
     }
 
     #[test]

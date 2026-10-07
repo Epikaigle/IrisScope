@@ -15,6 +15,8 @@ pub enum CameraBackendKind {
     MediaFoundation,
     /// `AVFoundation` on macOS.
     AvFoundation,
+    /// Direct USB video and status endpoint access.
+    Usb,
 }
 
 impl fmt::Display for CameraBackendKind {
@@ -23,6 +25,7 @@ impl fmt::Display for CameraBackendKind {
             Self::V4l2 => "V4L2",
             Self::MediaFoundation => "Media Foundation",
             Self::AvFoundation => "AVFoundation",
+            Self::Usb => "USB",
         })
     }
 }

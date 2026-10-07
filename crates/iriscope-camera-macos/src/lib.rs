@@ -14,6 +14,10 @@ mod button_protocol;
 mod events;
 #[cfg(target_os = "macos")]
 mod platform;
+#[cfg(target_os = "macos")]
+mod usb_controls;
+#[cfg(target_os = "macos")]
+mod usb_helper;
 
 #[cfg(target_os = "macos")]
 pub use platform::{MacAvFoundationBackend, create_backend};

@@ -1,8 +1,10 @@
 //! Bounded validation of the actual camera through production UI and disk workers.
 
 use crate::{
-    app_helpers::dispatch_hardware_button, gui::install_controllers, runtime::AppRuntime,
-    ui::MainWindow,
+    app_helpers::dispatch_hardware_button,
+    gui::install_controllers,
+    runtime::AppRuntime,
+    ui::{AppState, MainWindow},
 };
 use iriscope_core::{
     library::{
@@ -13,7 +15,7 @@ use iriscope_core::{
     settings::{AppSettings, PhysicalButtonBehavior},
     video::AviMjpegReader,
 };
-use slint::ComponentHandle;
+use slint::{ComponentHandle, Model};
 use std::fmt::Write as _;
 use std::{
     cell::RefCell,
@@ -55,6 +57,8 @@ fn select_patient(window: &MainWindow, id: Option<u64>, eye: Eye) {
 }
 
 impl Validation {
+    // Keep the sequential capture stages together so their transitions stay visible.
+    #[allow(clippy::too_many_lines)]
     fn advance(
         &mut self,
         window: &MainWindow,
@@ -71,6 +75,19 @@ impl Validation {
             if !window.get_is_streaming() {
                 return Ok(None);
             }
+            println!(
+                "HARDWARE_BUTTON_STATUS {}",
+                window.global::<AppState>().get_hardware_button_status()
+            );
+            println!(
+                "CAMERA_CONTROLS_UI {}",
+                window
+                    .get_camera_controls()
+                    .iter()
+                    .map(|control| control.name.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
             select_patient(window, Some(self.first_patient), Eye::Left);
             window.set_is_video_mode(false);
             println!(
@@ -83,7 +100,23 @@ impl Validation {
             self.phase = 1;
             return Ok(None);
         }
-        let entries = try_scan_library_directory(directory).map_err(|error| error.to_string())?;
+        let entries = match try_scan_library_directory(directory) {
+            Ok(entries) => entries,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::NotFound
+                        | io::ErrorKind::WouldBlock
+                        | io::ErrorKind::Interrupted
+                ) =>
+            {
+                // Capture publication removes its temporary files and journals.
+                // Retry an in-flight snapshot on the next bounded timer tick.
+                println!("VALIDATION_SCAN_RETRY {error}");
+                return Ok(None);
+            }
+            Err(error) => return Err(error.to_string()),
+        };
         let photos = if self.physical { 2 } else { 3 };
         match self.phase {
             1 if entries.len() == 1 => {
@@ -208,6 +241,13 @@ pub fn run_hardware_validation(
     );
     let event_loop = window.run();
     timer.stop();
+    let button_status = window.global::<AppState>().get_hardware_button_status();
+    let control_names = window
+        .get_camera_controls()
+        .iter()
+        .map(|control| control.name.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
     runtime.shutdown();
     event_loop?;
     let entries = state
@@ -217,7 +257,7 @@ pub fn run_hardware_validation(
         .ok_or("Validation closed before completion")?
         .map_err(io::Error::other)?;
     let mut report = format!(
-        "IrisScope {} — {} {} hardware validation\nPhysical button: {physical}\nDossiers: {}, {} (same names, distinct identities)\n",
+        "IrisScope {} — {} {} hardware validation\nPhysical button: {physical}\n{button_status}\nCamera controls in UI: {control_names}\nDossiers: {}, {} (same names, distinct identities)\n",
         env!("CARGO_PKG_VERSION"),
         std::env::consts::OS,
         std::env::consts::ARCH,
@@ -249,7 +289,7 @@ pub fn run_hardware_validation(
         }
         if entry.kind == CaptureKind::Photo {
             let bytes = fs::read(&entry.file_path)?;
-            let (width, height, _) = iriscope_imaging::decode_mjpeg_to_rgb8(&bytes)?;
+            let (width, height, _) = iriscope_imaging::decode_image_to_rgb8(&bytes)?;
             writeln!(
                 report,
                 "PHOTO {filename}: {width}x{height}, dossier={:?}, eye={:?}",

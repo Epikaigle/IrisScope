@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 import tomllib
 import zipfile
 from pathlib import Path
@@ -85,6 +86,7 @@ def shared_files() -> list[tuple[str, bytes]]:
         ("documentation/VISIONNEUSE.md", (ROOT / "documentation/VISIONNEUSE.md").read_bytes()),
         ("documentation/VALIDATION-MATERIELLE.md", (ROOT / "documentation/VALIDATION-MATERIELLE.md").read_bytes()),
         ("documentation/VALIDATION-LINUX-2026-10-06.md", (ROOT / "documentation/VALIDATION-LINUX-2026-10-06.md").read_bytes()),
+        ("documentation/VALIDATION-MACOS-2026-10-07.md", (ROOT / "documentation/VALIDATION-MACOS-2026-10-07.md").read_bytes()),
         ("documentation/BOUTON-MULTIPLATEFORME.md", (ROOT / "documentation/BOUTON-MULTIPLATEFORME.md").read_bytes()),
         ("documentation/ESSAIS-WINDOWS-MACOS.md", (ROOT / "documentation/ESSAIS-WINDOWS-MACOS.md").read_bytes()),
         ("documentation/VALIDATION-INTERFACE-2026-10-06.md", (ROOT / "documentation/VALIDATION-INTERFACE-2026-10-06.md").read_bytes()),
@@ -149,8 +151,14 @@ def package_linux(output: Path, binary: Path, folder: str, ffmpeg: Path | None =
             add_tar_bytes(archive, f"{folder}/licenses/FFmpeg-COPYING.txt", license_path.read_bytes())
 
 
-def package_macos(output: Path, binary: Path, version: str, ffmpeg: Path | None = None, license_path: Path | None = None) -> None:
-    bundle = "IrisScope.app/Contents"
+def stage_macos(stage: Path, binary: Path, version: str, ffmpeg: Path | None = None,
+                license_path: Path | None = None, usb_dir: Path | None = None) -> Path:
+    bundle = stage / "IrisScope.app"
+    contents = bundle / "Contents"
+    macos = contents / "MacOS"
+    resources = contents / "Resources"
+    macos.mkdir(parents=True)
+    resources.mkdir()
     info = {
         "CFBundleDevelopmentRegion": "fr",
         "CFBundleDisplayName": "Iriscope",
@@ -165,15 +173,59 @@ def package_macos(output: Path, binary: Path, version: str, ffmpeg: Path | None 
         "NSCameraUsageDescription": "Iriscope utilise la caméra Firefly DE400 pour afficher et enregistrer les images de l'iris.",
         "NSHighResolutionCapable": True,
     }
-    with zipfile.ZipFile(output, "w") as archive:
-        add_zip_bytes(archive, f"{bundle}/Info.plist", plistlib.dumps(info))
-        add_zip_file(archive, f"{bundle}/MacOS/IrisScope", binary)
-        for name, data in shared_files():
-            add_zip_bytes(archive, f"{bundle}/Resources/{name}", data)
-        add_zip_bytes(archive, f"{bundle}/Resources/release-info.json", release_info(binary, "macos", version, ffmpeg))
-        if ffmpeg:
-            add_zip_file(archive, f"{bundle}/MacOS/ffmpeg", ffmpeg)
-            add_zip_bytes(archive, f"{bundle}/Resources/licenses/FFmpeg-COPYING.txt", license_path.read_bytes())
+    (contents / "Info.plist").write_bytes(plistlib.dumps(info))
+    shutil.copy2(binary, macos / ("IrisScopeGui" if usb_dir else "IrisScope"))
+    if usb_dir:
+        for source, name in [("iriscope-launcher", "IrisScope"), ("de400-usb-helper", "de400-usb-helper")]:
+            shutil.copy2(usb_dir / source, macos / name)
+        if not (usb_dir / "redistribution/NOTICE.txt").is_file():
+            raise SystemExit("USB redistribution sources/licenses missing; rebuild scripts/macos/build-usb-experiment.py")
+        shutil.copytree(usb_dir / "redistribution", resources / "USB-sources")
+    for name, data in shared_files():
+        destination = resources / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(data)
+    details = json.loads(release_info(binary, "macos", version, ffmpeg))
+    details["de400_usb"] = "bundled-video-button-controls" if usb_dir else "avfoundation-only"
+    (resources / "release-info.json").write_text(json.dumps(details, indent=2) + "\n", encoding="utf-8")
+    if ffmpeg:
+        shutil.copy2(ffmpeg, macos / "ffmpeg")
+        (resources / "licenses/FFmpeg-COPYING.txt").write_bytes(license_path.read_bytes())
+    for path in [stage, bundle, *bundle.rglob("*")]:
+        path.chmod(0o755 if path.is_dir() or path.parent == macos else 0o644)
+    return bundle
+
+
+def sign_macos(bundle: Path, identity: str) -> None:
+    # Sign nested native programs first. Ad hoc signing is the free local default.
+    with tempfile.TemporaryDirectory(prefix="iriscope-signing-") as temporary:
+        entitlements = Path(temporary) / "camera.plist"
+        entitlements.write_bytes(plistlib.dumps({"com.apple.security.device.camera": True}))
+        options = [] if identity == "-" else ["--options", "runtime", "--timestamp"]
+        for executable in sorted((bundle / "Contents/MacOS").iterdir()):
+            # codesign treats the main executable as the whole enclosing bundle.
+            # Sign it with the bundle only after every auxiliary program.
+            if executable.name == "IrisScope":
+                continue
+            camera = ["--entitlements", str(entitlements)] if identity != "-" and executable.name in {"IrisScope", "IrisScopeGui"} else []
+            subprocess.run(["codesign", "--force", *options, *camera, "--sign", identity, str(executable)], check=True)
+        camera = [] if identity == "-" else ["--entitlements", str(entitlements)]
+        subprocess.run(["codesign", "--force", *options, *camera, "--sign", identity, str(bundle)], check=True)
+    subprocess.run(["codesign", "--verify", "--deep", "--strict", str(bundle)], check=True)
+
+
+def package_macos(output: Path, binary: Path, version: str, ffmpeg: Path | None = None,
+                  license_path: Path | None = None, usb_dir: Path | None = None,
+                  signing_identity: str | None = None) -> None:
+    with tempfile.TemporaryDirectory(prefix="iriscope-bundle-") as temporary:
+        bundle = stage_macos(Path(temporary), binary, version, ffmpeg, license_path, usb_dir)
+        if signing_identity:
+            sign_macos(bundle, signing_identity)
+        with zipfile.ZipFile(output, "w") as archive:
+            for path in sorted(bundle.rglob("*")):
+                if path.is_file():
+                    name = str(path.relative_to(bundle.parent))
+                    add_zip_bytes(archive, name, path.read_bytes(), path.stat().st_mode & 0o777)
 
 
 def main() -> None:
@@ -193,6 +245,9 @@ def main() -> None:
     parser.add_argument("--output-dir", type=Path, default=ROOT / "dist")
     parser.add_argument("--ffmpeg", type=Path, help="Optional standalone native FFmpeg executable with libx264")
     parser.add_argument("--ffmpeg-license", type=Path, help="License and attribution file for the provided FFmpeg build")
+    parser.add_argument("--macos-usb-dir", type=Path, default=ROOT / "target/macos-button-research",
+                        help="Built native Mac launcher/helper and redistribution sources")
+    parser.add_argument("--signing-identity", default="-", help="Mac codesign identity; '-' uses free local ad hoc signing")
     args = parser.parse_args()
     if not args.binary.is_file():
         parser.error(f"release executable not found: {args.binary}")
@@ -209,7 +264,8 @@ def main() -> None:
     elif system == "windows":
         package_windows(output, args.binary, folder, args.ffmpeg, args.ffmpeg_license)
     else:
-        package_macos(output, args.binary, version, args.ffmpeg, args.ffmpeg_license)
+        package_macos(output, args.binary, version, args.ffmpeg, args.ffmpeg_license,
+                      args.macos_usb_dir, args.signing_identity)
 
     with output.open("rb") as archive:
         digest = hashlib.file_digest(archive, "sha256").hexdigest()

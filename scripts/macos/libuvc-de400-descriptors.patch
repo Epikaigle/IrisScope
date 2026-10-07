@@ -1,0 +1,32 @@
+diff --git a/src/device.c b/src/device.c
+index 48ec594..0782d63 100644
+--- a/src/device.c
++++ b/src/device.c
+@@ -1353,6 +1353,14 @@ uvc_error_t uvc_scan_streaming(uvc_device_t *dev,
+   buffer = if_desc->extra;
+   buffer_left = if_desc->extra_length;
+ 
++  /* DE400 firmware places class descriptors after its endpoint descriptor.
++   * libusb consequently associates them with the endpoint, not the interface.
++   */
++  if (buffer_left == 0 && if_desc->bNumEndpoints > 0) {
++    buffer = if_desc->endpoint[0].extra;
++    buffer_left = if_desc->endpoint[0].extra_length;
++  }
++
+   stream_if = calloc(1, sizeof(*stream_if));
+   stream_if->parent = info;
+   stream_if->bInterfaceNumber = if_desc->bInterfaceNumber;
+@@ -1360,6 +1368,7 @@ uvc_error_t uvc_scan_streaming(uvc_device_t *dev,
+ 
+   while (buffer_left >= 3) {
+     block_size = buffer[0];
++    if (block_size < 3 || block_size > buffer_left) return UVC_ERROR_INVALID_DEVICE;
+     parse_ret = uvc_parse_vs(dev, info, stream_if, buffer, block_size);
+ 
+     if (parse_ret != UVC_SUCCESS) {
+@@ -1993,4 +2002,3 @@ void uvc_set_button_callback(uvc_device_handle_t *devh,
+ const uvc_format_desc_t *uvc_get_format_descs(uvc_device_handle_t *devh) {
+   return devh->info->stream_ifs->format_descs;
+ }
+-

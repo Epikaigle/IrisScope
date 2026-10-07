@@ -97,6 +97,43 @@ class PackageTests(unittest.TestCase):
             self.assertEqual((stage / "IrisScope.app/Contents/MacOS" / name).stat().st_mode & 0o777, 0o755)
         self.assertEqual((stage / "Applications").readlink(), Path("/Applications"))
 
+    def test_macos_usb_bundle_contains_standalone_launcher_helper_and_relinking_sources(self):
+        usb = self.root / "usb"
+        (usb / "redistribution").mkdir(parents=True)
+        for name in ["iriscope-launcher", "de400-usb-helper"]:
+            (usb / name).write_bytes(name.encode())
+        (usb / "redistribution/NOTICE.txt").write_text("USB licenses and source/relinking instructions")
+        archive = self.output / "mac-usb.zip"
+        PORTABLE.package_macos(archive, self.binary, self.version, usb_dir=usb)
+        with zipfile.ZipFile(archive) as package:
+            base = "IrisScope.app/Contents/"
+            self.assertEqual(package.read(base + "MacOS/IrisScopeGui"), self.binary.read_bytes())
+            self.assertEqual(package.read(base + "MacOS/IrisScope"), b"iriscope-launcher")
+            for name in ["IrisScope", "IrisScopeGui", "de400-usb-helper"]:
+                self.assertEqual(package.getinfo(base + "MacOS/" + name).external_attr >> 16 & 0o777, 0o755)
+            self.assertTrue(package.read(base + "Resources/USB-sources/NOTICE.txt"))
+            self.assertEqual(json.loads(package.read(base + "Resources/release-info.json"))["de400_usb"], "bundled-video-button-controls")
+
+    def test_ad_hoc_signing_cannot_request_notarization(self):
+        stage = self.root / "mac-notary-stage"
+        stage.mkdir()
+        with self.assertRaises(SystemExit):
+            INSTALLER.install_macos(stage, self.binary, self.output, self.version, "-", "paid-profile")
+        self.assertEqual(list(stage.iterdir()), [])
+
+    def test_macos_auxiliary_code_is_signed_before_the_main_bundle(self):
+        bundle = self.root / "signing/IrisScope.app"
+        programs = bundle / "Contents/MacOS"
+        programs.mkdir(parents=True)
+        for name in ["IrisScope", "IrisScopeGui", "de400-usb-helper"]:
+            (programs / name).write_bytes(b"native code")
+        with patch.object(PORTABLE.subprocess, "run") as signing:
+            PORTABLE.sign_macos(bundle, "-")
+        calls = [call.args[0] for call in signing.call_args_list]
+        self.assertEqual([Path(command[-1]).name for command in calls],
+                         ["IrisScopeGui", "de400-usb-helper", "IrisScope.app", "IrisScope.app"])
+        self.assertEqual(calls[-1][1:5], ["--verify", "--deep", "--strict", str(bundle)])
+
     @unittest.skipUnless(shutil.which("dpkg-deb"), "Debian packaging tools required")
     def test_real_debian_package_has_no_user_data_or_removal_hooks(self):
         stage = self.root / "linux-stage"
