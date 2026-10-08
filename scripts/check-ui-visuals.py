@@ -14,6 +14,7 @@ from PIL import Image, ImageChops
 ROOT = Path(__file__).resolve().parents[1]
 BASELINES = ROOT / "tests" / "visual-baselines"
 SCENES = {
+    "camera-dossier-created", "library-large-scrolled",
     "viewer-tools-menu", "viewer-view-menu", "library-sparse",
     "camera-angle-popup", "viewer-angle-popup", "references-loaded", "references-empty",
     "camera-rotation", "camera-presentation-idle", "viewer-rotation", "library-menu", "dossier-empty",

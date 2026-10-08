@@ -1,5 +1,8 @@
 use std::{cell::Cell, rc::Rc};
 
+#[path = "support/software_platform.rs"]
+mod software_platform;
+
 use slint::{
     ComponentHandle, LogicalPosition, ModelRc, PhysicalSize, VecModel,
     platform::{Key, PointerEventButton, WindowEvent},
@@ -109,7 +112,7 @@ fn camera_panel_and_image_popup_have_clickable_controls(window: &MainWindow) {
     click(window, 660.0, 116.0);
     assert!(!window.get_image_controls_open());
 
-    click(window, 262.0, 104.0);
+    click(window, 185.0, 104.0);
     assert!(!window.get_sidebar_visible());
     click(window, 105.0, 108.0);
     assert!(window.get_sidebar_visible());
@@ -290,6 +293,7 @@ fn pending_patient_action_blocks_capture_but_allows_recording_stop() {
 
 #[test]
 fn shortcuts_follow_active_page_capture_guards_and_viewer() {
+    software_platform::init();
     let window = MainWindow::new().expect("create interface");
     window.window().set_size(PhysicalSize::new(1024, 720));
     camera_panel_and_image_popup_have_clickable_controls(&window);

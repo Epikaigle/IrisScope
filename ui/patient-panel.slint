@@ -157,23 +157,30 @@ export component PatientPanel inherits Rectangle {
                         vertical-alignment: center;
                         overflow: elide;
                     }
-                    ActionMenu {
-                        height: 28px; compact: true; quiet: true; text: "Dossier ▾";
-                        enabled: !AppState.recording-busy && !AppState.patient-action-pending;
-                        actions: [
-                            {id: 1, label: "Corriger le nom", enabled: !AppState.storage-busy, checked: false},
-                            {id: 2, label: "Historique des séances", enabled: true, checked: false},
-                            {id: 3, label: "Changer de personne", enabled: true, checked: false},
-                        ];
-                        chosen(id) => {
-                            if id == 1 {
-                                AppState.patient-edit-first = AppState.patient-first-name;
-                                AppState.patient-edit-last = AppState.patient-last-name;
-                                AppState.patient-edit-open = true;
-                            } else if id == 2 { AppState.open-consultation(); }
-                            else {
-                                AppState.patient-id = ""; AppState.patient-dossier-number = "";
-                                AppState.patient-name-edited(); AppState.session-changed();
+                    Rectangle {
+                        width: dossier-actions.preferred-width;
+                        horizontal-stretch: 0;
+                        background: transparent;
+                        dossier-actions := ActionMenu {
+                            y: (parent.height - self.height) / 2;
+                            width: parent.width;
+                            height: 28px; compact: true; quiet: true; text: "Dossier ▾";
+                            enabled: !AppState.recording-busy && !AppState.patient-action-pending;
+                            actions: [
+                                {id: 1, label: "Corriger le nom", enabled: !AppState.storage-busy, checked: false},
+                                {id: 2, label: "Historique des séances", enabled: true, checked: false},
+                                {id: 3, label: "Changer de personne", enabled: true, checked: false},
+                            ];
+                            chosen(id) => {
+                                if id == 1 {
+                                    AppState.patient-edit-first = AppState.patient-first-name;
+                                    AppState.patient-edit-last = AppState.patient-last-name;
+                                    AppState.patient-edit-open = true;
+                                } else if id == 2 { AppState.open-consultation(); }
+                                else {
+                                    AppState.patient-id = ""; AppState.patient-dossier-number = "";
+                                    AppState.patient-name-edited(); AppState.session-changed();
+                                }
                             }
                         }
                     }

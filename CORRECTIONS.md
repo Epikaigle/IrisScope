@@ -470,3 +470,23 @@ Les assertions vérifient les commandes des nouveaux menus, les couleurs,
 l'alignement des miniatures et l'absence de déplacement du formulaire après
 capture. Douze tests Python passent ; l'essai Debian est ignoré sur Mac.
 Les composants USB validés auparavant sont réutilisés, sans recompilation.
+
+## Complément — grandes miniatures et bouton Dossier
+
+- Le menu Dossier est centré verticalement dans son bandeau vert, avec une
+  zone d'action indépendante de la hauteur du texte du numéro.
+- La grille transmet explicitement sa hauteur complète à la zone défilante.
+  La molette, le trackpad et la barre à droite permettent d'atteindre la dernière
+  rangée et son bouton Ouvrir, même avec des miniatures de 480 pixels.
+- L'information « Noms patients masqués… » est déplacée dans l'aide du nombre
+  de captures ; elle ne réserve plus une bande sous les miniatures.
+- « Mode patient » dans la caméra et « Présenter au patient » dans la
+  visionneuse distinguent le masquage des informations privées du plein écran.
+  Les fonctions restent identiques ; seules leur présentation et leur aide changent.
+- Le test des raccourcis vise la nouvelle position de Masquer et utilise le
+  renderer hors écran. Le clic à son ancienne position causait l'échec Linux
+  du commit précédent ; le test corrigé passe localement sur le Mac.
+
+Deux scènes complètent les vérifications : dossier créé après capture et
+dernière rangée à la taille maximale. Les interactions vérifient la sélection
+de la dernière rangée puis son ouverture, après redimensionnement et défilement.

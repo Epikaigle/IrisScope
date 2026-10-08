@@ -172,3 +172,73 @@ fc1d124f62340792bad330013ecae758619bc796d44da911a457673da621f291
 DMG SHA-256 :
 fbffd0e9e1271d88dee8f4d0ae92d7f67e6807420303f4399023a6d941cad261
 ```
+
+## Complément — accès au bas de la grille et centrage du dossier
+
+Le menu Dossier est placé dans un conteneur avec centrage vertical explicite
+dans le badge vert. La grille indique sa hauteur complète à ScrollView ; son
+contenu peut dépasser la zone visible sans imposer une fenêtre plus haute.
+La barre apparaît quand le contenu dépasse, et le défilement atteint le bas
+des cartes. L'information de confidentialité passe dans l'aide du compteur,
+sans bande réservée en bas. Les commandes de présentation indiquent désormais
+« Mode patient » / « Présenter au patient », pour distinguer le masquage des
+informations privées du simple agrandissement de l'image.
+
+Les aperçus natifs à 800 × 600 sont inspectés avant une compilation release
+regroupée du GUI et de l'outil de rendus. Les nouvelles scènes vérifient le
+dossier créé après une photo et la dernière rangée de miniatures à 480 pixels.
+La grille est redimensionnée, parcourue jusqu'en bas, la dernière rangée est
+sélectionnée puis son bouton Ouvrir est activé ; le chemin et la version de la
+capture transmis au callback sont vérifiés. Ces assertions passent aux deux
+tailles, deux thèmes et quatre échelles. La matrice comprend **66 scènes et
+1 056 rendus** ; la comparaison de référence couvre **928 images**.
+
+Le contrôle GitHub précédent échouait dans `keyboard_shortcuts` : un clic à
+l'ancienne position de Masquer atteignait maintenant Terminer. Le test vise
+la nouvelle position et utilise le renderer hors écran commun. Il passe
+localement sur le Mac. Ce changement concerne le test, sans altérer le
+comportement de masquage de l'application. Les 12 tests Python passent ;
+l'essai Debian reste ignoré faute de `dpkg-deb`.
+
+```text
+SHA-256 du GUI release avant signature :
+8fa408354059c7fd4f95e2a0d4442f00c413e2d610967d4d9cc83b6621e7cca5
+```
+
+Les preuves complémentaires sont sous `target/ui-library-followup-20261008/`,
+hors Git. Aucun code du lecteur ou du service USB n'est modifié.
+
+### Confirmation après installation du complément (9 octobre)
+
+Les **928 comparaisons** de référence passent sur les rendus locaux.
+Clippy strict en release et le formatage Rust passent. Le test clavier corrigé
+passe sur le Mac. Le ZIP et le DMG ont leurs sommes SHA-256 vérifiées ; leurs
+49 fichiers sont identiques et leurs signatures ad hoc sont valides. Les deux
+composants USB signés sont identiques octet pour octet au paquet précédent.
+
+L'application locale est remplacée depuis le DMG, avec conservation de
+l'ancienne version dans le cache. L'autorisation est mise à jour pour ce paquet ;
+le service confirme ensuite son accès sous UID 501 sans nouvelle fenêtre
+administrateur. La validation matérielle du DE400 produit quatre PNG
+1280 × 1024 et une vidéo AVI de 32 images à 8 fps. Les yeux, deux dossiers
+homonymes, une capture sans dossier et la sauvegarde/restauration de cinq
+médias identiques sont vérifiés. Les neuf réglages caméra sont présents et
+le récepteur USB est actif. Le test déclenche les commandes par logiciel ;
+aucun nouvel appui physique n'est effectué pour cette correction d'interface.
+L'export MP4 reste non testé sans FFmpeg optionnel.
+
+À la sortie, le lecteur USB s'arrête et les dossiers temporaires sont nettoyés.
+L'application ordinaire est relancée sous le compte utilisateur. Ce complément
+de vérification postérieur à la génération des paquets est conservé dans Git ;
+il ne modifie pas leur contenu déjà signé.
+
+```text
+SHA-256 IrisScopeGui installé après signature :
+e7cd5437ac22ff8ca6020e4385de3212e81a280e7508174b9968252e66687a63
+USB revision :
+d65615738189378e7cb154e86de55ce8454ed00f05f7f0350c86ceb3c9f340f2
+ZIP SHA-256 :
+c0f8965aa6c6280a3e86fd604cfc356500a84fb5dadcbdc129dc5e4c85e32620
+DMG SHA-256 :
+6fde9ffa0556a08560d4c4869f0d665b636b0dccd7aa2da667f3b4d61c9592f7
+```

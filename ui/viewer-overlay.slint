@@ -54,14 +54,14 @@ export component ViewerOverlay inherits Rectangle {
                         compact: true; overlay: true; text: "Vue ▾";
                         private property <[MenuAction]> video-actions: [
                             {id: 4, label: AppState.viewer-fullscreen ? "Quitter le plein écran" : "Plein écran", enabled: true, checked: AppState.viewer-fullscreen},
-                            {id: 5, label: AppState.presentation-mode ? "Fin de présentation" : "Présenter", enabled: true, checked: AppState.presentation-mode},
+                            {id: 5, label: AppState.presentation-mode ? "Quitter le mode patient" : "Présenter au patient", enabled: true, checked: AppState.presentation-mode},
                         ];
                         private property <[MenuAction]> photo-actions: [
                             {id: 1, label: AppState.image-only ? "Vue complète" : "Image seule", enabled: true, checked: AppState.image-only},
                             {id: 2, label: "Taille réelle · 100 %", enabled: !AppState.viewer-loading, checked: !AppState.viewer-fit && AppState.viewer-zoom == 100},
                             {id: 3, label: "Loupe", enabled: !AppState.viewer-loading, checked: AppState.viewer-loupe},
                             {id: 4, label: AppState.viewer-fullscreen ? "Quitter le plein écran" : "Plein écran", enabled: true, checked: AppState.viewer-fullscreen},
-                            {id: 5, label: AppState.presentation-mode ? "Fin de présentation" : "Présenter", enabled: true, checked: AppState.presentation-mode},
+                            {id: 5, label: AppState.presentation-mode ? "Quitter le mode patient" : "Présenter au patient", enabled: true, checked: AppState.presentation-mode},
                         ];
                         actions: AppState.viewer-is-video ? self.video-actions : self.photo-actions;
                         chosen(id) => {

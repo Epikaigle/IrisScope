@@ -603,14 +603,15 @@ export component CameraPreview inherits Rectangle {
                     clicked => { AppState.image-controls-open = !AppState.image-controls-open; }
                 }
                 AppButton {
-                    height: 32px; compact: true; text: "Présenter";
-                    tooltip: "Présenter l’iris en masquant les informations privées";
+                    height: 32px; compact: true; text: "Mode patient";
+                    accessibility-label: "Présenter l'iris au patient";
+                    tooltip: "Agrandir l’iris et masquer les noms, notes et annotations pour le montrer au patient";
                     clicked => { AppState.image-controls-open = false; AppState.toggle-presentation(); }
                 }
                 AppButton {
                     height: 32px; compact: true;
                     text: "Plein écran";
-                    tooltip: "Agrandir l’aperçu · Échap pour revenir";
+                    tooltip: "Agrandir l’aperçu sans activer le masquage des informations du mode patient · Échap pour revenir";
                     clicked => { AppState.image-controls-open = false; AppState.iris-fullscreen = true; AppState.show-viewport-controls(); }
                 }
             }

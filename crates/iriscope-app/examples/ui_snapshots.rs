@@ -48,6 +48,7 @@ fn main() {
         "camera-idle",
         "camera-active",
         "camera-after-capture",
+        "camera-dossier-created",
         "camera-narrow-after-capture",
         "camera-mirror-popup",
         "camera-click-selection",
@@ -107,6 +108,7 @@ fn main() {
         "library-custom",
         "library-minimum",
         "library-large",
+        "library-large-scrolled",
         "library-list-large",
         "settings-advanced",
     ];
@@ -703,8 +705,68 @@ Observations générales de la séance."
                 if scenario == "library-minimum" {
                     state.set_thumbnail_width(80);
                 }
+                if scenario == "camera-dossier-created" {
+                    window.set_patient_id("42".into());
+                    window.set_patient_dossier_number("D-000042".into());
+                    window.set_patient_first_name("Émilie".into());
+                    window.set_patient_last_name("Test IrisScope".into());
+                    window.set_has_last_capture(true);
+                    window.set_has_last_capture_thumbnail(true);
+                    window.set_last_capture_thumbnail(image.clone());
+                    window.set_last_capture_file_name("Gauche_2026-10-08_14-00-00.png".into());
+                }
                 if scenario == "library-large" || scenario == "library-list-large" {
                     state.set_thumbnail_size(2);
+                }
+                let opened_last_card = Rc::new(Cell::new(false));
+                if scenario == "library-large-scrolled" {
+                    // Exercise a resized grid, then scroll far enough to reach its last row.
+                    state.set_thumbnail_width(187);
+                    let _ = window.window().take_snapshot().unwrap();
+                    state.set_thumbnail_width(480);
+                    let _ = window.window().take_snapshot().unwrap();
+                    let inset = if width < 900 { 16.0 } else { 24.0 };
+                    window
+                        .window()
+                        .dispatch_event(WindowEvent::PointerScrolled {
+                            position: LogicalPosition::new(100.0, height as f32 - inset - 112.0),
+                            delta_x: 0.0,
+                            delta_y: -100_000.0,
+                        });
+                    let _ = window.window().take_snapshot().unwrap();
+                    let columns =
+                        ((width as f32 - 2.0 * inset - 16.0 + 12.0) / 520.0).floor() as i32;
+                    let last_row_start = 7 / columns * columns;
+                    let expected_path = format!("/tmp/capture-{last_row_start}.jpg");
+                    let callback = Rc::clone(&opened_last_card);
+                    let expected = expected_path.clone();
+                    state.on_open_capture_file(move |path, version| {
+                        callback.set(path == expected && version == "1");
+                    });
+                    let position =
+                        LogicalPosition::new(inset + 80.0, height as f32 - inset - 112.0);
+                    for pressed in [true, false] {
+                        window.window().dispatch_event(if pressed {
+                            WindowEvent::PointerPressed {
+                                position,
+                                button: PointerEventButton::Left,
+                            }
+                        } else {
+                            WindowEvent::PointerReleased {
+                                position,
+                                button: PointerEventButton::Left,
+                            }
+                        });
+                    }
+                    assert_eq!(
+                        state.get_selected_library_path(),
+                        expected_path,
+                        "the last row must be selectable after scrolling at maximum thumbnail size"
+                    );
+                    // Capture the stable selected appearance after its color transition.
+                    let _ = window.window().take_snapshot().unwrap();
+                    std::thread::sleep(std::time::Duration::from_millis(150));
+                    slint::platform::update_timers_and_animations();
                 }
                 if scenario == "library-list-large" {
                     state.set_library_view(1);
@@ -944,6 +1006,28 @@ Observations générales de la séance."
                 )
                 .unwrap();
                 captures += 1;
+                if scenario == "library-large-scrolled" {
+                    let inset = if width < 900 { 16.0 } else { 24.0 };
+                    let position =
+                        LogicalPosition::new(inset + 140.0, height as f32 - inset - 84.0);
+                    for pressed in [true, false] {
+                        window.window().dispatch_event(if pressed {
+                            WindowEvent::PointerPressed {
+                                position,
+                                button: PointerEventButton::Left,
+                            }
+                        } else {
+                            WindowEvent::PointerReleased {
+                                position,
+                                button: PointerEventButton::Left,
+                            }
+                        });
+                    }
+                    assert!(
+                        opened_last_card.get(),
+                        "Open must remain reachable at the bottom of a large-thumbnail grid"
+                    );
+                }
                 if matches!(scenario, "viewer-tools-menu" | "viewer-view-menu") {
                     let position = LogicalPosition::new(
                         width as f32

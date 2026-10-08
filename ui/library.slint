@@ -1,7 +1,7 @@
 import { ThumbnailSizeControl } from "./thumbnail-size.slint";
 import { AppComboBox } from "./combo-box.slint";
 import { DateField } from "./date-field.slint";
-import { AppButton, Tooltip } from "./controls.slint";
+import { AppButton, HelpText, Tooltip } from "./controls.slint";
 import { Design } from "./theme.slint";
 import { ScrollView, ListView, LineEdit } from "std-widgets.slint";
 import { AppState } from "./state.slint";
@@ -48,7 +48,7 @@ export component LibraryPage inherits Rectangle {
                     font-weight: 600;
                     color: Design.text;
                 }
-                Text {
+                HelpText {
                     text: AppState.library-error != ""
                     ? "Dossier des captures inaccessible"
                     : AppState.library-loading
@@ -58,6 +58,8 @@ export component LibraryPage inherits Rectangle {
                     : AppState.library-total-count + " captures";
                     font-size: 12px;
                     color: Design.text-muted;
+                    full-text: "Noms patients masqués hors dossier actif · Miniatures et noms de fichiers visibles.";
+                    accessible-description: self.full-text;
                 }
             }
             HorizontalLayout {
@@ -625,11 +627,13 @@ export component LibraryPage inherits Rectangle {
             min-height: 0px;
             vertical-stretch: 1;
             horizontal-scrollbar-policy: always-off;
+            viewport-width: root.grid-width;
+            viewport-height: ceil(AppState.library-items.length / root.library-grid-columns) * self.row-height;
 
             Rectangle {
                 x: 0px; y: 0px;
                 width: root.grid-width;
-                height: ceil(AppState.library-items.length / root.library-grid-columns) * library-grid.row-height;
+                height: library-grid.viewport-height;
                 background: transparent;
 
                 for item[index] in AppState.library-items: Rectangle {
@@ -801,20 +805,5 @@ export component LibraryPage inherits Rectangle {
             }
         }
 
-        HorizontalLayout {
-            height: 24px;
-            vertical-stretch: 0;
-            spacing: 8px;
-            Text {
-                min-width: 0px;
-                horizontal-stretch: 1;
-                text: "Noms patients masqués hors dossier actif · Miniatures et fichiers visibles";
-                accessible-label: "Noms patients masqués hors dossier actif. Miniatures et noms de fichiers visibles.";
-                color: Design.text-muted;
-                font-size: 12px;
-                vertical-alignment: center;
-                overflow: elide;
-            }
-        }
     }
 }

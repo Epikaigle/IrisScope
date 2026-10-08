@@ -1,5 +1,5 @@
 The PNGs are deterministic synthetic UI fixtures, without camera images or user data.
-The 896 references cover the camera toolbar, camera menus, long patient names,
+The 928 references cover the camera toolbar, camera menus, long patient names,
 settings, fullscreen commands and capture notices (photo, recording, blocked and hidden),
 including long filenames with vertically centered notice actions,
 patient editing, library queries, photo comparison, backup progress and reminders,
@@ -9,11 +9,12 @@ including the post-capture sidebar, a narrow sidebar, the mirror popup and
 mouse-selected buttons without a keyboard focus outline,
 fixed patient fields, compact viewer action menus, theme-consistent overlays,
 and a left-aligned sparse library after resizing thumbnails,
+the centered dossier action and the final row at maximum thumbnail size,
 at 800×600 and 1360×860 logical pixels, with 100%, 125%, 150%,
 200% scaling.
 
 Linux CI compares them using the Slint software renderer and the Fluent widget style.
-The example offers 64 scenarios including library, viewer and references at four window sizes. The
+The example offers 66 scenarios including library, viewer and references at four window sizes. The
 software checks do not replace testing a camera and native desktop scaling on
 Windows and macOS.
 

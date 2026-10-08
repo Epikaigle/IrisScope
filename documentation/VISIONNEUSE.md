@@ -16,7 +16,17 @@ thème choisi dans les paramètres.
 - **Glisser** ou **flèches** : déplacement dans l’image. **Vue → Loupe** : agrandissement local ×2,5 du cadrage affiché, sans créer de détail supplémentaire.
 - **Vue → Plein écran** : agrandir la fenêtre. Échap quitte le plein écran avant de fermer la photo.
 - **Vue → Image seule** : libérer l’espace des barres d’outils et du panneau latéral. Les commandes se masquent après trois secondes sans interaction. Un mouvement dans l’image ou le bouton **Commandes** les fait réapparaître. Échap rétablit d’abord la vue complète, puis quitte le plein écran, puis ferme la photo.
-- **Vue → Présenter** : montrer l’iris en masquant noms, numéros de dossier, légendes de fichiers, notes et annotations. L’œil reste indiqué. **Fin présentation** rétablit l’accès aux informations privées ; Échap fait de même depuis la caméra, après la fermeture des autres vues. Ce mode masque l’affichage local ; les exports et fichiers existants conservent leurs données.
+- **Vue → Présenter au patient** : montrer l’iris en masquant noms, numéros de dossier, légendes de fichiers, notes et annotations. L’œil reste indiqué. **Quitter le mode patient** rétablit l’accès aux informations privées ; Échap fait de même depuis la caméra, après la fermeture des autres vues. Ce mode masque l’affichage local ; les exports et fichiers existants conservent leurs données.
+
+Dans la caméra, **Mode patient** agrandit l'aperçu et active ce masquage.
+**Plein écran** agrandit seulement l'aperçu : il ne déclenche pas le masquage
+des informations privées. Les deux commandes peuvent donc ressembler à une
+même vue lorsque le formulaire est vide, mais elles ont des fonctions distinctes.
+
+Dans la bibliothèque, les miniatures jusqu'à 480 pixels se parcourent avec
+la molette, le geste de défilement du trackpad ou la barre à droite. Même le
+dernier bouton **Ouvrir** reste accessible. L'information de confidentialité
+est consultable au survol du nombre de captures, sans bande au bas de la grille.
 
 Les images du panneau **Références** et de la bibliothèque utilisent aussi la molette, le glissement et les flèches. Leur zoom va de 100 à 400 %, avec un curseur synchronisé même après une modification à la molette. **Ajuster** recentre l’image complète.
 
@@ -45,6 +55,20 @@ Dissocier les vues permet de régler leur cadrage séparément. Relier zoom et d
 ## Affichage et exports
 
 Luminosité, contraste, rotation et miroir modifient seulement l’affichage. **Original** les suspend sans effacer les réglages ; **Réinitialiser l’affichage** les remet à zéro. Chaque nouvelle ouverture commence avec l’original.
+
+Les **Réglages** de la caméra concernent, eux, l'image reçue de l'appareil et
+donc les nouvelles captures. Pour débuter, ajustez l'éclairage physique du DE400
+et la mise au point, puis la luminosité et le contraste si nécessaire. Évitez
+d'accentuer fortement saturation, teinte et netteté pour comparer les couleurs.
+La balance des blancs automatique adapte les couleurs à l'éclairage ; une
+température manuelle constante peut aider à comparer des prises réalisées sous
+le même éclairage. L'anti-scintillement sert à limiter les bandes ou pulsations
+dues à certaines lampes ; **50 Hz** correspond au réseau français, **60 Hz**
+à d'autres régions. Avec les LED intégrées, son effet dépend du comportement
+réel de l'éclairage et se juge sur le direct. Ces réglages ne remplacent pas la
+mise au point optique. Voir les [caractéristiques du DE400](https://fireflyglobal.com/de400-eyescope/),
+les [explications caméra sur balance des blancs et scintillement](https://help.axis.com/en-us/axis-p3245-lv)
+et la [fréquence du réseau selon RTE](https://www.rte-france.com/bases-electricite/systeme-electrique/frequence-electrique-indicateur-equilibre-reseau).
 
 **Exporter…**, en haut de la visionneuse, ouvre les deux commandes de copie :
 

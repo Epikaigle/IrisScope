@@ -38,3 +38,9 @@ compacte les menus et calendriers, fixe aussi les champs patient, aligne la
 grille à gauche et clarifie les dossiers vides. Les commandes photo sont
 regroupées dans « Outils » et « Vue ». La couverture atteint 896 références
 visuelles sur 1 024 rendus locaux.
+
+Le complément corrige le centrage du bouton Dossier et le défilement jusqu'au
+dernier bouton Ouvrir à la taille maximale des miniatures. La mention de
+confidentialité passe dans une aide au survol, et le mode de présentation est
+nommé explicitement pour le patient. Les scènes ajoutées portent la matrice
+à 1 056 rendus et 928 références.
