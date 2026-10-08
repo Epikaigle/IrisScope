@@ -15,6 +15,8 @@ export global Design {
     out property <color> border: is-dark ? #39473e : #c8d2c8;
     out property <color> border-strong: is-dark ? #607162 : #899b8d;
     out property <color> preview: #090f0c;
+    out property <color> preview-text: #f5f0e5;
+    out property <color> preview-text-muted: #a2b0a2;
     out property <color> text: is-dark ? #f5f0e5 : #1c2b21;
     out property <color> text-secondary: is-dark ? #d0d4c7 : #46574a;
     out property <color> text-muted: is-dark ? #a2b0a2 : #596d5d;
@@ -40,25 +42,26 @@ export global Design {
     out property <color> error-surface: is-dark ? #56302d : #fae9e7;
     out property <color> video-surface: is-dark ? #2c4345 : #e1edef;
 
-    // Reference and viewer overlays remain dark in every application theme.
-    out property <color> overlay-surface: #080e0bf2;
-    out property <color> overlay-panel: #202a26ee;
-    out property <color> overlay-text: #f5f0e5;
-    out property <color> overlay-text-secondary: #d0d4c7;
-    out property <color> overlay-text-muted: #a2b0a2;
-    out property <color> overlay-border: #607162;
-    out property <color> overlay-control: #28352f;
-    out property <color> overlay-control-hover: #3a4940;
-    out property <color> overlay-control-pressed: #1f2a24;
-    out property <color> overlay-selected: #403a2b;
-    out property <color> overlay-selected-hover: #514631;
-    out property <color> overlay-selected-pressed: #342d21;
-    out property <color> overlay-accent: #ead0a1;
-    out property <color> overlay-success: #a9d2ab;
-    out property <color> overlay-danger: #f2bbb5;
-    out property <color> overlay-danger-surface: #5a302e;
-    out property <color> overlay-danger-hover: #693a36;
-    out property <color> overlay-danger-pressed: #482624;
+    // Panels and their popups follow the selected application theme together.
+    // Only the image canvas keeps a neutral dark background.
+    out property <color> overlay-surface: is-dark ? #080e0b : #f7f8f4;
+    out property <color> overlay-panel: is-dark ? #202a26 : #ffffff;
+    out property <color> overlay-text: text;
+    out property <color> overlay-text-secondary: text-secondary;
+    out property <color> overlay-text-muted: text-muted;
+    out property <color> overlay-border: border;
+    out property <color> overlay-control: control;
+    out property <color> overlay-control-hover: control-hover;
+    out property <color> overlay-control-pressed: control-pressed;
+    out property <color> overlay-selected: accent-soft;
+    out property <color> overlay-selected-hover: accent-soft-hover;
+    out property <color> overlay-selected-pressed: accent-soft-pressed;
+    out property <color> overlay-accent: accent;
+    out property <color> overlay-success: success;
+    out property <color> overlay-danger: danger;
+    out property <color> overlay-danger-surface: error-surface;
+    out property <color> overlay-danger-hover: is-dark ? #693a36 : #f6d6d2;
+    out property <color> overlay-danger-pressed: is-dark ? #482624 : #ecc4be;
 
     out property <length> gap-small: 8px;
     out property <length> gap: 12px;
@@ -72,7 +75,6 @@ export global Design {
     out property <length> control-radius: 7px;
     out property <length> card-radius: 10px;
     out property <length> panel-radius: 12px;
-    // Cupertino scrollbars grow to 20px on hover and overlay their viewport.
-    // Keep a stable gutter so they never intercept the rightmost form controls.
-    out property <length> scroll-gutter: 24px;
+    // The Fluent scrollbar occupies 14px, including its expanded hover target.
+    out property <length> scroll-gutter: 16px;
 }

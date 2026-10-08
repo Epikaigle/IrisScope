@@ -12,6 +12,7 @@ slint::slint! {
     import { PopupBounds } from "../../../ui/popup-bounds.slint";
     import { RotationControl } from "../../../ui/rotation-control.slint";
     import { MirrorControl } from "../../../ui/mirror-control.slint";
+    import { ActionMenu } from "../../../ui/action-menu.slint";
     import { AppComboBox } from "../../../ui/combo-box.slint";
     import { ThumbnailSizeControl } from "../../../ui/thumbnail-size.slint";
     import { ScrollView } from "std-widgets.slint";
@@ -44,6 +45,12 @@ slint::slint! {
         out property <bool> mirror-focus-visible: mirror.keyboard-focus-visible;
         in-out property <int> rotation-angle <=> rotation.angle;
         in-out property <int> rotation-changes: 0;
+        out property <length> combo-menu-width: menu.menu-width;
+        out property <length> action-left: actions.popup-left;
+        out property <length> action-top: actions.popup-top;
+        out property <bool> action-open: actions.menu-open;
+        out property <bool> action-focus-visible: actions.keyboard-focus-visible;
+        in-out property <int> chosen-action: 0;
         in-out property <int> menu-index <=> menu.current-index;
         in-out property <length> menu-scroll-y <=> menus.viewport-y;
         callback focus-menu();
@@ -85,6 +92,15 @@ slint::slint! {
         rotation := RotationControl { x: 20px; y: 350px; width: 150px; height: 32px; adjusted => {root.rotation-changes += 1;} }
         bottom-rotation := RotationControl { x: 280px; y: 560px; width: 60px; height: 32px; short-label: true; }
         mirror := MirrorControl { x: 240px; y: 510px; width: 90px; height: 32px; above-clearance: 52px; }
+        actions := ActionMenu {
+            x: 220px; y: 420px; width: 110px; height: 32px; text: "Outils ▾"; compact: true;
+            actions: [
+                {id: 11, label: "Annoter", enabled: true, checked: false},
+                {id: 12, label: "Indisponible", enabled: false, checked: false},
+                {id: 13, label: "Loupe", enabled: true, checked: true},
+            ];
+            chosen(id) => { root.chosen-action = id; }
+        }
         HelpOverlay { available-width: root.width; available-height: root.height; }
     }
 }
@@ -307,6 +323,10 @@ fn menus_scroll_the_page_without_changing_the_selected_value(window: &ControlWin
     window.set_menu_scroll_y(0.0);
     click(window, 100.0, 188.0);
     click(window, 100.0, 304.0);
+    assert!(
+        window.get_combo_menu_width() < 200.0,
+        "menu width follows its labels rather than the wide anchor"
+    );
     assert_eq!(
         window.get_menu_index(),
         2,
@@ -353,6 +373,7 @@ fn shared_controls_handle_keyboard_repetition_focus_cancellation_and_camera_step
     tooltip_preserves_clicks_and_keyboard_focus(&window);
     precise_rotation_updates_during_drag_and_uses_one_degree_steps(&window);
     mirror_menu_stays_above_the_toolbar_and_both_choices_work(&window);
+    action_menu_selects_once_and_preserves_disabled_actions(&window);
 }
 
 fn mirror_menu_stays_above_the_toolbar_and_both_choices_work(window: &ControlWindow) {
@@ -378,6 +399,12 @@ fn mirror_menu_stays_above_the_toolbar_and_both_choices_work(window: &ControlWin
     assert!(
         !window.get_mirror_focus_visible(),
         "a mouse-dismissed popup adds no keyboard outline"
+    );
+    press(window, Key::Tab.into());
+    release(window, Key::Tab.into());
+    assert!(
+        window.get_action_focus_visible(),
+        "Tab shows keyboard focus on the new action menu"
     );
     press(window, Key::Tab.into());
     release(window, Key::Tab.into());
@@ -458,4 +485,48 @@ fn precise_rotation_updates_during_drag_and_uses_one_degree_steps(window: &Contr
         "the upward popup's slider must remain reachable"
     );
     click(window, 335.0, 350.0);
+}
+
+fn action_menu_selects_once_and_preserves_disabled_actions(window: &ControlWindow) {
+    window.show().unwrap();
+    click(window, 275.0, 436.0);
+    let _ = window.window().take_snapshot().unwrap();
+    assert!(window.get_action_open());
+    let left = window.get_action_left();
+    let top = window.get_action_top();
+    assert!(left >= 8.0 && top >= 8.0 && top + 104.0 <= 592.0);
+    click(window, left + 55.0, top + 20.0);
+    assert_eq!(window.get_chosen_action(), 11);
+    assert!(!window.get_action_open());
+
+    click(window, 275.0, 436.0);
+    let _ = window.window().take_snapshot().unwrap();
+    press(window, Key::DownArrow.into());
+    release(window, Key::DownArrow.into());
+    press(window, Key::Return.into());
+    release(window, Key::Return.into());
+    assert_eq!(
+        window.get_chosen_action(),
+        11,
+        "disabled actions cannot run from the keyboard"
+    );
+    assert!(window.get_action_open());
+    press(window, Key::DownArrow.into());
+    release(window, Key::DownArrow.into());
+    press(window, Key::Return.into());
+    release(window, Key::Return.into());
+    assert_eq!(window.get_chosen_action(), 13);
+    assert!(!window.get_action_open());
+
+    click(window, 275.0, 436.0);
+    press(window, Key::Escape.into());
+    release(window, Key::Escape.into());
+    assert!(!window.get_action_open(), "Escape closes only the menu");
+    click(window, 275.0, 436.0);
+    click(window, 350.0, 80.0);
+    assert!(
+        !window.get_action_open(),
+        "outside dismissal clears menu interaction state"
+    );
+    window.hide().unwrap();
 }

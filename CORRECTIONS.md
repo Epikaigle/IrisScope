@@ -444,3 +444,29 @@ Les tests des contrôles et calendriers passent sur le Mac. La matrice locale
 couvre 976 rendus synthétiques à deux tailles, deux thèmes et quatre échelles,
 avec 848 références visuelles. Les détails et limites figurent dans le
 [rapport d'interface Mac](documentation/VALIDATION-INTERFACE-MACOS-2026-10-08.md).
+
+## 8 octobre 2026 — harmonisation des thèmes et simplification des commandes
+
+- Réglages caméra, menus, calendriers, dossiers et visionneuse suivent le thème
+  choisi. Les zones contenant une image conservent un fond sombre et des
+  libellés lisibles ; les références vides utilisent la palette de l'interface.
+- Les menus ont une largeur adaptée à leurs libellés, des lignes compactes et
+  moins de marges. Les calendriers s'ouvrent avec une icône identifiable.
+- L'identité, le numéro de dossier, les choix œil/mode et la capture restent
+  fixes. Seuls les résultats de recherche et la dernière capture disposent de
+  zones de défilement indépendantes. Le menu Dossier regroupe ses actions.
+- Les miniatures restent alignées à gauche après changement de taille, même
+  avec seulement deux prises. L'état du DE400 est placé au bord droit de l'en-tête.
+- « Dossiers / Séances » commence par une recherche et une aide explicite ;
+  les notes et prises apparaissent après sélection du dossier et de la séance.
+- La visionneuse regroupe ses commandes secondaires dans « Outils » et « Vue ».
+  Navigation, ajustement, zoom, export et fermeture restent directement accessibles.
+  Les annotations utilisent un sélecteur et les filtres de date se replient.
+
+Les tests natifs des contrôles et calendriers passent, ainsi que Clippy strict
+pour le GUI et ses fixtures. Les 64 scénarios produisent 1 024 rendus sur Mac
+à deux tailles, deux thèmes et quatre échelles ; 896 références sont revues.
+Les assertions vérifient les commandes des nouveaux menus, les couleurs,
+l'alignement des miniatures et l'absence de déplacement du formulaire après
+capture. Douze tests Python passent ; l'essai Debian est ignoré sur Mac.
+Les composants USB validés auparavant sont réutilisés, sans recompilation.

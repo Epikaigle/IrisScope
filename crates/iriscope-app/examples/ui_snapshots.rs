@@ -57,6 +57,9 @@ fn main() {
         "viewer-rotation",
         "viewer-angle-popup",
         "library-menu",
+        "library-sparse",
+        "viewer-tools-menu",
+        "viewer-view-menu",
         "dossier-empty",
         "camera-collapsed",
         "camera-recording",
@@ -309,7 +312,9 @@ fn main() {
                             window.set_settings_iridology_symbols_path("/tmp/symboles.png".into());
                         }
                     }
-                    "viewer-photo"
+                    "viewer-tools-menu"
+                    | "viewer-view-menu"
+                    | "viewer-photo"
                     | "viewer-notes"
                     | "viewer-presentation"
                     | "viewer-image-only"
@@ -477,7 +482,7 @@ fn main() {
                     if scenario == "library-error" {
                         window.set_library_error("Impossible de lire le dossier /workspace/Images/IrisScope : accès refusé. Vérifiez les autorisations du dossier de captures.".into());
                     } else if scenario != "library-empty" {
-                        let items = (0..8)
+                        let items = (0..if scenario == "library-sparse" { 2 } else { 8 })
                             .map(|n| LibraryItemData {
                                 id: n.to_string().into(),
                                 file_path: format!("/tmp/capture-{n}.jpg").into(),
@@ -634,10 +639,37 @@ Observations générales de la séance."
                     scenario,
                     "camera-after-capture" | "camera-narrow-after-capture"
                 ) {
+                    // Flush theme/property initialization before comparing geometry.
+                    slint::platform::update_timers_and_animations();
+                    let _ = window.window().take_snapshot().unwrap();
+                    slint::platform::update_timers_and_animations();
+                    let before = window.window().take_snapshot().unwrap();
                     window.set_has_last_capture(true);
                     window.set_has_last_capture_thumbnail(true);
                     window.set_last_capture_thumbnail(image.clone());
                     window.set_last_capture_file_name("Gauche_2026-10-08_14-00-00.png".into());
+                    window
+                        .window()
+                        .dispatch_event(WindowEvent::PointerScrolled {
+                            position: LogicalPosition::new(200.0, 310.0),
+                            delta_x: 0.0,
+                            delta_y: -120.0,
+                        });
+                    let after = window.window().take_snapshot().unwrap();
+                    for y in (84.0 * requested_scale) as usize..(240.0 * requested_scale) as usize {
+                        for x in
+                            (24.0 * requested_scale) as usize..(260.0 * requested_scale) as usize
+                        {
+                            let offset = y * after.width() as usize + x;
+                            let before_pixel = before.as_slice()[offset];
+                            let after_pixel = after.as_slice()[offset];
+                            assert_eq!(
+                                (before_pixel.r, before_pixel.g, before_pixel.b),
+                                (after_pixel.r, after_pixel.g, after_pixel.b),
+                                "capture and scrolling must keep patient fields fixed at {x},{y}, {width}x{height}, theme={theme}"
+                            );
+                        }
+                    }
                 }
                 if scenario == "camera-resized" {
                     state.set_camera_panel_width(420);
@@ -665,7 +697,7 @@ Observations générales de la séance."
                 if scenario == "library-small" {
                     state.set_thumbnail_size(0);
                 }
-                if scenario == "library-custom" {
+                if matches!(scenario, "library-custom" | "library-sparse") {
                     state.set_thumbnail_width(187);
                 }
                 if scenario == "library-minimum" {
@@ -718,9 +750,33 @@ Observations générales de la séance."
                             button: PointerEventButton::Left,
                         });
                 }
+                if matches!(scenario, "viewer-tools-menu" | "viewer-view-menu") {
+                    let offset = if scenario == "viewer-tools-menu" {
+                        285.0
+                    } else {
+                        214.0
+                    } + if width < 900 { 0.0 } else { 8.0 };
+                    let position = LogicalPosition::new(
+                        width as f32 - offset,
+                        if width < 900 { 30.0 } else { 38.0 },
+                    );
+                    for pressed in [true, false] {
+                        window.window().dispatch_event(if pressed {
+                            WindowEvent::PointerPressed {
+                                position,
+                                button: PointerEventButton::Left,
+                            }
+                        } else {
+                            WindowEvent::PointerReleased {
+                                position,
+                                button: PointerEventButton::Left,
+                            }
+                        });
+                    }
+                }
                 if scenario == "calendar-filter" {
                     let position =
-                        LogicalPosition::new(335.0, if width < 924 { 238.0 } else { 246.0 });
+                        LogicalPosition::new(355.0, if width < 924 { 238.0 } else { 246.0 });
                     window.window().dispatch_event(WindowEvent::PointerPressed {
                         position,
                         button: PointerEventButton::Left,
@@ -766,7 +822,7 @@ Observations générales de la séance."
                     }
                 }
                 if scenario == "camera-click-selection" {
-                    let position = LogicalPosition::new(245.0, height as f32 - 206.0);
+                    let position = LogicalPosition::new(245.0, height as f32 - 164.0);
                     for pressed in [true, false] {
                         window.window().dispatch_event(if pressed {
                             WindowEvent::PointerPressed {
@@ -788,7 +844,7 @@ Observations générales de la séance."
                 }
                 if scenario == "viewer-angle-popup" {
                     let panel_width = if width < 1000 { 252.0 } else { 300.0 };
-                    let position = LogicalPosition::new(width as f32 - panel_width + 52.0, 378.0);
+                    let position = LogicalPosition::new(width as f32 - panel_width + 52.0, 336.0);
                     window.window().dispatch_event(WindowEvent::PointerPressed {
                         position,
                         button: PointerEventButton::Left,
@@ -843,8 +899,36 @@ Observations générales de la séance."
                     );
                     let gap = sample(width as f32 / 2.0);
                     assert!(
-                        gap.r < 60 && gap.g < 60 && gap.b < 60,
+                        if theme == 1 {
+                            gap.r > 220 && gap.g > 220 && gap.b > 220
+                        } else {
+                            gap.r < 60 && gap.g < 60 && gap.b < 60
+                        },
                         "photos must not overlap the separator"
+                    );
+                }
+                if scenario.starts_with("viewer-") {
+                    let chrome = snapshot.as_slice()[0];
+                    assert!(
+                        if theme == 1 {
+                            chrome.r > 220 && chrome.g > 220
+                        } else {
+                            chrome.r < 60 && chrome.g < 60
+                        },
+                        "viewer chrome must follow the application theme"
+                    );
+                }
+                if scenario == "library-sparse"
+                    && std::env::var_os("IRISCOPE_SNAPSHOT_IMAGE").is_none()
+                {
+                    let inset = if width < 900 { 16.0 } else { 24.0 };
+                    let x = ((inset + 20.0) * requested_scale).round() as usize;
+                    let y = ((if width < 924 { 330.0 } else { 338.0 }) * requested_scale).round()
+                        as usize;
+                    let first = snapshot.as_slice()[y * snapshot.width() as usize + x];
+                    assert!(
+                        first.b.abs_diff(100) < 4,
+                        "a sparse library must keep its first thumbnail against the left content inset"
                     );
                 }
                 let file = Path::new(&output).join(format!(
@@ -860,8 +944,46 @@ Observations générales de la séance."
                 )
                 .unwrap();
                 captures += 1;
+                if matches!(scenario, "viewer-tools-menu" | "viewer-view-menu") {
+                    let position = LogicalPosition::new(
+                        width as f32
+                            - if scenario == "viewer-tools-menu" {
+                                355.0
+                            } else {
+                                250.0
+                            },
+                        if width < 900 { 104.0 } else { 112.0 },
+                    );
+                    for pressed in [true, false] {
+                        window.window().dispatch_event(if pressed {
+                            WindowEvent::PointerPressed {
+                                position,
+                                button: PointerEventButton::Left,
+                            }
+                        } else {
+                            WindowEvent::PointerReleased {
+                                position,
+                                button: PointerEventButton::Left,
+                            }
+                        });
+                    }
+                    if scenario == "viewer-tools-menu" {
+                        assert_eq!(
+                            state.get_viewer_panel(),
+                            4,
+                            "Tools must open the comparison panel"
+                        );
+                    } else {
+                        assert_eq!(
+                            state.get_viewer_zoom(),
+                            100,
+                            "View must select actual image size"
+                        );
+                        assert!(!state.get_viewer_fit());
+                    }
+                }
                 if scenario == "patient-search" {
-                    let position = LogicalPosition::new(250., 382.);
+                    let position = LogicalPosition::new(250., 316.);
                     window.window().dispatch_event(WindowEvent::PointerPressed {
                         position,
                         button: PointerEventButton::Left,

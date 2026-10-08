@@ -8,8 +8,9 @@ import { AppState } from "./state.slint";
 
 export component LibraryPage inherits Rectangle {
     private property <length> content-inset: root.width < 900px ? 16px : 24px;
-    private property <length> card-width: min(AppState.effective-thumbnail-width * 1px + 28px, root.width - 2 * root.content-inset - Design.scroll-gutter - 16px);
-    private property <int> library-grid-columns: clamp(floor((root.width - 2 * root.content-inset - Design.scroll-gutter - 4px) / (root.card-width + 12px)), 1, 32);
+    private property <length> grid-width: max(0px, root.width - 2 * root.content-inset - Design.scroll-gutter);
+    private property <length> card-width: min(AppState.effective-thumbnail-width * 1px + 28px, root.grid-width);
+    private property <int> library-grid-columns: clamp(floor((root.grid-width + 12px) / (root.card-width + 12px)), 1, 32);
     private property <length> thumbnail-height: round((root.card-width - 28px) / 1px * 0.75) * 1px;
     private property <length> list-image-width: clamp(AppState.effective-thumbnail-width * 0.4px, 48px, 192px);
     private property <length> list-image-height: round(root.list-image-width / 1px * 0.75) * 1px;
@@ -625,13 +626,15 @@ export component LibraryPage inherits Rectangle {
             vertical-stretch: 1;
             horizontal-scrollbar-policy: always-off;
 
-            GridLayout {
-                width: root.library-grid-columns * root.card-width + (root.library-grid-columns - 1) * 12px;
-                spacing: 12px;
+            Rectangle {
+                x: 0px; y: 0px;
+                width: root.grid-width;
+                height: ceil(AppState.library-items.length / root.library-grid-columns) * library-grid.row-height;
+                background: transparent;
 
                 for item[index] in AppState.library-items: Rectangle {
-                    row: index / root.library-grid-columns;
-                    col: Math.mod(index, root.library-grid-columns);
+                    x: Math.mod(index, root.library-grid-columns) * (root.card-width + 12px);
+                    y: floor(index / root.library-grid-columns) * library-grid.row-height;
                     width: root.card-width;
                     horizontal-stretch: 0;
                     height: root.thumbnail-height + 116px;
@@ -682,7 +685,7 @@ export component LibraryPage inherits Rectangle {
                                         width: 100%;
                                         height: 100%;
                                         text: item.is-video ? "VIDÉO" : "IRIS";
-                                        color: Design.overlay-text-muted;
+                                        color: Design.preview-text-muted;
                                         font-size: 12px;
                                         font-weight: 700;
                                         horizontal-alignment: center;

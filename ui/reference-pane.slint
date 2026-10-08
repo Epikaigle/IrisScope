@@ -12,7 +12,7 @@ export component ReferencePane inherits Rectangle {
     out property <length> pan-limit-y: max(0px, (picture.height - root.height) / 2);
     changed pan-limit-x => { root.pan-x = clamp(root.pan-x, -root.pan-limit-x, root.pan-limit-x); }
     changed pan-limit-y => { root.pan-y = clamp(root.pan-y, -root.pan-limit-y, root.pan-limit-y); }
-    background: Design.preview;
+    background: root.loaded ? Design.preview : Design.surface-sunken;
     clip: true;
     min-width: 0px;
     min-height: 0px;
@@ -67,6 +67,6 @@ export component ReferencePane inherits Rectangle {
         }
     }
     if pan-focus.has-focus: Rectangle {
-        border-width: 2px; border-color: Design.overlay-text; background: transparent;
+        border-width: 2px; border-color: Design.focus; background: transparent;
     }
 }

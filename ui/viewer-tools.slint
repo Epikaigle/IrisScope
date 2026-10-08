@@ -1,3 +1,4 @@
+import { AppComboBox } from "./combo-box.slint";
 import { ReferencePane } from "./reference-pane.slint";
 import { ZoomControl } from "./zoom-control.slint";
 import { RotationControl } from "./rotation-control.slint";
@@ -8,6 +9,10 @@ import { Design } from "./theme.slint";
 import { ScrollView, LineEdit, TextEdit } from "std-widgets.slint";
 
 export component ViewerTools inherits Rectangle {
+    private property <bool> date-filters-open: false;
+    private property <int> panel: AppState.viewer-panel;
+    init => { root.date-filters-open = AppState.comparison-from != "" || AppState.comparison-to != ""; }
+    changed panel => { if root.panel == 4 { root.date-filters-open = AppState.comparison-from != "" || AppState.comparison-to != ""; } }
     background: Design.overlay-panel;
     border-radius: Design.card-radius;
     border-width: 1px; border-color: Design.overlay-border;
@@ -25,20 +30,14 @@ export component ViewerTools inherits Rectangle {
             if AppState.viewer-panel == 1: VerticalLayout { alignment: start;
                 spacing: 8px;
                 Text { text: "Repérer une zone"; color: Design.overlay-text-secondary; font-size: 12px; }
-                HorizontalLayout { spacing: 4px; alignment: start;
-                    for tool in [{id:0,label:"Déplacer"},{id:1,label:"Cercle"},{id:2,label:"Flèche"}]: AppButton {
-                        height: 32px; elide-text: true; compact: true; overlay: true; text: tool.label; checkable: true; selected: AppState.viewer-tool == tool.id;
+                HorizontalLayout { spacing: 6px; alignment: start;
+                    AppComboBox {
+                        model: ["Déplacer", "Cercle", "Flèche", "Point", "Texte"];
+                        current-index <=> AppState.viewer-tool;
                         enabled: !AppState.viewer-review-busy && !AppState.viewer-review-load-error;
-                        clicked => { AppState.viewer-tool = tool.id; }
+                        selected(_) => { AppState.viewer-tool = self.current-index; }
                     }
-                }
-                HorizontalLayout { spacing: 4px; alignment: start;
-                    for tool in [{id:3,label:"Point"},{id:4,label:"Texte"}]: AppButton {
-                        height: 32px; elide-text: true; compact: true; overlay: true; text: tool.label; checkable: true; selected: AppState.viewer-tool == tool.id;
-                        enabled: !AppState.viewer-review-busy && !AppState.viewer-review-load-error;
-                        clicked => { AppState.viewer-tool = tool.id; }
-                    }
-                    AppButton { height: 32px; elide-text: true; compact: true; overlay: true; text: "Annuler"; enabled: AppState.viewer-can-undo && !AppState.viewer-review-busy; tooltip: "Annuler la dernière modification des annotations"; clicked => { AppState.undo-viewer-annotation(); } }
+                    AppButton { height: 32px; compact: true; overlay: true; text: "Annuler"; enabled: AppState.viewer-can-undo && !AppState.viewer-review-busy; tooltip: "Annuler la dernière modification des annotations"; clicked => { AppState.undo-viewer-annotation(); } }
                 }
                 if AppState.viewer-tool == 4: LineEdit { text <=> AppState.viewer-annotation-text; placeholder-text: "Texte à placer sur la photo"; accessible-label: "Libellé de l’annotation"; height: 36px; }
                 Text { text: AppState.viewer-tool == 1 ? "Glissez du centre au bord du cercle." : AppState.viewer-tool == 2 ? "Glissez du départ à la pointe de la flèche." : AppState.viewer-tool == 4 ? "Saisissez un libellé, puis cliquez sur l’image." : AppState.viewer-tool == 0 ? "Glissez pour déplacer l’image. Utilisez la molette pour zoomer." : "Cliquez pour placer un point."; color: Design.overlay-text-secondary; font-size: 12px; wrap: word-wrap; }
@@ -115,11 +114,14 @@ export component ViewerTools inherits Rectangle {
             }
             if AppState.viewer-panel == 4: VerticalLayout { alignment: start;
                 spacing: 8px;
-                DateField { overlay: true; label: "Du"; target: 3; value <=> AppState.comparison-from; }
-                DateField { overlay: true; label: "Au"; target: 4; value <=> AppState.comparison-to; }
-                AppButton { height: 32px; elide-text: true; compact: true; overlay: true; text: "Choisir une photo du dossier…"; enabled: AppState.viewer-dossier != "" && !AppState.comparison-loading; clicked => { AppState.find-comparison-photos(); } }
-                if AppState.viewer-dossier == "": Text { text: "Associez la photo à un dossier pour rechercher les prises du même œil."; color: Design.overlay-text-secondary; font-size: 12px; wrap: word-wrap; }
-                Text { text: "Même dossier, même œil · jusqu’à 200 photos récentes. Les dates permettent de retrouver des prises plus anciennes."; color: Design.overlay-text-secondary; font-size: 12px; wrap: word-wrap; }
+                AppButton { height: 32px; elide-text: true; compact: true; overlay: true; text: "Choisir une autre photo…"; enabled: AppState.viewer-dossier != "" && !AppState.comparison-loading; tooltip: "Rechercher les photos du même dossier et du même œil"; clicked => { AppState.find-comparison-photos(); } }
+                if AppState.viewer-dossier == "": Text { text: "Associez la photo à un dossier pour retrouver les prises du même œil."; color: Design.overlay-text-secondary; font-size: 12px; wrap: word-wrap; }
+                AppButton { height: 32px; compact: true; quiet: true; overlay: true; text: root.date-filters-open ? "Masquer les dates ▴" : AppState.comparison-from != "" || AppState.comparison-to != "" ? "Dates · filtre actif ▾" : "Filtrer par date ▾"; checkable: true; selected: root.date-filters-open; clicked => { root.date-filters-open = !root.date-filters-open; } }
+                if root.date-filters-open: VerticalLayout { spacing: 6px;
+                    DateField { overlay: true; label: "Du"; target: 3; value <=> AppState.comparison-from; }
+                    DateField { overlay: true; label: "Au"; target: 4; value <=> AppState.comparison-to; }
+                    Text { text: "Appliquez les dates avec « Choisir une autre photo »."; color: Design.overlay-text-secondary; font-size: 12px; wrap: word-wrap; }
+                }
                 if AppState.comparison-loading: Text { text: "Chargement des photos…"; color: Design.overlay-text-secondary; }
                 if AppState.comparison-candidates.length > 0: comparison-scroll := ScrollView {
                     height: min(240px, AppState.comparison-candidates.length * 64px);
@@ -129,7 +131,7 @@ export component ViewerTools inherits Rectangle {
                         for candidate in AppState.comparison-candidates: HorizontalLayout { height: 60px; spacing: 6px; Image { width: 64px; height: 56px; source: candidate.thumbnail; image-fit: contain; } AppButton { min-width: 0px; horizontal-stretch: 1; height: 56px; elide-text: true; wrap-text: true; compact: true; overlay: true; text: candidate.caption; enabled: !AppState.comparison-loading; clicked => { AppState.select-comparison-photo(candidate.path, candidate.version, candidate.caption); } } }
                     }
                 }
-                AppButton { height: 32px; elide-text: true; compact: true; overlay: true; text: "Garder cette photo pour comparer"; clicked => { AppState.keep-comparison-image(); } }
+                AppButton { height: 32px; elide-text: true; compact: true; overlay: true; text: "Utiliser comme référence"; tooltip: "Garder cette image à gauche, puis ouvrir une autre photo à comparer"; clicked => { AppState.keep-comparison-image(); } }
                 if AppState.comparison-available: AppButton { height: 32px; elide-text: true; compact: true; overlay: true; text: "Effacer la comparaison"; clicked => { AppState.clear-comparison-image(); } }
                 if AppState.comparison-enabled: AppButton { height: 32px; elide-text: true; compact: true; overlay: true; text: AppState.comparison-linked ? "Dissocier les déplacements" : "Lier zoom et déplacements"; tooltip: "Positionnez les deux photos séparément, puis liez les vues en conservant cet alignement"; clicked => { AppState.toggle-comparison-link(); } }
             }

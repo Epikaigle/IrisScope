@@ -1,3 +1,4 @@
+import { ActionMenu, MenuAction } from "./action-menu.slint";
 import { ResizeHandle } from "./resize-handle.slint";
 import { AppButton, AppSlider, Tooltip } from "./controls.slint";
 import { AppState } from "./state.slint";
@@ -15,7 +16,7 @@ export component ViewerOverlay inherits Rectangle {
     private property <float> zoom-value: AppState.viewer-fit ? current-pane.actual-zoom : AppState.viewer-zoom;
     changed zoom-value => { zoom-slider.value = root.zoom-value; }
     private property <length> panel-width: clamp(AppState.viewer-panel-width == 0 ? (root.width < 1000px ? 252px : 300px) : AppState.viewer-panel-width * 1px,252px,max(252px,min(480px,root.width - 500px)));
-    private property <bool> toolbar-interacting: fullscreen-button.active-interaction || image-button.active-interaction || presentation-button.active-interaction || export-button.active-interaction || close-button.active-interaction || fit-button.active-interaction || original-size-button.active-interaction || zoom-out-button.active-interaction || zoom-in-button.active-interaction || zoom-slider.active-interaction || loupe-button.active-interaction || previous-button.active-interaction || next-button.active-interaction || retained-button.active-interaction || notes-button.active-interaction || references-button.active-interaction || display-button.active-interaction || comparison-button.active-interaction;
+    private property <bool> toolbar-interacting: tools-menu.interacting || view-menu.interacting || export-button.active-interaction || close-button.active-interaction || fit-button.active-interaction || zoom-out-button.active-interaction || zoom-in-button.active-interaction || zoom-slider.active-interaction || previous-button.active-interaction || next-button.active-interaction;
     changed toolbar-interacting => { AppState.photo-controls-interacting = root.toolbar-interacting; if root.toolbar-interacting { AppState.show-photo-controls(); } }
     private property <int> review-revision: AppState.viewer-review-revision;
     changed review-revision => { if AppState.viewer-review-dirty && !AppState.viewer-review-busy { autosave.restart(); } }
@@ -23,48 +24,73 @@ export component ViewerOverlay inherits Rectangle {
     VerticalLayout {
         padding: root.width < 900px ? 12px : 20px; spacing: 10px;
         Rectangle {
-            height: root.controls-shown ? 120px : 0px; vertical-stretch: 0; clip: true;
+            height: root.controls-shown ? 78px : 0px; vertical-stretch: 0; clip: true;
             visible: root.controls-shown;
-            VerticalLayout { width: 100%; height: 120px; spacing: 10px;
-        HorizontalLayout {
-            height: 36px; vertical-stretch: 0; spacing: 8px;
-            Text { min-width: 0px; horizontal-stretch: 1; text: AppState.viewer-loading ? "Ouverture…" : AppState.viewer-is-video ? "Vidéo de l’iris" : "Photo de l’iris"; color: Design.overlay-text; font-size: 22px; font-weight: 600; overflow: elide; vertical-alignment: center; }
-            image-button := AppButton { collapse-when-hidden: true; visible: !AppState.viewer-is-video; compact: true; overlay: true; text: AppState.image-only ? "Vue complète" : "Image seule"; checkable: true; selected: AppState.image-only; clicked => { AppState.toggle-image-only(); } }
-            presentation-button := AppButton { compact: true; overlay: true; text: AppState.presentation-mode ? "Fin présentation" : "Présenter"; checkable: true; selected: AppState.presentation-mode; clicked => {AppState.toggle-presentation();} }
-            export-button := AppButton { collapse-when-hidden: true; visible: !AppState.viewer-is-video && !AppState.presentation-mode; compact: true; overlay: true; text: "Exporter…"; enabled: !AppState.viewer-loading; checkable: true; selected: AppState.viewer-panel == 5 && !AppState.image-only; clicked => { AppState.select-photo-panel(AppState.viewer-panel == 5 && !AppState.image-only ? 0 : 5); } }
-            close-button := AppButton { compact: true; overlay: true; text: "Fermer"; accessibility-label: "Fermer la visionneuse, touche Échap"; clicked => { AppState.dismiss-viewer(); } }
-        }
-        HorizontalLayout {
-            height: 32px; vertical-stretch: 0; spacing: 4px;
-            fit-button := AppButton { compact: true; overlay: true; text: "Ajuster"; checkable: true; selected: AppState.viewer-fit; enabled: !AppState.viewer-loading; clicked => { AppState.fit-viewer(); } }
-            original-size-button := AppButton { compact: true; overlay: true; text: "100 %"; tooltip: "Taille réelle : un pixel photo par pixel écran"; checkable: true; selected: !AppState.viewer-fit && AppState.viewer-zoom == 100; enabled: !AppState.viewer-loading; clicked => { AppState.viewer-fit = false; AppState.viewer-zoom = 100; AppState.viewer-pan-x = 0px; AppState.viewer-pan-y = 0px; AppState.link-view(false); } }
-            zoom-out-button := AppButton { compact: true; overlay: true; text: "−"; accessibility-label: "Réduire le zoom"; enabled: !AppState.viewer-loading; clicked => { current-pane.zoom-at(round((AppState.viewer-fit ? current-pane.actual-zoom : AppState.viewer-zoom)/1.2),current-pane.width/2,current-pane.height/2); } }
-            zoom-slider := AppSlider { overlay: true; label: "Zoom de la photo en pourcentage de pixels"; minimum: 10; maximum: 800; step: 1; value: AppState.viewer-fit ? current-pane.actual-zoom : AppState.viewer-zoom; enabled: !AppState.viewer-loading; changed => { current-pane.zoom-at(round(self.value), current-pane.width/2, current-pane.height/2); } }
-            Text { width: 56px; text: AppState.viewer-fit ? "Ajusté" : AppState.viewer-zoom + " %"; color: Design.overlay-text-secondary; font-size: 12px; vertical-alignment: center; horizontal-alignment: center; }
-            zoom-in-button := AppButton { compact: true; overlay: true; text: "+"; accessibility-label: "Augmenter le zoom"; enabled: !AppState.viewer-loading; clicked => { current-pane.zoom-at(round((AppState.viewer-fit ? current-pane.actual-zoom : AppState.viewer-zoom)*1.2),current-pane.width/2,current-pane.height/2); } }
-            loupe-button := AppButton { collapse-when-hidden: true; visible: !AppState.viewer-is-video; compact: true; overlay: true; text: "Loupe"; checkable: true; selected: AppState.viewer-loupe; clicked => { AppState.viewer-loupe = !AppState.viewer-loupe; } }
-            fullscreen-button := AppButton { compact: true; overlay: true; text: AppState.viewer-fullscreen ? "Quitter le plein écran" : "Plein écran"; clicked => { AppState.viewer-fullscreen = !AppState.viewer-fullscreen; } }
-        }
-        HorizontalLayout {
-            height: 32px; vertical-stretch: 0; spacing: 4px;
-            previous-button := AppButton { compact: true; overlay: true; text: "Précédente"; enabled: !AppState.viewer-loading && !AppState.library-loading && !AppState.viewer-review-busy; clicked => { AppState.navigate-viewer(-1); } }
-            next-button := AppButton { compact: true; overlay: true; text: "Suivante"; enabled: !AppState.viewer-loading && !AppState.library-loading && !AppState.viewer-review-busy; clicked => { AppState.navigate-viewer(1); } }
-            retained-button := AppButton { collapse-when-hidden: true; visible: !AppState.viewer-is-video && !AppState.presentation-mode; compact: true; overlay: true; text: AppState.viewer-retained ? "Retenue" : "Retenir"; tooltip: "Marquer cette prise pour la retrouver dans les séances du dossier"; checkable: true; selected: AppState.viewer-retained; enabled: !AppState.viewer-loading && !AppState.viewer-review-load-error; clicked => { AppState.viewer-retained = !AppState.viewer-retained; AppState.viewer-review-edited(); } }
-            Rectangle { horizontal-stretch: 1; min-width: 0px; background: transparent; }
-            notes-button := AppButton { collapse-when-hidden: true; visible: !AppState.viewer-is-video && !AppState.presentation-mode; compact: true; overlay: true; text: "Annoter / Notes"; checkable: true; selected: AppState.viewer-panel == 1 && !AppState.image-only; enabled: !AppState.viewer-loading;
-                clicked => { AppState.select-photo-panel(AppState.viewer-panel == 1 && !AppState.image-only ? 0 : 1); }
-            }
-            references-button := AppButton { collapse-when-hidden: true; visible: !AppState.viewer-is-video ; compact: true; overlay: true; text: "Références"; checkable: true; selected: AppState.viewer-panel == 2 && !AppState.image-only; enabled: !AppState.viewer-loading;
-                clicked => { AppState.select-photo-panel(AppState.viewer-panel == 2 && !AppState.image-only ? 0 : 2); }
-            }
-            display-button := AppButton { collapse-when-hidden: true; visible: !AppState.viewer-is-video ; compact: true; overlay: true; text: "Affichage"; checkable: true; selected: AppState.viewer-panel == 3 && !AppState.image-only; enabled: !AppState.viewer-loading;
-                clicked => { AppState.select-photo-panel(AppState.viewer-panel == 3 && !AppState.image-only ? 0 : 3); }
-            }
-            comparison-button := AppButton { collapse-when-hidden: true; visible: !AppState.viewer-is-video && !AppState.presentation-mode; compact: true; overlay: true; text: "Comparer"; checkable: true; selected: AppState.viewer-panel == 4 && !AppState.image-only; enabled: !AppState.viewer-loading;
-                clicked => { AppState.select-photo-panel(AppState.viewer-panel == 4 && !AppState.image-only ? 0 : 4); }
-            }
-            if AppState.viewer-is-video: AppButton { compact: true; overlay: true; text: "Exporter MP4…"; enabled: !AppState.viewer-loading && !AppState.export-busy && !AppState.storage-busy && !AppState.file-dialog-pending; clicked => { AppState.export-viewer-mp4(); } }
-        }
+            VerticalLayout { width: 100%; height: 78px; spacing: 10px;
+                HorizontalLayout {
+                    height: 36px; vertical-stretch: 0; spacing: 8px;
+                    Text { min-width: 0px; horizontal-stretch: 1; text: AppState.viewer-loading ? "Ouverture…" : AppState.viewer-is-video ? "Vidéo de l’iris" : "Photo de l’iris"; color: Design.overlay-text; font-size: 22px; font-weight: 600; overflow: elide; vertical-alignment: center; }
+                    tools-menu := ActionMenu {
+                        collapse-when-hidden: true; visible: !AppState.viewer-is-video;
+                        compact: true; overlay: true; text: "Outils ▾"; enabled: !AppState.viewer-loading;
+                        private property <[MenuAction]> presentation-actions: [
+                            {id: 2, label: "Références visuelles", enabled: true, checked: AppState.viewer-panel == 2 && !AppState.image-only},
+                            {id: 3, label: "Réglages d’affichage", enabled: true, checked: AppState.viewer-panel == 3 && !AppState.image-only},
+                        ];
+                        private property <[MenuAction]> standard-actions: [
+                            {id: 1, label: "Annoter et noter", enabled: true, checked: AppState.viewer-panel == 1 && !AppState.image-only},
+                            {id: 4, label: "Comparer les prises", enabled: true, checked: AppState.viewer-panel == 4 && !AppState.image-only},
+                            {id: 2, label: "Références visuelles", enabled: true, checked: AppState.viewer-panel == 2 && !AppState.image-only},
+                            {id: 3, label: "Réglages d’affichage", enabled: true, checked: AppState.viewer-panel == 3 && !AppState.image-only},
+                            {id: 6, label: AppState.viewer-retained ? "Photo retenue" : "Retenir cette photo", enabled: !AppState.viewer-review-load-error, checked: AppState.viewer-retained},
+                        ];
+                        actions: AppState.presentation-mode ? self.presentation-actions : self.standard-actions;
+                        chosen(id) => {
+                            if id == 6 { AppState.viewer-retained = !AppState.viewer-retained; AppState.viewer-review-edited(); }
+                            else { AppState.select-photo-panel(AppState.viewer-panel == id && !AppState.image-only ? 0 : id); }
+                        }
+                    }
+                    view-menu := ActionMenu {
+                        compact: true; overlay: true; text: "Vue ▾";
+                        private property <[MenuAction]> video-actions: [
+                            {id: 4, label: AppState.viewer-fullscreen ? "Quitter le plein écran" : "Plein écran", enabled: true, checked: AppState.viewer-fullscreen},
+                            {id: 5, label: AppState.presentation-mode ? "Fin de présentation" : "Présenter", enabled: true, checked: AppState.presentation-mode},
+                        ];
+                        private property <[MenuAction]> photo-actions: [
+                            {id: 1, label: AppState.image-only ? "Vue complète" : "Image seule", enabled: true, checked: AppState.image-only},
+                            {id: 2, label: "Taille réelle · 100 %", enabled: !AppState.viewer-loading, checked: !AppState.viewer-fit && AppState.viewer-zoom == 100},
+                            {id: 3, label: "Loupe", enabled: !AppState.viewer-loading, checked: AppState.viewer-loupe},
+                            {id: 4, label: AppState.viewer-fullscreen ? "Quitter le plein écran" : "Plein écran", enabled: true, checked: AppState.viewer-fullscreen},
+                            {id: 5, label: AppState.presentation-mode ? "Fin de présentation" : "Présenter", enabled: true, checked: AppState.presentation-mode},
+                        ];
+                        actions: AppState.viewer-is-video ? self.video-actions : self.photo-actions;
+                        chosen(id) => {
+                            if id == 1 { AppState.toggle-image-only(); }
+                            else if id == 2 { AppState.viewer-fit = false; AppState.viewer-zoom = 100; AppState.viewer-pan-x = 0px; AppState.viewer-pan-y = 0px; AppState.link-view(false); }
+                            else if id == 3 { AppState.viewer-loupe = !AppState.viewer-loupe; }
+                            else if id == 4 { AppState.viewer-fullscreen = !AppState.viewer-fullscreen; }
+                            else { AppState.toggle-presentation(); }
+                        }
+                    }
+                    export-button := AppButton {
+                        collapse-when-hidden: true; visible: !AppState.presentation-mode;
+                        compact: true; overlay: true; text: "Exporter…";
+                        enabled: !AppState.viewer-loading && (!AppState.viewer-is-video || (!AppState.export-busy && !AppState.storage-busy && !AppState.file-dialog-pending));
+                        checkable: !AppState.viewer-is-video; selected: !AppState.viewer-is-video && AppState.viewer-panel == 5 && !AppState.image-only;
+                        clicked => { if AppState.viewer-is-video { AppState.export-viewer-mp4(); } else { AppState.select-photo-panel(AppState.viewer-panel == 5 && !AppState.image-only ? 0 : 5); } }
+                    }
+                    close-button := AppButton { compact: true; overlay: true; text: "Fermer"; accessibility-label: "Fermer la visionneuse, touche Échap"; clicked => { AppState.dismiss-viewer(); } }
+                }
+                HorizontalLayout {
+                    height: 32px; vertical-stretch: 0; spacing: 6px;
+                    previous-button := AppButton { compact: true; overlay: true; text: "‹"; width: 32px; accessibility-label: "Capture précédente"; tooltip: "Prise précédente"; enabled: !AppState.viewer-loading && !AppState.library-loading && !AppState.viewer-review-busy; clicked => { AppState.navigate-viewer(-1); } }
+                    next-button := AppButton { compact: true; overlay: true; text: "›"; width: 32px; accessibility-label: "Capture suivante"; tooltip: "Prise suivante"; enabled: !AppState.viewer-loading && !AppState.library-loading && !AppState.viewer-review-busy; clicked => { AppState.navigate-viewer(1); } }
+                    fit-button := AppButton { compact: true; overlay: true; text: "Ajuster"; checkable: true; selected: AppState.viewer-fit; enabled: !AppState.viewer-loading; clicked => { AppState.fit-viewer(); } }
+                    zoom-out-button := AppButton { compact: true; overlay: true; text: "−"; accessibility-label: "Réduire le zoom"; enabled: !AppState.viewer-loading; clicked => { current-pane.zoom-at(round((AppState.viewer-fit ? current-pane.actual-zoom : AppState.viewer-zoom)/1.2),current-pane.width/2,current-pane.height/2); } }
+                    zoom-slider := AppSlider { overlay: true; label: "Zoom de la photo en pourcentage de pixels"; minimum: 10; maximum: 800; step: 1; value: AppState.viewer-fit ? current-pane.actual-zoom : AppState.viewer-zoom; enabled: !AppState.viewer-loading; changed => { current-pane.zoom-at(round(self.value), current-pane.width/2, current-pane.height/2); } }
+                    Text { width: 56px; text: AppState.viewer-fit ? "Ajusté" : AppState.viewer-zoom + " %"; color: Design.overlay-text-secondary; font-size: 12px; vertical-alignment: center; horizontal-alignment: center; }
+                    zoom-in-button := AppButton { compact: true; overlay: true; text: "+"; accessibility-label: "Augmenter le zoom"; enabled: !AppState.viewer-loading; clicked => { current-pane.zoom-at(round((AppState.viewer-fit ? current-pane.actual-zoom : AppState.viewer-zoom)*1.2),current-pane.width/2,current-pane.height/2); } }
+                }
             }
         }
         // A fixed status row prevents autosave transitions from moving the photo.

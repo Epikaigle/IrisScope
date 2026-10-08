@@ -33,4 +33,8 @@ Les commandes et réglages sont décrits dans [Visionneuse photo](VISIONNEUSE.md
 La [passe d'interface du 8 octobre sur Mac](VALIDATION-INTERFACE-MACOS-2026-10-08.md)
 fixe les commandes de capture dans la sidebar, réserve la place des barres de
 défilement, corrige le menu Miroir et conserve le cadre de focus pour le clavier.
-Elle porte la couverture à 848 références visuelles sur 976 rendus locaux.
+La seconde passe harmonise les thèmes des réglages, menus et visionneuse,
+compacte les menus et calendriers, fixe aussi les champs patient, aligne la
+grille à gauche et clarifie les dossiers vides. Les commandes photo sont
+regroupées dans « Outils » et « Vue ». La couverture atteint 896 références
+visuelles sur 1 024 rendus locaux.

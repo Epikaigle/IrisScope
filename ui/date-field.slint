@@ -73,11 +73,17 @@ export component DateField inherits Rectangle {
                 accepted => { if root.target < 3 { AppState.apply-library-query(); } }
             }
             calendar-button := AppButton {
-                height: 36px; compact: true; overlay: root.overlay; text: "Calendrier";
+                height: 36px; width: 32px; compact: true; overlay: root.overlay; text: "";
                 accessibility-label: "Choisir une date dans le calendrier : " + root.label;
                 tooltip: "Ouvrir le calendrier";
                 // Outside dismissal restores focus to the anchor button.
                 changed has-focus => { if self.has-focus && root.owns-calendar { AppState.calendar-open = false; } }
+                Path {
+                    x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
+                    width: 16px; height: 16px; viewbox-width: 24; viewbox-height: 24;
+                    stroke: root.overlay ? Design.overlay-text : Design.text; stroke-width: 1.5px;
+                    commands: "M 6 2 V 6 M 18 2 V 6 M 3 10 H 21 M 5 4 H 19 Q 21 4 21 6 V 20 Q 21 22 19 22 H 5 Q 3 22 3 20 V 6 Q 3 4 5 4 Z";
+                }
                 clicked => {
                     AppState.open-calendar(root.target);
                     AppState.calendar-target = root.target;

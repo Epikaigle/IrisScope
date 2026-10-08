@@ -141,7 +141,7 @@ export component MapOverlay inherits Rectangle {
                     vertical-stretch: 1;
                     accessible-role: groupbox;
                     accessible-label: "Image de référence. Utilisez les flèches pour déplacer la vue agrandie.";
-                    background: #080d0b;
+                    background: root.reference-loaded ? Design.preview : Design.surface-sunken;
                     border-radius: Design.card-radius;
                     border-width: 1px;
                     border-color: Design.overlay-border;

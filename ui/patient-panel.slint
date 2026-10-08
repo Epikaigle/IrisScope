@@ -1,3 +1,4 @@
+import { ActionMenu } from "./action-menu.slint";
 import { HelpText, AppButton } from "./controls.slint";
 import { LineEdit, ScrollView } from "std-widgets.slint";
 import { AppState } from "./state.slint";
@@ -13,293 +14,265 @@ export component PatientPanel inherits Rectangle {
     border-color: Design.border;
 
     VerticalLayout {
-        padding: Design.inset;
-        spacing: Design.gap;
-        HorizontalLayout {
-            height: 32px;
+        padding: 12px;
+        spacing: 8px;
+
+
+        VerticalLayout {
             vertical-stretch: 0;
             spacing: 8px;
-            Text {
-                min-width: 0px;
-                horizontal-stretch: 1;
-                text: "Examen";
-                color: Design.text;
-                font-size: 17px;
-                font-weight: 700;
-                vertical-alignment: center;
-            }
-            AppButton {
+            HorizontalLayout {
                 height: 32px;
-                compact: true;
-                quiet: true;
-                text: "Masquer";
-                accessibility-label: "Masquer le panneau patient et capture";
-                clicked => { AppState.sidebar-visible = false; }
+                vertical-stretch: 0;
+                spacing: 8px;
+                Text {
+                    min-width: 0px;
+                    horizontal-stretch: 1;
+                    text: "Patient";
+                    color: Design.text;
+                    font-size: 13px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
+                AppButton { height: 32px; compact: true; quiet: true; text: "Masquer"; accessibility-label: "Masquer le panneau patient et capture"; clicked => { AppState.sidebar-visible = false; } }
+                AppButton {
+                    height: 32px;
+                    compact: true;
+                    quiet: true;
+                    text: "Terminer";
+                    tooltip: "Terminer la session et vider le formulaire";
+                    accessibility-label: "Terminer la session";
+                    enabled: root.session-active && !AppState.recording-busy && !AppState.patient-action-pending;
+                    clicked => {
+                        root.dossier-lookup-text = "";
+                        AppState.clear-session();
+                    }
+                }
             }
-        }
-
-        // Only identity and recent media scroll. Eye, mode and capture stay visible.
-        patient-scroll := ScrollView {
-            min-height: 0px;
-            vertical-stretch: 1;
-            horizontal-scrollbar-policy: always-off;
-            VerticalLayout {
-                width: max(0px, patient-scroll.visible-width - Design.scroll-gutter);
-                spacing: 16px;
-                alignment: start;
+            HorizontalLayout {
+                height: 52px;
+                vertical-stretch: 0;
+                spacing: 8px;
                 VerticalLayout {
-                    vertical-stretch: 0;
-                    spacing: 12px;
-                    HorizontalLayout {
+                    min-width: 0px;
+                    horizontal-stretch: 1;
+                    spacing: 4px;
+                    Text { height: 16px; text: "Prénom"; color: Design.text-secondary; font-size: 12px; }
+                    patient-first-name-field := LineEdit {
+                        min-width: 0px;
                         height: 32px;
                         vertical-stretch: 0;
-                        spacing: 8px;
-                        Text {
-                            min-width: 0px;
-                            horizontal-stretch: 1;
-                            text: "Patient";
-                            color: Design.text;
-                            font-size: 13px;
-                            font-weight: 700;
-                            vertical-alignment: center;
+                        text <=> AppState.patient-first-name;
+                        accessible-label: "Prénom du patient";
+                        changed has-focus => {
+                            AppState.focused-text-fields = Math.max(0, AppState.focused-text-fields + (self.has-focus ? 1 : -1));
                         }
-                        if AppState.patient-id != "": AppButton { height: 32px; compact: true; quiet: true; text: "Séances"; enabled: !AppState.recording-busy; clicked => { AppState.open-consultation(); } }
-                        AppButton {
-                            height: 32px;
-                            compact: true;
-                            quiet: true;
-                            text: "Terminer";
-                            tooltip: "Terminer la session et vider le formulaire";
-                            accessibility-label: "Terminer la session";
-                            enabled: root.session-active && !AppState.recording-busy && !AppState.patient-action-pending;
-                            clicked => {
-                                root.dossier-lookup-text = "";
-                                AppState.clear-session();
-                            }
-                        }
-                    }
-                    HorizontalLayout {
-                        height: 58px;
-                        vertical-stretch: 0;
-                        spacing: 8px;
-                        VerticalLayout {
-                            min-width: 0px;
-                            horizontal-stretch: 1;
-                            spacing: 4px;
-                            Text { height: 18px; text: "Prénom"; color: Design.text-secondary; font-size: 12px; }
-                            patient-first-name-field := LineEdit {
-                                min-width: 0px;
-                                height: 36px;
-                                vertical-stretch: 0;
-                                text <=> AppState.patient-first-name;
-                                accessible-label: "Prénom du patient";
-                                changed has-focus => {
-                                    AppState.focused-text-fields = Math.max(0, AppState.focused-text-fields + (self.has-focus ? 1 : -1));
-                                }
-                                placeholder-text: "Prénom";
-                                enabled: !AppState.recording-busy && !AppState.patient-action-pending;
-                                edited => {
-                                    AppState.patient-id = "";
-                                    AppState.patient-dossier-number = "";
-                                    AppState.patient-name-edited();
-                                    AppState.session-changed();
-                                }
-                            }
-                        }
-                        VerticalLayout {
-                            min-width: 0px;
-                            horizontal-stretch: 1;
-                            spacing: 4px;
-                            Text { height: 18px; text: "Nom"; color: Design.text-secondary; font-size: 12px; }
-                            patient-last-name-field := LineEdit {
-                                min-width: 0px;
-                                height: 36px;
-                                vertical-stretch: 0;
-                                text <=> AppState.patient-last-name;
-                                accessible-label: "Nom du patient";
-                                changed has-focus => {
-                                    AppState.focused-text-fields = Math.max(0, AppState.focused-text-fields + (self.has-focus ? 1 : -1));
-                                }
-                                placeholder-text: "Nom";
-                                enabled: !AppState.recording-busy && !AppState.patient-action-pending;
-                                edited => {
-                                    AppState.patient-id = "";
-                                    AppState.patient-dossier-number = "";
-                                    AppState.patient-name-edited();
-                                    AppState.session-changed();
-                                }
-                            }
-                        }
-                    }
-                    VerticalLayout {
-                        height: 58px;
-                        vertical-stretch: 0;
-                        spacing: 4px;
-                        Text { height: 18px; text: "Numéro de dossier"; color: Design.text-secondary; font-size: 12px; }
-                        HorizontalLayout {
-                            height: 36px;
-                            vertical-stretch: 0;
-                            spacing: 8px;
-                            dossier-lookup := LineEdit {
-                                min-width: 0px;
-                                horizontal-stretch: 1;
-                                height: 36px;
-                                text <=> root.dossier-lookup-text;
-                                accessible-label: "Numéro de dossier patient";
-                                accessible-description: "Exemple : D-000123. Appuyez sur Entrée pour ouvrir le dossier.";
-                                placeholder-text: "D-000123";
-                                enabled: !AppState.recording-busy && !AppState.patient-action-pending;
-                                changed has-focus => {
-                                    AppState.focused-text-fields = Math.max(0, AppState.focused-text-fields + (self.has-focus ? 1 : -1));
-                                }
-                                accepted => {
-                                    if root.dossier-lookup-text != "" && !AppState.recording-busy && !AppState.patient-action-pending {
-                                        AppState.lookup-patient-by-dossier(root.dossier-lookup-text);
-                                    }
-                                }
-                            }
-                            AppButton {
-                                height: 36px;
-                                text: "Ouvrir";
-                                accessibility-label: "Ouvrir le dossier saisi";
-                                enabled: root.dossier-lookup-text != "" && !AppState.recording-busy && !AppState.patient-action-pending;
-                                clicked => { AppState.lookup-patient-by-dossier(root.dossier-lookup-text); }
-                            }
-                        }
-                    }
-                    if AppState.patient-id != "": Rectangle {
-                        height: 44px;
-                        vertical-stretch: 0;
-                        border-radius: Design.control-radius;
-                        background: Design.success-surface;
-                        HorizontalLayout {
-                            padding-left: 10px;
-                            padding-right: 6px;
-                            spacing: 6px;
-                            Text {
-                                min-width: 0px;
-                                horizontal-stretch: 1;
-                                text: "Dossier " + AppState.patient-dossier-number;
-                                color: Design.success;
-                                font-size: 12px;
-                                font-weight: 700;
-                                vertical-alignment: center;
-                                overflow: elide;
-                            }
-                            AppButton {
-                                height: 32px; compact: true; quiet: true;
-                                text: "Corriger";
-                                accessibility-label: "Corriger le prénom et le nom du dossier actif";
-                                enabled: !AppState.recording-busy && !AppState.patient-action-pending && !AppState.storage-busy;
-                                clicked => {
-                                    AppState.patient-edit-first = AppState.patient-first-name;
-                                    AppState.patient-edit-last = AppState.patient-last-name;
-                                    AppState.patient-edit-open = true;
-                                }
-                            }
-                            AppButton {
-                                height: 32px;
-                                compact: true;
-                                quiet: true;
-                                text: "Changer";
-                                accessibility-label: "Changer de dossier patient";
-                                enabled: !AppState.recording-busy && !AppState.patient-action-pending;
-                                clicked => {
-                                    AppState.patient-id = "";
-                                    AppState.patient-dossier-number = "";
-                                    AppState.patient-name-edited();
-                                    AppState.session-changed();
-                                }
-                            }
-                        }
-                    }
-                    if root.identity-needed: VerticalLayout {
-                        min-height: 0px;
-                        vertical-stretch: 0;
-                        spacing: 8px;
-                        Text {
-                            text: AppState.patient-action-pending ? "Traitement du dossier en cours…"
-                                : AppState.patient-first-name == "" || AppState.patient-last-name == "" ? "Renseignez le prénom et le nom."
-                                : AppState.patient-search-pending ? "Recherche des dossiers…"
-                                    : AppState.patient-candidates.length > 0
-                                        ? "Choisissez le dossier de cette personne."
-                                        : "Aucun dossier correspondant.";
-                            color: Design.text-secondary;
-                            font-size: 12px;
-                            wrap: word-wrap;
-                            vertical-stretch: 0;
-                        }
-                        if AppState.patient-first-name != "" && AppState.patient-last-name != "" && AppState.patient-candidates.length > 0: candidate-scroll := ScrollView {
-                            height: min(180px, AppState.patient-candidates.length * 88px);
-                            vertical-stretch: 0;
-                            horizontal-scrollbar-policy: always-off;
-                            VerticalLayout {
-                                width: max(0px, candidate-scroll.visible-width - Design.scroll-gutter);
-                                spacing: 8px;
-                                for candidate in AppState.patient-candidates: Rectangle {
-                                    height: 80px;
-                                    border-radius: Design.control-radius;
-                                    border-width: 1px;
-                                    border-color: Design.border;
-                                    background: Design.surface-raised;
-                                    HorizontalLayout {
-                                        padding-left: 10px;
-                                        padding-right: 8px;
-                                        spacing: 8px;
-                                        VerticalLayout {
-                                            min-width: 0px;
-                                            horizontal-stretch: 1;
-                                            alignment: center;
-                                            spacing: 3px;
-                                            HelpText {
-                                                text: candidate.first-name + " " + candidate.last-name;
-                                                color: Design.text;
-                                                font-size: 12px;
-                                                font-weight: 700;
-                                                overflow: elide;
-                                            }
-                                            Text {
-                                                text: "Dossier " + candidate.dossier-number;
-                                                color: Design.text-secondary;
-                                                font-size: 12px;
-                                                overflow: elide;
-                                            }
-                                            if candidate.last-capture != "": Text {
-                                                text: candidate.last-capture;
-                                                color: Design.text-muted;
-                                                font-size: 12px;
-                                                overflow: elide;
-                                            }
-                                        }
-                                        Rectangle {
-                                            width: choose-patient.preferred-width;
-                                            horizontal-stretch: 0;
-                                            background: transparent;
-                                            choose-patient := AppButton {
-                                                y: (parent.height - self.height) / 2;
-                                                width: parent.width;
-                                                height: 32px;
-                                                compact: true;
-                                                text: "Choisir";
-                                                accessibility-label: "Choisir " + candidate.first-name + " " + candidate.last-name + ", dossier " + candidate.dossier-number;
-                                                enabled: !AppState.recording-busy && !AppState.patient-action-pending;
-                                                clicked => { AppState.select-patient(candidate.id); }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        if AppState.patient-first-name != "" && AppState.patient-last-name != "": AppButton {
-                            height: 36px;
-                            text: AppState.patient-candidates.length > 0 ? "Créer une autre personne" : "Créer ce dossier";
-                            enabled: !AppState.recording-busy && !AppState.patient-search-pending && !AppState.patient-action-pending;
-                            clicked => { AppState.create-patient(); }
+                        placeholder-text: "Prénom";
+                        enabled: !AppState.recording-busy && !AppState.patient-action-pending;
+                        edited => {
+                            AppState.patient-id = "";
+                            AppState.patient-dossier-number = "";
+                            AppState.patient-name-edited();
+                            AppState.session-changed();
                         }
                     }
                 }
+                VerticalLayout {
+                    min-width: 0px;
+                    horizontal-stretch: 1;
+                    spacing: 4px;
+                    Text { height: 16px; text: "Nom"; color: Design.text-secondary; font-size: 12px; }
+                    patient-last-name-field := LineEdit {
+                        min-width: 0px;
+                        height: 32px;
+                        vertical-stretch: 0;
+                        text <=> AppState.patient-last-name;
+                        accessible-label: "Nom du patient";
+                        changed has-focus => {
+                            AppState.focused-text-fields = Math.max(0, AppState.focused-text-fields + (self.has-focus ? 1 : -1));
+                        }
+                        placeholder-text: "Nom";
+                        enabled: !AppState.recording-busy && !AppState.patient-action-pending;
+                        edited => {
+                            AppState.patient-id = "";
+                            AppState.patient-dossier-number = "";
+                            AppState.patient-name-edited();
+                            AppState.session-changed();
+                        }
+                    }
+                }
+            }
+            VerticalLayout {
+                height: 52px;
+                vertical-stretch: 0;
+                spacing: 4px;
+                Text { height: 16px; text: "Numéro de dossier"; color: Design.text-secondary; font-size: 12px; }
+                HorizontalLayout {
+                    height: 32px;
+                    vertical-stretch: 0;
+                    spacing: 8px;
+                    dossier-lookup := LineEdit {
+                        min-width: 0px;
+                        horizontal-stretch: 1;
+                        height: 32px;
+                        text <=> root.dossier-lookup-text;
+                        accessible-label: "Numéro de dossier patient";
+                        accessible-description: "Exemple : D-000123. Appuyez sur Entrée pour ouvrir le dossier.";
+                        placeholder-text: "D-000123";
+                        enabled: !AppState.recording-busy && !AppState.patient-action-pending;
+                        changed has-focus => {
+                            AppState.focused-text-fields = Math.max(0, AppState.focused-text-fields + (self.has-focus ? 1 : -1));
+                        }
+                        accepted => {
+                            if root.dossier-lookup-text != "" && !AppState.recording-busy && !AppState.patient-action-pending {
+                                AppState.lookup-patient-by-dossier(root.dossier-lookup-text);
+                            }
+                        }
+                    }
+                    AppButton {
+                        height: 32px;
+                        text: "Ouvrir";
+                        accessibility-label: "Ouvrir le dossier saisi";
+                        enabled: root.dossier-lookup-text != "" && !AppState.recording-busy && !AppState.patient-action-pending;
+                        clicked => { AppState.lookup-patient-by-dossier(root.dossier-lookup-text); }
+                    }
+                }
+            }
+            if AppState.patient-id != "": Rectangle {
+                height: 32px;
+                vertical-stretch: 0;
+                border-radius: Design.control-radius;
+                background: Design.success-surface;
+                HorizontalLayout {
+                    padding-left: 10px;
+                    padding-right: 6px;
+                    spacing: 6px;
+                    Text {
+                        min-width: 0px;
+                        horizontal-stretch: 1;
+                        text: AppState.patient-dossier-number;
+                        color: Design.success;
+                        font-size: 12px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    ActionMenu {
+                        height: 28px; compact: true; quiet: true; text: "Dossier ▾";
+                        enabled: !AppState.recording-busy && !AppState.patient-action-pending;
+                        actions: [
+                            {id: 1, label: "Corriger le nom", enabled: !AppState.storage-busy, checked: false},
+                            {id: 2, label: "Historique des séances", enabled: true, checked: false},
+                            {id: 3, label: "Changer de personne", enabled: true, checked: false},
+                        ];
+                        chosen(id) => {
+                            if id == 1 {
+                                AppState.patient-edit-first = AppState.patient-first-name;
+                                AppState.patient-edit-last = AppState.patient-last-name;
+                                AppState.patient-edit-open = true;
+                            } else if id == 2 { AppState.open-consultation(); }
+                            else {
+                                AppState.patient-id = ""; AppState.patient-dossier-number = "";
+                                AppState.patient-name-edited(); AppState.session-changed();
+                            }
+                        }
+                    }
+                }
+            }
+            if root.identity-needed: VerticalLayout {
+                min-height: 0px;
+                vertical-stretch: 0;
+                spacing: 8px;
+                Text {
+                    text: AppState.patient-action-pending ? "Traitement du dossier en cours…"
+                        : AppState.patient-first-name == "" || AppState.patient-last-name == "" ? "Renseignez le prénom et le nom."
+                        : AppState.patient-search-pending ? "Recherche des dossiers…"
+                            : AppState.patient-candidates.length > 0
+                                ? "Choisissez le dossier de cette personne."
+                                : "Aucun dossier correspondant.";
+                    color: Design.text-secondary;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                    vertical-stretch: 0;
+                }
+                if AppState.patient-first-name != "" && AppState.patient-last-name != "" && AppState.patient-candidates.length > 0: candidate-scroll := ScrollView {
+                    height: min(144px, max(80px, root.height - 366px), AppState.patient-candidates.length * 88px);
+                    vertical-stretch: 0;
+                    horizontal-scrollbar-policy: always-off;
+                    VerticalLayout {
+                        width: max(0px, candidate-scroll.visible-width - Design.scroll-gutter);
+                        spacing: 8px;
+                        for candidate in AppState.patient-candidates: Rectangle {
+                            height: 80px;
+                            border-radius: Design.control-radius;
+                            border-width: 1px;
+                            border-color: Design.border;
+                            background: Design.surface-raised;
+                            HorizontalLayout {
+                                padding-left: 10px;
+                                padding-right: 8px;
+                                spacing: 8px;
+                                VerticalLayout {
+                                    min-width: 0px;
+                                    horizontal-stretch: 1;
+                                    alignment: center;
+                                    spacing: 3px;
+                                    HelpText {
+                                        text: candidate.first-name + " " + candidate.last-name;
+                                        color: Design.text;
+                                        font-size: 12px;
+                                        font-weight: 700;
+                                        overflow: elide;
+                                    }
+                                    Text {
+                                        text: "Dossier " + candidate.dossier-number;
+                                        color: Design.text-secondary;
+                                        font-size: 12px;
+                                        overflow: elide;
+                                    }
+                                    if candidate.last-capture != "": Text {
+                                        text: candidate.last-capture;
+                                        color: Design.text-muted;
+                                        font-size: 12px;
+                                        overflow: elide;
+                                    }
+                                }
+                                Rectangle {
+                                    width: choose-patient.preferred-width;
+                                    horizontal-stretch: 0;
+                                    background: transparent;
+                                    choose-patient := AppButton {
+                                        y: (parent.height - self.height) / 2;
+                                        width: parent.width;
+                                        height: 32px;
+                                        compact: true;
+                                        text: "Choisir";
+                                        accessibility-label: "Choisir " + candidate.first-name + " " + candidate.last-name + ", dossier " + candidate.dossier-number;
+                                        enabled: !AppState.recording-busy && !AppState.patient-action-pending;
+                                        clicked => { AppState.select-patient(candidate.id); }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if AppState.patient-first-name != "" && AppState.patient-last-name != "": AppButton {
+                    height: 32px;
+                    text: AppState.patient-candidates.length > 0 ? "Créer une autre personne" : "Créer ce dossier";
+                    enabled: !AppState.recording-busy && !AppState.patient-search-pending && !AppState.patient-action-pending;
+                    clicked => { AppState.create-patient(); }
+                }
+            }
+        }
+        // The identity form remains fixed; only recent capture cards scroll.
+        recent-scroll := ScrollView {
+            min-height: 0px; vertical-stretch: 1;
+            horizontal-scrollbar-policy: always-off;
+            VerticalLayout {
+                width: max(0px, recent-scroll.visible-width - (AppState.has-last-capture && recent-scroll.visible-height < 104px ? Design.scroll-gutter : 0px));
+                alignment: start;
                 if AppState.has-last-capture && !root.identity-needed: Rectangle {
-                    height: 116px;
+                    height: 104px;
                     vertical-stretch: 0;
                     border-radius: Design.card-radius;
                     background: Design.surface-sunken;
@@ -309,12 +282,12 @@ export component PatientPanel inherits Rectangle {
                         padding: 10px;
                         spacing: 8px;
                         HorizontalLayout {
-                            height: 54px;
+                            height: 44px;
                             vertical-stretch: 0;
                             spacing: 10px;
                             Rectangle {
-                                width: 54px;
-                                height: 54px;
+                                width: 44px;
+                                height: 44px;
                                 border-radius: 5px;
                                 clip: true;
                                 background: Design.preview;
@@ -326,7 +299,7 @@ export component PatientPanel inherits Rectangle {
                                 }
                                 if !AppState.has-last-capture-thumbnail: Text {
                                     text: "Capture";
-                                    color: Design.overlay-text-muted;
+                                    color: Design.preview-text-muted;
                                     font-size: 12px;
                                     width: 100%;
                                     height: 100%;
@@ -361,7 +334,7 @@ export component PatientPanel inherits Rectangle {
                                 height: 32px;
                                 compact: true;
                                 horizontal-stretch: 1;
-                                text: "Voir";
+                                text: "Ouvrir";
                                 accessibility-label: "Voir la dernière capture";
                                 clicked => { AppState.open-capture-file(AppState.last-capture-path, AppState.last-capture-file-version); }
                             }
@@ -379,86 +352,29 @@ export component PatientPanel inherits Rectangle {
             }
         }
 
-        if !root.identity-needed: Rectangle { height: 1px; vertical-stretch: 0; background: Design.border; }
+
         if !root.identity-needed: VerticalLayout {
-            height: 58px;
-            vertical-stretch: 0;
-            spacing: 4px;
-            Text { height: 18px; text: "Œil examiné"; color: Design.text-secondary; font-size: 12px; }
+            height: 70px; vertical-stretch: 0; spacing: 6px;
             HorizontalLayout {
-                height: 36px;
-                vertical-stretch: 0;
-                spacing: 8px;
-                AppButton {
-                    height: 36px;
-                    horizontal-stretch: 1;
-                    min-width: 0px;
-                    preferred-width: 0px;
-                    text: "Gauche";
-                    tooltip: "Examiner l’œil gauche";
-                    checkable: true;
-                    selected: AppState.selected-eye == 1;
-                    accessibility-label: "Examiner l’œil gauche";
+                height: 32px; spacing: 6px;
+                Text { width: 38px; text: "Œil"; color: Design.text-secondary; font-size: 12px; vertical-alignment: center; }
+                for eye in [{id: 1, label: "Gauche"}, {id: 2, label: "Droit"}]: AppButton {
+                    height: 32px; compact: true; min-width: 0px; preferred-width: 0px; horizontal-stretch: 1;
+                    text: eye.label; checkable: true; selected: AppState.selected-eye == eye.id;
+                    accessibility-label: "Examiner l’œil " + eye.label;
                     enabled: !AppState.recording-busy && !AppState.patient-action-pending;
-                    clicked => {
-                        if AppState.selected-eye != 1 {
-                            AppState.selected-eye = 1;
-                            AppState.session-changed();
-                        }
-                    }
-                }
-                AppButton {
-                    height: 36px;
-                    horizontal-stretch: 1;
-                    min-width: 0px;
-                    preferred-width: 0px;
-                    text: "Droit";
-                    tooltip: "Examiner l’œil droit";
-                    checkable: true;
-                    selected: AppState.selected-eye == 2;
-                    accessibility-label: "Examiner l’œil droit";
-                    enabled: !AppState.recording-busy && !AppState.patient-action-pending;
-                    clicked => {
-                        if AppState.selected-eye != 2 {
-                            AppState.selected-eye = 2;
-                            AppState.session-changed();
-                        }
-                    }
+                    clicked => { if AppState.selected-eye != eye.id { AppState.selected-eye = eye.id; AppState.session-changed(); } }
                 }
             }
-        }
-        if !root.identity-needed: VerticalLayout {
-            height: 58px;
-            vertical-stretch: 0;
-            spacing: 4px;
-            Text { height: 18px; text: "Type de capture"; color: Design.text-secondary; font-size: 12px; }
             HorizontalLayout {
-                height: 36px;
-                vertical-stretch: 0;
-                spacing: 8px;
-                AppButton {
-                    height: 36px;
-                    horizontal-stretch: 1;
-                    min-width: 0px;
-                    preferred-width: 0px;
-                    text: "Photo";
-                    checkable: true;
-                    selected: !AppState.is-video-mode;
-                    accessibility-label: "Mode de capture photo";
+                height: 32px; spacing: 6px;
+                Text { width: 38px; text: "Mode"; color: Design.text-secondary; font-size: 12px; vertical-alignment: center; }
+                for mode in [{video: false, label: "Photo"}, {video: true, label: "Vidéo"}]: AppButton {
+                    height: 32px; compact: true; min-width: 0px; preferred-width: 0px; horizontal-stretch: 1;
+                    text: mode.label; checkable: true; selected: AppState.is-video-mode == mode.video;
+                    accessibility-label: "Mode de capture " + mode.label;
                     enabled: !AppState.recording-busy && !AppState.patient-action-pending;
-                    clicked => { AppState.is-video-mode = false; }
-                }
-                AppButton {
-                    height: 36px;
-                    horizontal-stretch: 1;
-                    min-width: 0px;
-                    preferred-width: 0px;
-                    text: "Vidéo";
-                    checkable: true;
-                    selected: AppState.is-video-mode;
-                    accessibility-label: "Mode de capture vidéo";
-                    enabled: !AppState.recording-busy && !AppState.patient-action-pending;
-                    clicked => { AppState.is-video-mode = true; }
+                    clicked => { AppState.is-video-mode = mode.video; }
                 }
             }
         }

@@ -14,8 +14,9 @@ export component AppComboBox inherits Rectangle {
     callback selected(string);
     private property <bool> expanded: false;
     private property <bool> keyboard-focus-visible: keyboard.has-focus && InputMode.keyboard-navigation;
-    private property <length> menu-width: min(max(root.width, 200px), PopupBounds.width - 16px);
-    private property <length> menu-height: min(root.model.length * 36px + 12px, 268px, PopupBounds.height - 16px);
+    out property <length> menu-width: min(max(100px, labels.preferred-width + 28px + (root.menu-scrolls ? Design.scroll-gutter : 0px)), PopupBounds.width - 16px);
+    out property <length> menu-height: min(root.model.length * 32px + 8px, 264px, PopupBounds.height - 16px);
+    private property <bool> menu-scrolls: root.model.length * 32px + 8px > root.menu-height;
     private property <length> menu-left: clamp(root.absolute-position.x, 8px, PopupBounds.width - root.menu-width - 8px);
     private property <length> menu-top: clamp(root.absolute-position.y + root.height + root.menu-height + 12px <= PopupBounds.height
         ? root.absolute-position.y + root.height + 4px : root.absolute-position.y - root.menu-height - 4px,
@@ -78,6 +79,10 @@ export component AppComboBox inherits Rectangle {
             return reject;
         }
     }
+    labels := VerticalLayout {
+        width: 0px; height: 0px; visible: false;
+        for value in root.model: Text { text: value; font-family: Design.font-ui; font-size: 12px; font-weight: Design.control-font-weight; }
+    }
     menu := PopupWindow {
         x: root.menu-left - root.absolute-position.x;
         y: root.menu-top - root.absolute-position.y;
@@ -96,15 +101,16 @@ export component AppComboBox inherits Rectangle {
                 return reject;
             }
             Rectangle {
-                background: Design.surface-raised; border-width: 1px; border-color: Design.border; border-radius: Design.control-radius;
+                background: Design.surface; border-width: 1px; border-color: Design.border; border-radius: Design.control-radius;
                 menu-scroll := ScrollView {
                     horizontal-scrollbar-policy: always-off;
                     options := VerticalLayout {
-                        width: max(0px, menu-scroll.visible-width - Design.scroll-gutter);
-                        padding: 8px; spacing: 4px; alignment: start;
+                        width: max(0px, menu-scroll.visible-width - (root.menu-scrolls ? Design.scroll-gutter : 0px));
+                        padding: 4px; spacing: 0px; alignment: start;
                         for value[index] in root.model: AppButton {
                             height: 32px; horizontal-stretch: 1;
-                            compact: true; left-aligned: true;
+                            compact: true; quiet: true; left-aligned: true;
+                            border-width: 0px;
                             elide-text: true;
                             text: value; checkable: true; selected: index == root.current-index;
                             clicked => { root.select(index); menu.close(); }

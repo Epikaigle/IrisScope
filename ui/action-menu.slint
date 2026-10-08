@@ -1,0 +1,82 @@
+import { AppButton, InputMode } from "./controls.slint";
+import { Design } from "./theme.slint";
+import { PopupBounds } from "./popup-bounds.slint";
+
+export struct MenuAction {
+    id: int,
+    label: string,
+    enabled: bool,
+    checked: bool,
+}
+
+// Secondary commands share a small menu, with the same theme as their anchor.
+export component ActionMenu inherits AppButton {
+    in property <[MenuAction]> actions;
+    callback chosen(int);
+    out property <bool> menu-open: false;
+    out property <bool> interacting: root.menu-open || root.active-interaction;
+    private property <int> highlighted: 0;
+    private property <length> menu-width: min(max(140px, labels.preferred-width + 28px), 340px, PopupBounds.width - 16px);
+    private property <length> menu-height: root.actions.length * 32px + 8px;
+    out property <length> popup-left: clamp(root.absolute-position.x + root.width - root.menu-width, 8px, PopupBounds.width - root.menu-width - 8px);
+    out property <length> popup-top: clamp(root.absolute-position.y + root.height + root.menu-height + 12px <= PopupBounds.height
+        ? root.absolute-position.y + root.height + 4px : root.absolute-position.y - root.menu-height - 4px,
+        8px, PopupBounds.height - root.menu-height - 8px);
+    accessible-expandable: true;
+    accessible-expanded: root.menu-open;
+    accessible-action-expand => { root.open-menu(); }
+    changed has-focus => { if root.has-focus && root.menu-open { root.menu-open = false; } }
+    clicked => { root.open-menu(); }
+
+    public function open-menu() {
+        if !root.enabled || root.actions.length == 0 { return; }
+        root.highlighted = 0;
+        root.menu-open = true;
+        menu.show();
+    }
+    public function close-menu() { root.menu-open = false; menu.close(); }
+    public function choose(index: int) {
+        if index < 0 || index >= root.actions.length || !root.actions[index].enabled { return; }
+        let action-id = root.actions[index].id;
+        root.close-menu();
+        root.chosen(action-id);
+    }
+    labels := VerticalLayout {
+        width: 0px; height: 0px; visible: false;
+        for entry in root.actions: Text { text: (entry.checked ? "✓ " : "   ") + entry.label; font-family: Design.font-ui; font-size: 12px; font-weight: Design.control-font-weight; }
+    }
+    menu := PopupWindow {
+        x: root.popup-left - root.absolute-position.x;
+        y: root.popup-top - root.absolute-position.y;
+        width: root.menu-width; height: root.menu-height;
+        close-policy: close-on-click-outside;
+        forward-focus: menu-focus;
+        menu-focus := FocusScope {
+            key-pressed(event) => {
+                InputMode.keyboard-navigation = true;
+                if event.text == Key.Escape { root.close-menu(); return accept; }
+                if event.text == Key.DownArrow { root.highlighted = mod(root.highlighted + 1, root.actions.length); return accept; }
+                if event.text == Key.UpArrow { root.highlighted = mod(root.highlighted + root.actions.length - 1, root.actions.length); return accept; }
+                if event.text == Key.Return || event.text == " " { root.choose(root.highlighted); return accept; }
+                return reject;
+            }
+            Rectangle {
+                background: Design.surface;
+                border-width: 1px; border-color: Design.border; border-radius: Design.control-radius;
+                entries := VerticalLayout {
+                    padding: 4px; spacing: 0px;
+                    for entry[index] in root.actions: AppButton {
+                        height: 32px; compact: true; quiet: true; left-aligned: true;
+                        border-width: 0px;
+                        text: (entry.checked ? "✓ " : "   ") + entry.label;
+                        accessibility-label: entry.label;
+                        enabled: entry.enabled; checkable: true; selected: entry.checked;
+                        background: entry.checked ? Design.accent-soft
+                            : self.active-interaction || (InputMode.keyboard-navigation && root.highlighted == index) ? Design.control-hover : transparent;
+                        clicked => { root.choose(index); }
+                    }
+                }
+            }
+        }
+    }
+}

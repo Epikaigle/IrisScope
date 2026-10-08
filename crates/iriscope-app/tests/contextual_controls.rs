@@ -124,7 +124,7 @@ fn verify_wheel_and_slider_stay_synchronized(window: &ContextWindow) {
 fn verify_calendar_remains_anchored_and_dismisses(window: &ContextWindow) {
     let state = window.global::<AppState>();
     let before = window.window().take_snapshot().unwrap().as_slice()[0];
-    click(window, 205.0, 378.0);
+    click(window, 235.0, 378.0);
     assert!(state.get_calendar_open());
     assert_eq!(state.get_calendar_target(), 1);
     let left = window.get_upper_left();
@@ -152,7 +152,7 @@ fn verify_calendar_remains_anchored_and_dismisses(window: &ContextWindow) {
         !state.get_calendar_open(),
         "Escape also clears the navigation guard"
     );
-    click(window, 530.0, 598.0);
+    click(window, 565.0, 598.0);
     assert!(state.get_calendar_open());
     assert_eq!(state.get_calendar_target(), 2);
     let left = window.get_lower_left();
@@ -169,7 +169,7 @@ fn verify_calendar_remains_anchored_and_dismisses(window: &ContextWindow) {
         !state.get_calendar_open(),
         "choosing a day closes only the calendar"
     );
-    click(window, 530.0, 598.0);
+    click(window, 565.0, 598.0);
     assert!(state.get_calendar_open());
     click(window, 5.0, 5.0);
     slint::platform::update_timers_and_animations();

@@ -306,8 +306,9 @@ export component MainWindow inherits Window {
                             clicked => { AppState.navigate-to(4); }
                         }
                     }
+                    Rectangle { min-width: 0px; horizontal-stretch: 1; background: transparent; }
                     Rectangle {
-                        width: root.width < 1000px ? 112px : 188px;
+                        width: root.width < 1000px ? 112px : min(250px, max(112px, connection-text.preferred-width + 15px));
                         horizontal-stretch: 0;
                         height: 36px;
                         Rectangle {
@@ -315,7 +316,7 @@ export component MainWindow inherits Window {
                             width: 7px; height: 7px; border-radius: 4px;
                             background: AppState.camera-connected ? Design.success : Design.danger;
                         }
-                        Text {
+                        connection-text := Text {
                             x: 15px; y: 0px;
                             width: parent.width - 15px;
                             height: 100%;

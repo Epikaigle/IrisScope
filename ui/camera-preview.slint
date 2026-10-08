@@ -33,7 +33,7 @@ export component CameraPreview inherits Rectangle {
         width: 100%;
         height: parent.height - root.tools-height;
         clip: true;
-        background: Design.preview;
+        background: AppState.is-streaming ? Design.preview : Design.surface-sunken;
 
         if AppState.is-streaming: Image {
             source: AppState.live-frame;
@@ -196,7 +196,7 @@ export component CameraPreview inherits Rectangle {
             width: parent.width - 32px;
             height: 20px;
             text: AppState.capture-hint;
-            color: Design.overlay-text;
+            color: AppState.is-streaming ? Design.preview-text : Design.text;
             font-size: 12px;
             horizontal-alignment: center;
             vertical-alignment: center;
@@ -337,11 +337,11 @@ export component CameraPreview inherits Rectangle {
             y: Design.inset + (AppState.is-recording || AppState.session-photo-count > 0 || AppState.is-frozen ? 1 : 0) * (Design.control-height + Design.gap-small)
                 + (AppState.iris-fullscreen ? Design.control-height + Design.gap-small : 0px);
             width: min(360px, parent.width - 32px);
-            height: min(parent.height - self.y - 16px, AppState.camera-controls.length == 0 ? 200px : 488px);
+            height: min(parent.height - self.y - 16px, AppState.camera-controls.length == 0 ? 200px : min(488px, 168px + AppState.camera-controls.length * 86px));
             border-radius: Design.card-radius;
             border-width: 1px;
             border-color: Design.border-strong;
-            background: #202a26;
+            background: Design.overlay-panel;
             drop-shadow-blur: 18px;
             drop-shadow-color: #00000055;
 
@@ -497,17 +497,21 @@ export component CameraPreview inherits Rectangle {
                                     enabled: !control.read-only;
                                     clicked => { AppState.set-camera-control-bool(control.key, !control.boolean-value); }
                                 }
-                                if control.kind == 2: menu := AppComboBox {
-                                    height: 32px;
-                                    min-width: 0px;
-                                    vertical-stretch: 0;
-                                    model: control.menu-options;
-                                    private property <int> native-index: control.menu-index;
-                                    changed native-index => { self.current-index = self.native-index; }
-                                    current-index: control.menu-index;
-                                    enabled: !control.read-only && control.menu-options.length > 0;
-                                    accessible-label: control.name;
-                                    selected => { AppState.select-camera-control-menu(control.key, self.current-index); }
+                                if control.kind == 2: HorizontalLayout {
+                                    alignment: start; height: 32px; vertical-stretch: 0;
+                                    menu := AppComboBox {
+                                        height: 32px;
+                                        min-width: 0px;
+                                        vertical-stretch: 0;
+                                        model: control.menu-options;
+                                        private property <int> native-index: control.menu-index;
+                                        changed native-index => { self.current-index = self.native-index; }
+                                        current-index: control.menu-index;
+                                        enabled: !control.read-only && control.menu-options.length > 0;
+                                        accessible-label: control.name;
+                                        selected => { AppState.select-camera-control-menu(control.key, self.current-index); }
+                                    }
+                                    Rectangle { horizontal-stretch: 1; background: transparent; }
                                 }
                             }
                         }
