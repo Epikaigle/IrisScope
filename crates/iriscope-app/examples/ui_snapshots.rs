@@ -17,6 +17,9 @@ use slint::{
 };
 use std::{cell::Cell, path::Path, rc::Rc};
 
+#[path = "../tests/support/software_platform.rs"]
+mod software_platform;
+
 fn fixture_image() -> Image {
     // Optional showcase photos never change the default regression fixtures.
     if let Some(path) = std::env::var_os("IRISCOPE_SNAPSHOT_IMAGE") {
@@ -32,6 +35,9 @@ fn fixture_image() -> Image {
 }
 
 fn main() {
+    if std::env::var_os("IRISCOPE_SNAPSHOT_OFFSCREEN").is_some() {
+        software_platform::init();
+    }
     let output = std::env::args().nth(1).expect("output directory");
     let requested_scale = std::env::var("SLINT_SCALE_FACTOR")
         .unwrap_or_else(|_| "1".to_owned())
@@ -41,6 +47,10 @@ fn main() {
     let scenarios = [
         "camera-idle",
         "camera-active",
+        "camera-after-capture",
+        "camera-narrow-after-capture",
+        "camera-mirror-popup",
+        "camera-click-selection",
         "camera-rotation",
         "camera-angle-popup",
         "camera-presentation-idle",
@@ -107,8 +117,17 @@ fn main() {
         })
         .collect();
     assert!(!scenarios.is_empty(), "no matching snapshot scenarios");
+    let requested_sizes = std::env::var("IRISCOPE_SNAPSHOT_SIZES").ok();
+    let mut captures = 0;
     for theme in [1, 2] {
         for (width, height) in [(800, 600), (1024, 720), (1360, 860), (1920, 1080)] {
+            if requested_sizes.as_ref().is_some_and(|selection| {
+                !selection
+                    .split(',')
+                    .any(|size| size == format!("{width}x{height}"))
+            }) {
+                continue;
+            }
             for scenario in scenarios.iter().copied() {
                 let window = MainWindow::new().unwrap();
                 // Snapshot rendering does not pump the native desktop event loop.
@@ -608,6 +627,18 @@ Observations générales de la séance."
                     state.set_consultation_title("D-000042 · Alice Martin".into());
                     state.set_consultation_notes("Notes privées".into());
                 }
+                if scenario == "camera-narrow-after-capture" {
+                    state.set_camera_panel_width(260);
+                }
+                if matches!(
+                    scenario,
+                    "camera-after-capture" | "camera-narrow-after-capture"
+                ) {
+                    window.set_has_last_capture(true);
+                    window.set_has_last_capture_thumbnail(true);
+                    window.set_last_capture_thumbnail(image.clone());
+                    window.set_last_capture_file_name("Gauche_2026-10-08_14-00-00.png".into());
+                }
                 if scenario == "camera-resized" {
                     state.set_camera_panel_width(420);
                 }
@@ -718,6 +749,43 @@ Observations générales de la séance."
                             button: PointerEventButton::Left,
                         });
                 }
+                if scenario == "camera-mirror-popup" {
+                    let position = LogicalPosition::new(width as f32 - 290.0, height as f32 - 36.0);
+                    for pressed in [true, false] {
+                        window.window().dispatch_event(if pressed {
+                            WindowEvent::PointerPressed {
+                                position,
+                                button: PointerEventButton::Left,
+                            }
+                        } else {
+                            WindowEvent::PointerReleased {
+                                position,
+                                button: PointerEventButton::Left,
+                            }
+                        });
+                    }
+                }
+                if scenario == "camera-click-selection" {
+                    let position = LogicalPosition::new(245.0, height as f32 - 206.0);
+                    for pressed in [true, false] {
+                        window.window().dispatch_event(if pressed {
+                            WindowEvent::PointerPressed {
+                                position,
+                                button: PointerEventButton::Left,
+                            }
+                        } else {
+                            WindowEvent::PointerReleased {
+                                position,
+                                button: PointerEventButton::Left,
+                            }
+                        });
+                    }
+                    assert_eq!(
+                        window.get_selected_eye(),
+                        2,
+                        "the right-eye selector must remain clickable"
+                    );
+                }
                 if scenario == "viewer-angle-popup" {
                     let panel_width = if width < 1000 { 252.0 } else { 300.0 };
                     let position = LogicalPosition::new(width as f32 - panel_width + 52.0, 378.0);
@@ -791,6 +859,7 @@ Observations générales de la séance."
                     image::ColorType::Rgba8,
                 )
                 .unwrap();
+                captures += 1;
                 if scenario == "patient-search" {
                     let position = LogicalPosition::new(250., 382.);
                     window.window().dispatch_event(WindowEvent::PointerPressed {
@@ -813,7 +882,7 @@ Observations générales de la séance."
         }
     }
     println!(
-        "Captured {} interface scenarios across four sizes and two themes.",
+        "Captured {captures} images for {} interface scenarios in two themes.",
         scenarios.len()
     );
 }

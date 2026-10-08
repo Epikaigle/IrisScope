@@ -397,7 +397,7 @@ export component CameraPreview inherits Rectangle {
                     vertical-stretch: 1;
                     horizontal-scrollbar-policy: always-off;
                     VerticalLayout {
-                        width: controls-scroll.visible-width;
+                        width: max(0px, controls-scroll.visible-width - Design.scroll-gutter);
                         spacing: 6px;
                         for control in AppState.camera-controls: Rectangle {
                             height: 80px;
@@ -583,6 +583,9 @@ export component CameraPreview inherits Rectangle {
                     adjusted => { AppState.zoom-pan-x = 0px; AppState.zoom-pan-y = 0px; }
                 }
                 MirrorControl {
+                    left-limit: root.absolute-position.x + 8px;
+                    right-limit: root.absolute-position.x + root.width - 8px;
+                    above-clearance: root.compact-tools ? 52px : 8px;
                     horizontal <=> AppState.mirror-horizontal;
                     vertical <=> AppState.mirror-vertical;
                     enabled: AppState.is-streaming;

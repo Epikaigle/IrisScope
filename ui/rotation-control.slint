@@ -1,5 +1,5 @@
 import { LineEdit } from "std-widgets.slint";
-import { AppButton, AppSlider } from "./controls.slint";
+import { AppButton, AppSlider, InputMode } from "./controls.slint";
 import { Design } from "./theme.slint";
 import { PopupBounds } from "./popup-bounds.slint";
 
@@ -31,7 +31,7 @@ export component RotationControl inherits AppButton {
         close-policy: close-on-click-outside;
         forward-focus: popup-focus;
         popup-focus := FocusScope {
-            KeyBinding { keys: @keys(Escape); activated => { rotation-menu.close(); } }
+            KeyBinding { keys: @keys(Escape); activated => { InputMode.keyboard-navigation = true; rotation-menu.close(); } }
         Rectangle {
             private property <int> current-angle: root.angle;
             changed current-angle => { angle-slider.value = self.current-angle; degree-input.text = self.current-angle + ""; }

@@ -87,6 +87,8 @@ def shared_files() -> list[tuple[str, bytes]]:
         ("documentation/VALIDATION-MATERIELLE.md", (ROOT / "documentation/VALIDATION-MATERIELLE.md").read_bytes()),
         ("documentation/VALIDATION-LINUX-2026-10-06.md", (ROOT / "documentation/VALIDATION-LINUX-2026-10-06.md").read_bytes()),
         ("documentation/VALIDATION-MACOS-2026-10-07.md", (ROOT / "documentation/VALIDATION-MACOS-2026-10-07.md").read_bytes()),
+        ("documentation/VALIDATION-MACOS-2026-10-08.md", (ROOT / "documentation/VALIDATION-MACOS-2026-10-08.md").read_bytes()),
+        ("documentation/VALIDATION-INTERFACE-MACOS-2026-10-08.md", (ROOT / "documentation/VALIDATION-INTERFACE-MACOS-2026-10-08.md").read_bytes()),
         ("documentation/BOUTON-MULTIPLATEFORME.md", (ROOT / "documentation/BOUTON-MULTIPLATEFORME.md").read_bytes()),
         ("documentation/ACCES-USB-MACOS.md", (ROOT / "documentation/ACCES-USB-MACOS.md").read_bytes()),
         ("documentation/ESSAIS-WINDOWS-MACOS.md", (ROOT / "documentation/ESSAIS-WINDOWS-MACOS.md").read_bytes()),

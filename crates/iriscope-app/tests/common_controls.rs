@@ -1,4 +1,6 @@
 //! Exercises the shared controls independently of page geometry and camera hardware.
+#[path = "support/software_platform.rs"]
+mod software_platform;
 
 use slint::{
     ComponentHandle, LogicalPosition, PhysicalSize,
@@ -9,6 +11,7 @@ slint::slint! {
     import { AppButton, AppSlider, HelpState, HelpOverlay } from "../../../ui/controls.slint";
     import { PopupBounds } from "../../../ui/popup-bounds.slint";
     import { RotationControl } from "../../../ui/rotation-control.slint";
+    import { MirrorControl } from "../../../ui/mirror-control.slint";
     import { AppComboBox } from "../../../ui/combo-box.slint";
     import { ThumbnailSizeControl } from "../../../ui/thumbnail-size.slint";
     import { ScrollView } from "std-widgets.slint";
@@ -32,6 +35,13 @@ slint::slint! {
         in-out property <float> slider-maximum: 30;
         out property <bool> tooltip-open: HelpState.text != "";
         out property <bool> first-has-focus: first.has-focus;
+        out property <bool> first-focus-visible: first.keyboard-focus-visible;
+        out property <length> mirror-left: mirror.popup-left;
+        out property <length> mirror-top: mirror.popup-top;
+        out property <bool> mirror-horizontal: mirror.horizontal;
+        out property <bool> mirror-vertical: mirror.vertical;
+        out property <bool> mirror-has-focus: mirror.has-focus;
+        out property <bool> mirror-focus-visible: mirror.keyboard-focus-visible;
         in-out property <int> rotation-angle <=> rotation.angle;
         in-out property <int> rotation-changes: 0;
         in-out property <int> menu-index <=> menu.current-index;
@@ -74,6 +84,7 @@ slint::slint! {
         ThumbnailSizeControl { x: 20px; y: 290px; width: 300px; height: 36px; }
         rotation := RotationControl { x: 20px; y: 350px; width: 150px; height: 32px; adjusted => {root.rotation-changes += 1;} }
         bottom-rotation := RotationControl { x: 280px; y: 560px; width: 60px; height: 32px; short-label: true; }
+        mirror := MirrorControl { x: 240px; y: 510px; width: 90px; height: 32px; above-clearance: 52px; }
         HelpOverlay { available-width: root.width; available-height: root.height; }
     }
 }
@@ -111,7 +122,15 @@ fn buttons_cancel_activation_on_repetition_focus_loss_and_disable(window: &Contr
         "pointer interaction sets keyboard focus"
     );
     assert_eq!(window.get_first_clicks(), 1);
+    assert!(
+        !window.get_first_focus_visible(),
+        "mouse clicks do not add a keyboard outline"
+    );
     press(window, " ".into());
+    assert!(
+        window.get_first_focus_visible(),
+        "keyboard activation retains a visible focus indicator"
+    );
     for _ in 0..3 {
         window
             .window()
@@ -325,6 +344,7 @@ fn menus_scroll_the_page_without_changing_the_selected_value(window: &ControlWin
 
 #[test]
 fn shared_controls_handle_keyboard_repetition_focus_cancellation_and_camera_steps() {
+    software_platform::init();
     let window = ControlWindow::new().expect("create shared controls");
     window.window().set_size(PhysicalSize::new(360, 600));
     menus_scroll_the_page_without_changing_the_selected_value(&window);
@@ -332,6 +352,42 @@ fn shared_controls_handle_keyboard_repetition_focus_cancellation_and_camera_step
     sliders_respect_native_steps_bounds_and_disable(&window);
     tooltip_preserves_clicks_and_keyboard_focus(&window);
     precise_rotation_updates_during_drag_and_uses_one_degree_steps(&window);
+    mirror_menu_stays_above_the_toolbar_and_both_choices_work(&window);
+}
+
+fn mirror_menu_stays_above_the_toolbar_and_both_choices_work(window: &ControlWindow) {
+    window.show().unwrap();
+    click(window, 285.0, 526.0);
+    let _ = window.window().take_snapshot().unwrap();
+    let left = window.get_mirror_left();
+    let top = window.get_mirror_top();
+    assert!(left >= 8.0 && left + 180.0 <= 352.0);
+    assert!(
+        top >= 8.0 && top + 84.0 < 510.0 - 48.0,
+        "the mirror menu must clear both toolbar rows"
+    );
+    click(window, left + 60.0, top + 24.0);
+    assert!(window.get_mirror_horizontal());
+    click(window, left + 60.0, top + 60.0);
+    assert!(window.get_mirror_vertical());
+    click(window, 350.0, 100.0);
+    assert!(
+        window.get_mirror_has_focus(),
+        "closing a popup restores its anchor focus"
+    );
+    assert!(
+        !window.get_mirror_focus_visible(),
+        "a mouse-dismissed popup adds no keyboard outline"
+    );
+    press(window, Key::Tab.into());
+    release(window, Key::Tab.into());
+    assert!(
+        window.get_first_focus_visible(),
+        "Tab restores the keyboard focus indicator"
+    );
+    press(window, Key::Escape.into());
+    release(window, Key::Escape.into());
+    window.hide().unwrap();
 }
 
 fn precise_rotation_updates_during_drag_and_uses_one_degree_steps(window: &ControlWindow) {

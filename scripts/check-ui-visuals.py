@@ -16,6 +16,7 @@ BASELINES = ROOT / "tests" / "visual-baselines"
 SCENES = {
     "camera-angle-popup", "viewer-angle-popup", "references-loaded", "references-empty",
     "camera-rotation", "camera-presentation-idle", "viewer-rotation", "library-menu", "dossier-empty",
+    "camera-after-capture", "camera-narrow-after-capture", "camera-mirror-popup", "camera-click-selection",
     "camera-active", "camera-controls", "patient-search", "settings",
     "camera-fullscreen", "camera-fullscreen-photo", "camera-fullscreen-blocked",
     "camera-fullscreen-hidden", "viewer-video", "viewer-comparison", "patient-edit", "library-query", "capture-notice",

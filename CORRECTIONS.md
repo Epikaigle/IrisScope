@@ -425,3 +425,22 @@ Validation 0.4.0 : 223 tests de workspace réussis, deux essais caméra ignorés
 - Les guides expliquent où retrouver les artefacts d’une validation complète et comment en générer de nouveaux. Les essais physiques Windows et macOS restent nécessaires.
 
 Le workflow est contrôlé avec actionlint ; onze scénarios vérifient la sélection des contrôles pour les changements de code, site, documentation, un lancement manuel et un tag de version.
+
+## 8 octobre 2026 — interface sur Mac et petites fenêtres
+
+- Les sélecteurs œil/photo/vidéo et la capture restent visibles dans la sidebar
+  après une photo ; la miniature et le formulaire défilent dans leur propre zone.
+- Une marge protège les actions à droite des barres de défilement, également
+  dans les réglages caméra, la bibliothèque et les outils photo.
+- Les clics à la souris ne dessinent plus de second cadre autour des boutons.
+  Le focus au clavier reste visible, y compris après fermeture d'un menu.
+- Les boutons sélectionnés conservent leurs tons chauds au survol et à l'appui.
+  Les deux sélecteurs de chaque groupe ont une largeur identique.
+- Le menu Miroir se place au-dessus de toute la barre de commandes ; les menus
+  déroulants sont limités aux bords de la fenêtre. Le style des widgets est
+  identique sur les trois systèmes.
+
+Les tests des contrôles et calendriers passent sur le Mac. La matrice locale
+couvre 976 rendus synthétiques à deux tailles, deux thèmes et quatre échelles,
+avec 848 références visuelles. Les détails et limites figurent dans le
+[rapport d'interface Mac](documentation/VALIDATION-INTERFACE-MACOS-2026-10-08.md).

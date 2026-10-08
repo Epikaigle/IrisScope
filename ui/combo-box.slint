@@ -1,6 +1,7 @@
 import { ScrollView } from "std-widgets.slint";
 import { Design } from "./theme.slint";
-import { AppButton } from "./controls.slint";
+import { AppButton, InputMode } from "./controls.slint";
+import { PopupBounds } from "./popup-bounds.slint";
 
 // Closed menus pass wheel events to their enclosing scroll view. Opening and
 // selecting remain explicit pointer, keyboard or accessibility actions.
@@ -12,6 +13,13 @@ export component AppComboBox inherits Rectangle {
     out property <bool> has-focus: keyboard.has-focus || root.expanded;
     callback selected(string);
     private property <bool> expanded: false;
+    private property <bool> keyboard-focus-visible: keyboard.has-focus && InputMode.keyboard-navigation;
+    private property <length> menu-width: min(max(root.width, 200px), PopupBounds.width - 16px);
+    private property <length> menu-height: min(root.model.length * 36px + 12px, 268px, PopupBounds.height - 16px);
+    private property <length> menu-left: clamp(root.absolute-position.x, 8px, PopupBounds.width - root.menu-width - 8px);
+    private property <length> menu-top: clamp(root.absolute-position.y + root.height + root.menu-height + 12px <= PopupBounds.height
+        ? root.absolute-position.y + root.height + 4px : root.absolute-position.y - root.menu-height - 4px,
+        8px, PopupBounds.height - root.menu-height - 8px);
     min-width: 60px;
     min-height: 32px;
     preferred-width: closed-label.preferred-width + 50px;
@@ -19,8 +27,8 @@ export component AppComboBox inherits Rectangle {
     vertical-stretch: 0;
     background: !root.enabled ? Design.control-disabled : pointer.has-hover ? Design.control-hover : Design.control;
     border-radius: Design.control-radius;
-    border-width: root.has-focus ? 2px : 1px;
-    border-color: root.has-focus ? Design.focus : Design.border;
+    border-width: root.keyboard-focus-visible ? 2px : 1px;
+    border-color: root.keyboard-focus-visible ? Design.focus : root.expanded ? Design.accent : Design.border;
     forward-focus: keyboard;
     accessible-role: combobox;
     accessible-enabled: root.enabled;
@@ -55,7 +63,7 @@ export component AppComboBox inherits Rectangle {
     }
     pointer := TouchArea {
         enabled: root.enabled;
-        clicked => { keyboard.focus(); root.open(); }
+        clicked => { InputMode.keyboard-navigation = false; keyboard.focus(); root.open(); }
         scroll-event(event) => { reject }
     }
     keyboard := FocusScope {
@@ -63,6 +71,7 @@ export component AppComboBox inherits Rectangle {
         enabled: root.enabled;
         changed has-focus => { if self.has-focus { root.expanded = false; } }
         key-pressed(event) => {
+            InputMode.keyboard-navigation = true;
             if event.text == Key.Return || event.text == " " { root.open(); return accept; }
             if event.text == Key.DownArrow { root.select(root.current-index + 1); return accept; }
             if event.text == Key.UpArrow { root.select(root.current-index - 1); return accept; }
@@ -70,14 +79,16 @@ export component AppComboBox inherits Rectangle {
         }
     }
     menu := PopupWindow {
-        x: 0px; y: root.height + 4px;
-        width: max(root.width, options.preferred-width);
-        height: min(root.model.length * 36px + 12px, 268px);
+        x: root.menu-left - root.absolute-position.x;
+        y: root.menu-top - root.absolute-position.y;
+        width: root.menu-width;
+        height: root.menu-height;
         close-policy: close-on-click-outside;
         forward-focus: popup-focus;
         popup-focus := FocusScope {
             focus-changed-event => { root.expanded = self.has-focus; }
             key-pressed(event) => {
+                InputMode.keyboard-navigation = true;
                 if event.text == Key.Escape { menu.close(); return accept; }
                 if event.text == Key.Return { root.select(root.current-index); menu.close(); return accept; }
                 if event.text == Key.DownArrow { root.select(root.current-index + 1); return accept; }
@@ -86,13 +97,15 @@ export component AppComboBox inherits Rectangle {
             }
             Rectangle {
                 background: Design.surface-raised; border-width: 1px; border-color: Design.border; border-radius: Design.control-radius;
-                ScrollView {
+                menu-scroll := ScrollView {
                     horizontal-scrollbar-policy: always-off;
                     options := VerticalLayout {
+                        width: max(0px, menu-scroll.visible-width - Design.scroll-gutter);
                         padding: 8px; spacing: 4px; alignment: start;
                         for value[index] in root.model: AppButton {
                             height: 32px; horizontal-stretch: 1;
                             compact: true; left-aligned: true;
+                            elide-text: true;
                             text: value; checkable: true; selected: index == root.current-index;
                             clicked => { root.select(index); menu.close(); }
                         }

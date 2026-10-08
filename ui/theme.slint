@@ -24,6 +24,8 @@ export global Design {
     out property <color> accent-pressed: is-dark ? #bfa06d : #533a17;
     out property <color> accent-ink: is-dark ? #242016 : #ffffff;
     out property <color> accent-soft: is-dark ? #403a2b : #f1e8d7;
+    out property <color> accent-soft-hover: is-dark ? #514631 : #eadeca;
+    out property <color> accent-soft-pressed: is-dark ? #342d21 : #dfcdae;
     out property <color> focus: is-dark ? #efdab4 : #8a5b1c;
     out property <color> success: is-dark ? #a9d2ab : #276e43;
     out property <color> warning: is-dark ? #e2be78 : #8b5e10;
@@ -49,6 +51,8 @@ export global Design {
     out property <color> overlay-control-hover: #3a4940;
     out property <color> overlay-control-pressed: #1f2a24;
     out property <color> overlay-selected: #403a2b;
+    out property <color> overlay-selected-hover: #514631;
+    out property <color> overlay-selected-pressed: #342d21;
     out property <color> overlay-accent: #ead0a1;
     out property <color> overlay-success: #a9d2ab;
     out property <color> overlay-danger: #f2bbb5;
@@ -68,4 +72,7 @@ export global Design {
     out property <length> control-radius: 7px;
     out property <length> card-radius: 10px;
     out property <length> panel-radius: 12px;
+    // Cupertino scrollbars grow to 20px on hover and overlay their viewport.
+    // Keep a stable gutter so they never intercept the rightmost form controls.
+    out property <length> scroll-gutter: 24px;
 }

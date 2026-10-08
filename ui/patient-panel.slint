@@ -38,14 +38,13 @@ export component PatientPanel inherits Rectangle {
             }
         }
 
-        // Only the form scrolls; the capture action remains within reach.
+        // Only identity and recent media scroll. Eye, mode and capture stay visible.
         patient-scroll := ScrollView {
             min-height: 0px;
             vertical-stretch: 1;
             horizontal-scrollbar-policy: always-off;
             VerticalLayout {
-                width: patient-scroll.visible-width;
-                padding-right: 4px;
+                width: max(0px, patient-scroll.visible-width - Design.scroll-gutter);
                 spacing: 16px;
                 alignment: start;
                 VerticalLayout {
@@ -69,7 +68,9 @@ export component PatientPanel inherits Rectangle {
                             height: 32px;
                             compact: true;
                             quiet: true;
-                            text: "Terminer session";
+                            text: "Terminer";
+                            tooltip: "Terminer la session et vider le formulaire";
+                            accessibility-label: "Terminer la session";
                             enabled: root.session-active && !AppState.recording-busy && !AppState.patient-action-pending;
                             clicked => {
                                 root.dossier-lookup-text = "";
@@ -233,7 +234,7 @@ export component PatientPanel inherits Rectangle {
                             vertical-stretch: 0;
                             horizontal-scrollbar-policy: always-off;
                             VerticalLayout {
-                                width: candidate-scroll.visible-width;
+                                width: max(0px, candidate-scroll.visible-width - Design.scroll-gutter);
                                 spacing: 8px;
                                 for candidate in AppState.patient-candidates: Rectangle {
                                     height: 80px;
@@ -294,81 +295,6 @@ export component PatientPanel inherits Rectangle {
                             text: AppState.patient-candidates.length > 0 ? "Créer une autre personne" : "Créer ce dossier";
                             enabled: !AppState.recording-busy && !AppState.patient-search-pending && !AppState.patient-action-pending;
                             clicked => { AppState.create-patient(); }
-                        }
-                    }
-                }
-                if !root.identity-needed: Rectangle { height: 1px; vertical-stretch: 0; background: Design.border; }
-                if !root.identity-needed: VerticalLayout {
-                    height: 58px;
-                    vertical-stretch: 0;
-                    spacing: 4px;
-                    Text { height: 18px; text: "Œil examiné"; color: Design.text-secondary; font-size: 12px; }
-                    HorizontalLayout {
-                        height: 36px;
-                        vertical-stretch: 0;
-                        spacing: 8px;
-                        AppButton {
-                            height: 36px;
-                            horizontal-stretch: 1;
-                            text: "Gauche";
-                            tooltip: "Examiner l’œil gauche";
-                            checkable: true;
-                            selected: AppState.selected-eye == 1;
-                            accessibility-label: "Examiner l’œil gauche";
-                            enabled: !AppState.recording-busy && !AppState.patient-action-pending;
-                            clicked => {
-                                if AppState.selected-eye != 1 {
-                                    AppState.selected-eye = 1;
-                                    AppState.session-changed();
-                                }
-                            }
-                        }
-                        AppButton {
-                            height: 36px;
-                            horizontal-stretch: 1;
-                            text: "Droit";
-                            tooltip: "Examiner l’œil droit";
-                            checkable: true;
-                            selected: AppState.selected-eye == 2;
-                            accessibility-label: "Examiner l’œil droit";
-                            enabled: !AppState.recording-busy && !AppState.patient-action-pending;
-                            clicked => {
-                                if AppState.selected-eye != 2 {
-                                    AppState.selected-eye = 2;
-                                    AppState.session-changed();
-                                }
-                            }
-                        }
-                    }
-                }
-                if !root.identity-needed: VerticalLayout {
-                    height: 58px;
-                    vertical-stretch: 0;
-                    spacing: 4px;
-                    Text { height: 18px; text: "Type de capture"; color: Design.text-secondary; font-size: 12px; }
-                    HorizontalLayout {
-                        height: 36px;
-                        vertical-stretch: 0;
-                        spacing: 8px;
-                        AppButton {
-                            height: 36px;
-                            horizontal-stretch: 1;
-                            text: "Photo";
-                            checkable: true;
-                            selected: !AppState.is-video-mode;
-                            accessibility-label: "Mode de capture photo";
-                            enabled: !AppState.recording-busy && !AppState.patient-action-pending;
-                            clicked => { AppState.is-video-mode = false; }
-                        }
-                        AppButton {
-                            height: 36px;
-                            horizontal-stretch: 1;
-                            text: "Vidéo";
-                            checkable: true;
-                            selected: AppState.is-video-mode;
-                            accessibility-label: "Mode de capture vidéo";
-                            enabled: !AppState.recording-busy && !AppState.patient-action-pending;
-                            clicked => { AppState.is-video-mode = true; }
                         }
                     }
                 }
@@ -453,6 +379,89 @@ export component PatientPanel inherits Rectangle {
             }
         }
 
+        if !root.identity-needed: Rectangle { height: 1px; vertical-stretch: 0; background: Design.border; }
+        if !root.identity-needed: VerticalLayout {
+            height: 58px;
+            vertical-stretch: 0;
+            spacing: 4px;
+            Text { height: 18px; text: "Œil examiné"; color: Design.text-secondary; font-size: 12px; }
+            HorizontalLayout {
+                height: 36px;
+                vertical-stretch: 0;
+                spacing: 8px;
+                AppButton {
+                    height: 36px;
+                    horizontal-stretch: 1;
+                    min-width: 0px;
+                    preferred-width: 0px;
+                    text: "Gauche";
+                    tooltip: "Examiner l’œil gauche";
+                    checkable: true;
+                    selected: AppState.selected-eye == 1;
+                    accessibility-label: "Examiner l’œil gauche";
+                    enabled: !AppState.recording-busy && !AppState.patient-action-pending;
+                    clicked => {
+                        if AppState.selected-eye != 1 {
+                            AppState.selected-eye = 1;
+                            AppState.session-changed();
+                        }
+                    }
+                }
+                AppButton {
+                    height: 36px;
+                    horizontal-stretch: 1;
+                    min-width: 0px;
+                    preferred-width: 0px;
+                    text: "Droit";
+                    tooltip: "Examiner l’œil droit";
+                    checkable: true;
+                    selected: AppState.selected-eye == 2;
+                    accessibility-label: "Examiner l’œil droit";
+                    enabled: !AppState.recording-busy && !AppState.patient-action-pending;
+                    clicked => {
+                        if AppState.selected-eye != 2 {
+                            AppState.selected-eye = 2;
+                            AppState.session-changed();
+                        }
+                    }
+                }
+            }
+        }
+        if !root.identity-needed: VerticalLayout {
+            height: 58px;
+            vertical-stretch: 0;
+            spacing: 4px;
+            Text { height: 18px; text: "Type de capture"; color: Design.text-secondary; font-size: 12px; }
+            HorizontalLayout {
+                height: 36px;
+                vertical-stretch: 0;
+                spacing: 8px;
+                AppButton {
+                    height: 36px;
+                    horizontal-stretch: 1;
+                    min-width: 0px;
+                    preferred-width: 0px;
+                    text: "Photo";
+                    checkable: true;
+                    selected: !AppState.is-video-mode;
+                    accessibility-label: "Mode de capture photo";
+                    enabled: !AppState.recording-busy && !AppState.patient-action-pending;
+                    clicked => { AppState.is-video-mode = false; }
+                }
+                AppButton {
+                    height: 36px;
+                    horizontal-stretch: 1;
+                    min-width: 0px;
+                    preferred-width: 0px;
+                    text: "Vidéo";
+                    checkable: true;
+                    selected: AppState.is-video-mode;
+                    accessibility-label: "Mode de capture vidéo";
+                    enabled: !AppState.recording-busy && !AppState.patient-action-pending;
+                    clicked => { AppState.is-video-mode = true; }
+                }
+            }
+        }
         VerticalLayout {
             vertical-stretch: 0;
             spacing: 8px;

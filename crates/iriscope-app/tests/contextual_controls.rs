@@ -1,4 +1,6 @@
 //! Contextual popups and wheel/slider zoom through real Slint event dispatch.
+#[path = "support/software_platform.rs"]
+mod software_platform;
 use slint::{
     ComponentHandle, LogicalPosition, LogicalSize, ModelRc, Rgb8Pixel, SharedPixelBuffer, VecModel,
     platform::{Key, PointerEventButton, WindowEvent},
@@ -179,6 +181,7 @@ fn verify_calendar_remains_anchored_and_dismisses(window: &ContextWindow) {
 
 #[test]
 fn wheel_zoom_and_contextual_calendars_follow_their_controls() {
+    software_platform::init();
     let window = ContextWindow::new().unwrap();
     window.window().set_size(LogicalSize::new(600.0, 760.0));
     let mut photo = SharedPixelBuffer::<Rgb8Pixel>::new(320, 240);

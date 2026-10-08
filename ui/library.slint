@@ -8,8 +8,8 @@ import { AppState } from "./state.slint";
 
 export component LibraryPage inherits Rectangle {
     private property <length> content-inset: root.width < 900px ? 16px : 24px;
-    private property <length> card-width: min(AppState.effective-thumbnail-width * 1px + 28px, root.width - 2 * root.content-inset - 16px);
-    private property <int> library-grid-columns: clamp(floor((root.width - 2 * root.content-inset - 4px) / (root.card-width + 12px)), 1, 32);
+    private property <length> card-width: min(AppState.effective-thumbnail-width * 1px + 28px, root.width - 2 * root.content-inset - Design.scroll-gutter - 16px);
+    private property <int> library-grid-columns: clamp(floor((root.width - 2 * root.content-inset - Design.scroll-gutter - 4px) / (root.card-width + 12px)), 1, 32);
     private property <length> thumbnail-height: round((root.card-width - 28px) / 1px * 0.75) * 1px;
     private property <length> list-image-width: clamp(AppState.effective-thumbnail-width * 0.4px, 48px, 192px);
     private property <length> list-image-height: round(root.list-image-width / 1px * 0.75) * 1px;
@@ -437,7 +437,7 @@ export component LibraryPage inherits Rectangle {
                 private property <int> first-visible: max(0, floor(-self.viewport-y / root.list-row-height));
                 private property <int> end-visible: min(AppState.library-items.length, self.first-visible + ceil(self.visible-height / root.list-row-height) + 1);
                 for item in AppState.library-items: Rectangle {
-                    width: library-list.visible-width;
+                    width: max(0px, library-list.visible-width - Design.scroll-gutter);
                     height: root.list-row-height;
 
                     Rectangle {

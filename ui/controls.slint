@@ -1,5 +1,11 @@
 import { Design } from "./theme.slint";
 
+// Preserve the input method across popup focus transfers. A mouse-opened menu
+// must not produce a keyboard outline when it returns focus to its button.
+export global InputMode {
+    in-out property <bool> keyboard-navigation: true;
+}
+
 // A passive overlay keeps tooltips from capturing clicks or keyboard focus.
 export global HelpState {
     in-out property <string> text: "";
@@ -85,8 +91,9 @@ export component AppButton inherits Rectangle {
     in property <bool> checkable: false;
     in property <bool> enabled: true;
     out property <bool> has-focus: keyboard-focus.has-focus;
+    out property <bool> keyboard-focus-visible: root.has-focus && InputMode.keyboard-navigation;
     out property <bool> active-interaction: root.visible && (pointer.has-hover || root.pressed
-        || (root.has-focus && !root.pointer-focus));
+        || root.keyboard-focus-visible);
     callback clicked;
 
     private property <color> foreground: root.overlay ? Design.overlay-text : Design.text;
@@ -96,8 +103,9 @@ export component AppButton inherits Rectangle {
     private property <color> button-hover: root.overlay ? Design.overlay-control-hover : Design.control-hover;
     private property <color> button-pressed: root.overlay ? Design.overlay-control-pressed : Design.control-pressed;
     private property <color> selection-surface: root.overlay ? Design.overlay-selected : Design.accent-soft;
+    private property <color> selection-hover: root.overlay ? Design.overlay-selected-hover : Design.accent-soft-hover;
+    private property <color> selection-pressed: root.overlay ? Design.overlay-selected-pressed : Design.accent-soft-pressed;
     private property <bool> pressed: pointer.pressed || keyboard-focus.activation-key != "";
-    private property <bool> pointer-focus: false;
     private property <length> horizontal-padding: root.overlay ? Design.overlay-padding : root.compact ? 10px : 14px;
     min-width: root.collapsed ? 0px : max(root.compact ? Design.compact-control-height : Design.control-height,
         root.elide-text ? 0px : button-text.preferred-width + 2 * root.horizontal-padding);
@@ -117,7 +125,7 @@ export component AppButton inherits Rectangle {
         : root.button-border;
     background: !root.enabled ? (root.overlay ? Design.overlay-control : Design.control-disabled)
         : root.danger ? (root.overlay ? (root.pressed ? Design.overlay-danger-pressed : pointer.has-hover ? Design.overlay-danger-hover : Design.overlay-danger-surface) : Design.error-surface)
-        : root.selected ? (root.pressed ? root.button-pressed : pointer.has-hover ? root.button-hover : root.selection-surface)
+        : root.selected ? (root.pressed ? root.selection-pressed : pointer.has-hover ? root.selection-hover : root.selection-surface)
         : root.primary ? (root.overlay ? (root.pressed ? root.button-pressed : pointer.has-hover ? root.button-hover : root.button-surface)
             : root.pressed ? Design.accent-pressed : pointer.has-hover ? Design.accent-hover : Design.accent)
         : root.quiet ? (root.pressed ? root.button-pressed : pointer.has-hover ? root.button-hover : transparent)
@@ -157,7 +165,7 @@ export component AppButton inherits Rectangle {
         mouse-cursor: root.enabled ? MouseCursor.pointer : MouseCursor.default;
         pointer-event(event) => {
             if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
-                root.pointer-focus = true;
+                InputMode.keyboard-navigation = false;
                 keyboard-focus.focus();
             }
         }
@@ -171,11 +179,11 @@ export component AppButton inherits Rectangle {
         enabled: root.enabled;
         private property <string> activation-key: "";
         changed has-focus => {
-            if !self.has-focus { self.activation-key = ""; root.pointer-focus = false; }
+            if !self.has-focus { self.activation-key = ""; }
         }
         changed enabled => { if !self.enabled { self.activation-key = ""; } }
         key-pressed(event) => {
-            root.pointer-focus = false;
+            InputMode.keyboard-navigation = true;
             if root.enabled && (event.text == " " || event.text == "\n") {
                 if !event.repeat && self.activation-key == "" { self.activation-key = event.text; }
                 return accept;
@@ -194,7 +202,9 @@ export component AppButton inherits Rectangle {
         }
     }
 
-    if root.has-focus && root.enabled: Rectangle {
+    // Mouse selection already has its border and hover state. Keep the extra
+    // focus indicator for keyboard navigation only.
+    if root.keyboard-focus-visible && root.enabled: Rectangle {
         x: 2px;
         y: 2px;
         width: max(0px, parent.width - 4px);
@@ -323,8 +333,8 @@ export component AppSlider inherits Rectangle {
         width: 18px;
         height: 18px;
         border-radius: 9px;
-        border-width: root.has-focus ? 3px : 2px;
-        border-color: root.has-focus ? (root.overlay ? Design.overlay-text : Design.focus) : (root.overlay ? Design.overlay-control : Design.surface);
+        border-width: root.has-focus && InputMode.keyboard-navigation ? 3px : 2px;
+        border-color: root.has-focus && InputMode.keyboard-navigation ? (root.overlay ? Design.overlay-text : Design.focus) : (root.overlay ? Design.overlay-control : Design.surface);
         background: root.enabled ? (root.overlay ? Design.overlay-accent : pointer.pressed ? Design.accent-hover : Design.accent) : Design.text-muted;
     }
 
@@ -333,6 +343,7 @@ export component AppSlider inherits Rectangle {
         pointer-event(event) => {
             if event.button != PointerEventButton.left { return; }
             if event.kind == PointerEventKind.down {
+                InputMode.keyboard-navigation = false;
                 keyboard-focus.focus();
                 root.set-value(root.minimum + root.range * clamp((self.mouse-x - rail.x) / rail.width, 0, 1));
             }
@@ -350,6 +361,7 @@ export component AppSlider inherits Rectangle {
         width: 0px;
         enabled: root.enabled;
         key-pressed(event) => {
+            InputMode.keyboard-navigation = true;
             if !root.enabled { return reject; }
             if event.text == Key.RightArrow {
                 root.set-value(root.value + root.effective-step);

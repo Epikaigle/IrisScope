@@ -12,9 +12,11 @@ export component ViewerTools inherits Rectangle {
     border-radius: Design.card-radius;
     border-width: 1px; border-color: Design.overlay-border;
     clip: true;
-    ScrollView {
+    tools-scroll := ScrollView {
         width: 100%; height: 100%;
+        horizontal-scrollbar-policy: always-off;
         VerticalLayout { alignment: start;
+            width: max(0px, tools-scroll.visible-width - Design.scroll-gutter);
             padding: 12px; spacing: 10px;
             HorizontalLayout { height: 32px; vertical-stretch: 0; spacing: 4px;
             Text { min-width: 0px; horizontal-stretch: 1; overflow: elide; text: AppState.viewer-panel == 1 ? "Observations" : AppState.viewer-panel == 2 ? "Références visuelles" : AppState.viewer-panel == 3 ? "Affichage" : AppState.viewer-panel == 4 ? "Comparer les prises" : "Exporter une copie"; font-size: 16px; font-weight: 600; color: Design.overlay-text; }
@@ -73,7 +75,7 @@ export component ViewerTools inherits Rectangle {
                     // The panel can be created while its ScrollView computes
                     // layout. Its zoom bounds need a width independent of that
                     // layout's preferred size to avoid a circular evaluation.
-                    width: max(0px, root.width - 26px);
+                    width: max(0px, root.width - 26px - Design.scroll-gutter);
                     horizontal-stretch: 0;
                     source: AppState.iridology-reference-mode == 0 ? AppState.iridology-map-image : AppState.iridology-symbols-image;
                     loaded: AppState.iridology-reference-mode == 0 ? AppState.has-iridology-map : AppState.has-iridology-symbols;
@@ -119,9 +121,11 @@ export component ViewerTools inherits Rectangle {
                 if AppState.viewer-dossier == "": Text { text: "Associez la photo à un dossier pour rechercher les prises du même œil."; color: Design.overlay-text-secondary; font-size: 12px; wrap: word-wrap; }
                 Text { text: "Même dossier, même œil · jusqu’à 200 photos récentes. Les dates permettent de retrouver des prises plus anciennes."; color: Design.overlay-text-secondary; font-size: 12px; wrap: word-wrap; }
                 if AppState.comparison-loading: Text { text: "Chargement des photos…"; color: Design.overlay-text-secondary; }
-                if AppState.comparison-candidates.length > 0: ScrollView {
+                if AppState.comparison-candidates.length > 0: comparison-scroll := ScrollView {
                     height: min(240px, AppState.comparison-candidates.length * 64px);
+                    horizontal-scrollbar-policy: always-off;
                     VerticalLayout { alignment: start; spacing: 4px;
+                        width: max(0px, comparison-scroll.visible-width - Design.scroll-gutter);
                         for candidate in AppState.comparison-candidates: HorizontalLayout { height: 60px; spacing: 6px; Image { width: 64px; height: 56px; source: candidate.thumbnail; image-fit: contain; } AppButton { min-width: 0px; horizontal-stretch: 1; height: 56px; elide-text: true; wrap-text: true; compact: true; overlay: true; text: candidate.caption; enabled: !AppState.comparison-loading; clicked => { AppState.select-comparison-photo(candidate.path, candidate.version, candidate.caption); } } }
                     }
                 }

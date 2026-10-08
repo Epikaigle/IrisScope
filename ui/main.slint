@@ -1,7 +1,7 @@
 import { ConsultationOverlay } from "./consultation-overlay.slint";
 import { PopupBounds } from "./popup-bounds.slint";
 import { PatientEdit } from "./patient-edit.slint";
-import { AppButton, HelpOverlay, HelpState } from "./controls.slint";
+import { AppButton, HelpOverlay, HelpState, InputMode } from "./controls.slint";
 import { Design } from "./theme.slint";
 import { Palette } from "std-widgets.slint";
 import { AppState } from "./state.slint";
@@ -188,6 +188,7 @@ export component MainWindow inherits Window {
         init => { self.focus(); }
 
         key-pressed(event) => {
+            InputMode.keyboard-navigation = true;
             // Reveal the controls before Slint finds the next tab-focus target.
             if AppState.iris-fullscreen && event.text == Key.Tab {
                 AppState.show-viewport-controls();
