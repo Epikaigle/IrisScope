@@ -412,7 +412,7 @@ Le backend AVFoundation sait :
 - participer au suivi connexion / déconnexion ;
 - alimenter le même pipeline photo, vidéo et bibliothèque que les autres plateformes.
 
-Le paquet Mac inclut un lanceur natif et un composant USB pour le DE400 `21cd:603b`. Après l'authentification administrateur gérée par macOS, le composant reçoit ensemble vidéo, bouton et réglages ; l'interface et les captures restent sous le compte utilisateur. Sur le Mac Intel testé, les huit contrôles réels sont disponibles : luminosité, contraste, saturation, teinte, netteté, gamma, balance des blancs et anti-scintillement. La lecture, la modification, la réinitialisation et la réouverture de la caméra sont validées. Ce chemin utilise le mode 1280 × 1024 YUYV à 8 fps, sans limite de durée de session. Fermer l'application rend le périphérique au pilote Apple ; aucun service permanent n'est installé.
+Le paquet Mac (macOS 15+) inclut un lanceur natif et un service USB pour le DE400 `21cd:603b`. Au premier lancement, une authentification administrateur installe le service protégé ; les ouvertures suivantes réutilisent cette autorisation. Le lecteur reçoit ensemble vidéo, bouton et réglages ; l'interface et les captures restent sous le compte utilisateur. Sur le Mac Intel testé, les huit contrôles réels sont disponibles : luminosité, contraste, saturation, teinte, netteté, gamma, balance des blancs et anti-scintillement. Ce chemin utilise le mode 1280 × 1024 YUYV à 8 fps, sans limite de durée de session. Fermer l'application rend le périphérique au pilote Apple ; le service installé ne prend pas la caméra pendant l'inactivité. Les mises à jour des composants USB peuvent demander une nouvelle authentification. Voir [Autorisation USB conservée](documentation/ACCES-USB-MACOS.md).
 
 Le chemin AVFoundation reste accessible avec `--avfoundation`. Ses contrôles se limitent aux modes automatiques de balance des blancs et d'exposition annoncés par le pilote. L'ouverture USB ordinaire du bouton est refusée sur le Mac testé (`0xe00002c5`) ; une permission caméra seule ne résout pas ce conflit. Les autres modèles de Mac et Windows nécessitent toujours un essai matériel. Voir [Bouton multiplateforme](documentation/BOUTON-MULTIPLATEFORME.md).
 
@@ -536,7 +536,7 @@ Sur macOS, construire aussi le lanceur et le composant USB avant l'empaquetage :
 python3 scripts/macos/build-usb-experiment.py
 ```
 
-CMake et les outils de compilation Apple sont nécessaires uniquement sur le poste de développement. L'utilisateur du paquet n'a besoin ni de Rust, ni de Python, ni de CMake. Le lancement ordinaire demande une authentification administrateur pour l'accès USB, une fois par ouverture d'Iriscope ; il n'y a pas de renouvellement à heure fixe pendant la session.
+CMake et les outils de compilation Apple sont nécessaires uniquement sur le poste de développement. L'utilisateur du paquet n'a besoin ni de Rust, ni de Python, ni de CMake. Le premier lancement demande une authentification administrateur pour installer l'accès USB ; les ouvertures suivantes ne la redemandent pas tant que l'installation et les signatures correspondent. Il n'y a pas de renouvellement à heure fixe pendant la session. Pour modifier uniquement le service ou le lanceur sur le poste de développement, `python3 scripts/macos/build-usb-experiment.py --service-only` réutilise le lecteur USB et évite toute compilation Rust.
 
 Le script crée dans `dist/` une archive et son empreinte SHA-256. Vérifier
 l'empreinte depuis ce dossier avec `cd dist && sha256sum -c *.sha256` sur Linux.

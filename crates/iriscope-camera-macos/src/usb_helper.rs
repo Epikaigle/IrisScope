@@ -1,5 +1,5 @@
 //! Connection to the DE400 video, button and controls helper authorized by the Mac launcher.
-//! The GUI stays unprivileged; no driver or persistent service is installed.
+//! The GUI stays unprivileged; this backend does not install drivers or services.
 
 use crate::{button_protocol::ButtonProtocol, events::EventMailbox, usb_controls};
 use iriscope_core::{

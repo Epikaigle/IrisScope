@@ -88,6 +88,7 @@ def shared_files() -> list[tuple[str, bytes]]:
         ("documentation/VALIDATION-LINUX-2026-10-06.md", (ROOT / "documentation/VALIDATION-LINUX-2026-10-06.md").read_bytes()),
         ("documentation/VALIDATION-MACOS-2026-10-07.md", (ROOT / "documentation/VALIDATION-MACOS-2026-10-07.md").read_bytes()),
         ("documentation/BOUTON-MULTIPLATEFORME.md", (ROOT / "documentation/BOUTON-MULTIPLATEFORME.md").read_bytes()),
+        ("documentation/ACCES-USB-MACOS.md", (ROOT / "documentation/ACCES-USB-MACOS.md").read_bytes()),
         ("documentation/ESSAIS-WINDOWS-MACOS.md", (ROOT / "documentation/ESSAIS-WINDOWS-MACOS.md").read_bytes()),
         ("documentation/VALIDATION-INTERFACE-2026-10-06.md", (ROOT / "documentation/VALIDATION-INTERFACE-2026-10-06.md").read_bytes()),
         ("scripts/diagnose-de400-button.py", (ROOT / "scripts/diagnose-de400-button.py").read_bytes()),
@@ -176,7 +177,11 @@ def stage_macos(stage: Path, binary: Path, version: str, ffmpeg: Path | None = N
     (contents / "Info.plist").write_bytes(plistlib.dumps(info))
     shutil.copy2(binary, macos / ("IrisScopeGui" if usb_dir else "IrisScope"))
     if usb_dir:
-        for source, name in [("iriscope-launcher", "IrisScope"), ("de400-usb-helper", "de400-usb-helper")]:
+        # The USB libraries/reader target macOS 15; the XPC API alone needs 13.
+        info["LSMinimumSystemVersion"] = "15.0"
+        (contents / "Info.plist").write_bytes(plistlib.dumps(info))
+        for source, name in [("iriscope-launcher", "IrisScope"), ("de400-usb-helper", "de400-usb-helper"),
+                             ("iriscope-usb-service", "iriscope-usb-service")]:
             shutil.copy2(usb_dir / source, macos / name)
         if not (usb_dir / "redistribution/NOTICE.txt").is_file():
             raise SystemExit("USB redistribution sources/licenses missing; rebuild scripts/macos/build-usb-experiment.py")
@@ -186,7 +191,7 @@ def stage_macos(stage: Path, binary: Path, version: str, ffmpeg: Path | None = N
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(data)
     details = json.loads(release_info(binary, "macos", version, ffmpeg))
-    details["de400_usb"] = "bundled-video-button-controls" if usb_dir else "avfoundation-only"
+    details["de400_usb"] = "installed-on-demand-video-button-controls" if usb_dir else "avfoundation-only"
     (resources / "release-info.json").write_text(json.dumps(details, indent=2) + "\n", encoding="utf-8")
     if ffmpeg:
         shutil.copy2(ffmpeg, macos / "ffmpeg")

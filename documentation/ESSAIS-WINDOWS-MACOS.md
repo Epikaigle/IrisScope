@@ -34,7 +34,7 @@ Les nouveaux paquets Mac sont signés localement ad hoc, gratuitement, sans nota
 depuis Applications. Si le développeur n’est pas reconnu, ouvrir **Réglages
 Système → Confidentialité et sécurité**, puis **Ouvrir quand même** pour cette
 application : c’est la [procédure décrite par Apple](https://support.apple.com/fr-fr/102445).
-Le nouveau paquet DE400 demande l'authentification administrateur macOS pour lancer son composant USB. Le mot de passe n'est pas enregistré par Iriscope. La fermeture de l'application arrête le composant et rend l'appareil au pilote Apple. Le chemin `--avfoundation` peut demander l'autorisation caméra classique. Les captures et
+Le nouveau paquet DE400 nécessite macOS 15+ et demande l'authentification administrateur au premier lancement pour installer son service USB. Les ouvertures suivantes conservent cette autorisation ; une mise à jour du lanceur ou des composants USB peut la redemander. Le mot de passe n'est pas enregistré par Iriscope. La fermeture de l'application arrête la réception et rend l'appareil au pilote Apple. Voir [Autorisation USB conservée](ACCES-USB-MACOS.md). Le chemin `--avfoundation` peut demander l'autorisation caméra classique. Les captures et
 paramètres restent hors du programme.
 
 ## Essai normal

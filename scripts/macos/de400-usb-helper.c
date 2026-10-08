@@ -1,5 +1,5 @@
 /* USB video/button/controls helper for the DE400, authorized by the Mac launcher.
- * Never installed as a persistent service.
+ * Each reader follows one launcher session; the installed broker starts it on demand.
  * The GUI stays under the user's account. Only this camera is captured by libusb.
  * Stream IPC: LE u32 kind + LE u32 size, then payload, with a START request.
  * Separate UID-authenticated control IPC handles get/set and shutdown.
@@ -110,6 +110,9 @@ int main(int argc, char **argv) {
     pid_t parent_pid = (pid_t)pid_value;
     if (persistent && (proc_pidinfo(parent_pid, PROC_PIDTBSDINFO, 0, &parent, sizeof(parent)) != sizeof(parent) ||
         parent.pbi_uid != (uid_t)uid_value)) return 2;
+    /* libusb also uses internal pipes. A disconnected stream during teardown
+     * must produce an I/O error, never SIGPIPE termination before USB cleanup. */
+    signal(SIGPIPE, SIG_IGN);
     signal(SIGINT, stop); signal(SIGTERM, stop); umask(0077);
     snprintf(control_path, sizeof(control_path), "%s.control", argv[1]);
     int server = create_server(argv[1], (uid_t)uid_value);

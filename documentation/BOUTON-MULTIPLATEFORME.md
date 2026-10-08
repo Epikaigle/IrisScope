@@ -49,8 +49,12 @@ et restauration pendant la vidéo. La caméra peut être rouverte au cours d'une
 même session autorisée. La session n'a pas de limite de durée arbitraire.
 
 Le paquet reçoit une signature locale ad hoc gratuite, sans notarisation.
-L'authentification administrateur reste nécessaire lors de l'ouverture normale
-d'Iriscope. Aucun mot de passe, pilote ou service permanent n'est installé.
+Sur macOS 15+, le premier lancement installe un service USB protégé après
+authentification administrateur. L'autorisation est ensuite conservée : le
+lecteur démarre à la demande et s'arrête à la fermeture de l'application.
+Aucun mot de passe ni pilote Apple modifié n'est installé. Une mise à jour du
+lanceur ou des composants USB peut nécessiter une nouvelle autorisation.
+Voir [Autorisation USB conservée](ACCES-USB-MACOS.md).
 Le lancement, les sondes et le retour vérifié à AVFoundation sont détaillés dans
 le [rapport Mac](VALIDATION-MACOS-2026-10-07.md). Les autres versions de macOS et
 les Mac Apple Silicon ne sont pas validés physiquement.
