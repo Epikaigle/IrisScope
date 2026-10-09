@@ -151,7 +151,8 @@ fn main() {
                 window.set_settings_theme(theme);
                 window
                     .global::<AppState>()
-                    .set_app_version(env!("CARGO_PKG_VERSION").into());
+                    // Keep version text stable in visual fixtures between releases.
+                    .set_app_version("0.4.1".into());
                 window.set_status_text("DE400 non détecté".into());
                 window.set_settings_capture_directory("/workspace/Images/IrisScope".into());
                 window

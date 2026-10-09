@@ -565,7 +565,7 @@ l’empreinte du binaire fourni et la disponibilité du moteur MP4. Les scripts
 refusent un binaire dont `--version` ne correspond pas au manifeste. Les paramètres
 et captures restent hors des fichiers installés ; les identifiants des installateurs
 restent constants lors d’une mise à jour. Les instructions sont dans
-[documentation/RELEASE-0.4.1.md](documentation/RELEASE-0.4.1.md).
+[documentation/RELEASE-0.4.2.md](documentation/RELEASE-0.4.2.md).
 
 Pour inclure un FFmpeg autonome construit pour le système cible, les deux scripts
 acceptent `--ffmpeg chemin/ffmpeg` et `--ffmpeg-license chemin/COPYING.txt`.

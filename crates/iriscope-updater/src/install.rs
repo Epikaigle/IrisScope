@@ -121,6 +121,8 @@ impl ReadyUpdate {
         Command::new(helper)
             .arg("--apply")
             .arg(plan_path)
+            // The old GUI may have been started inside the folder we replace.
+            .current_dir(self.directory.path())
             .stdin(Stdio::null())
             .stdout(log.try_clone()?)
             .stderr(log)
@@ -283,6 +285,13 @@ fn launch_command(target: &InstallTarget, receipt: &Path) -> Command {
     if target.kind != "macos-bundle" {
         command.env("IRISCOPE_UPDATE_RECEIPT", receipt);
     }
+    // Renaming and deleting the previous application invalidates an inherited
+    // working directory inside it. Use the new folder (or its stable parent).
+    command.current_dir(if target.kind == "linux-portable" {
+        &target.path
+    } else {
+        target.path.parent().unwrap_or(Path::new("/"))
+    });
     command
 }
 
@@ -471,6 +480,35 @@ pub fn apply_plan(plan_path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn portable_restart_uses_the_replacement_folder_after_backup_cleanup() {
+        let directory = tempfile::tempdir().unwrap();
+        let target = InstallTarget {
+            path: directory.path().join("IrisScope"),
+            kind: "linux-portable".into(),
+        };
+        let source = directory.path().join("new");
+        std::fs::create_dir(&target.path).unwrap();
+        std::fs::create_dir(&source).unwrap();
+        let binary = source.join("iriscope-app");
+        std::fs::write(&binary, "#!/bin/sh\npwd -P\n").unwrap();
+        executable_permissions(&binary).unwrap();
+        let receipt = directory.path().join("started");
+        let check_directory = || -> Result<()> {
+            let output = launch_command(&target, &receipt).output()?;
+            assert!(output.status.success());
+            assert_eq!(
+                String::from_utf8(output.stdout)?.trim(),
+                target.path.canonicalize()?.to_str().unwrap()
+            );
+            Ok(())
+        };
+        let backup = replace_and_launch(&source, &target.path, check_directory).unwrap();
+        std::fs::remove_dir_all(backup).unwrap();
+        check_directory().unwrap();
+    }
+
     #[test]
     fn restart_cannot_reuse_the_previous_usb_session() {
         let target = InstallTarget {

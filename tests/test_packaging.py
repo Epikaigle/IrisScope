@@ -58,6 +58,10 @@ class PackageTests(unittest.TestCase):
             self.assertEqual(package.getmember("IrisScope/iriscope-app").mode, 0o755)
             self.assertEqual(package.getmember("IrisScope/iriscope-updater").mode, 0o755)
             self.assertEqual(package.extractfile("IrisScope/VERSION.txt").read().decode().strip(), self.version)
+            self.assertEqual(
+                package.extractfile(f"IrisScope/documentation/RELEASE-{self.version}.md").read(),
+                (ROOT / f"documentation/RELEASE-{self.version}.md").read_bytes(),
+            )
             info = json.load(package.extractfile("IrisScope/release-info.json"))
             self.assertEqual(info["input_executable_sha256"], hashlib.sha256(self.binary.read_bytes()).hexdigest())
             self.assertEqual(info["mp4_export"], "bundled-ffmpeg")

@@ -80,10 +80,6 @@ def shared_files() -> list[tuple[str, bytes]]:
         ("README.md", (ROOT / "README.md").read_bytes()),
         ("CORRECTIONS.md", (ROOT / "CORRECTIONS.md").read_bytes()),
         ("VERSION.txt", (release_version() + "\n").encode("ascii")),
-        ("documentation/RELEASE-0.2.0.md", (ROOT / "documentation/RELEASE-0.2.0.md").read_bytes()),
-        ("documentation/RELEASE-0.3.0.md", (ROOT / "documentation/RELEASE-0.3.0.md").read_bytes()),
-        ("documentation/RELEASE-0.4.0.md", (ROOT / "documentation/RELEASE-0.4.0.md").read_bytes()),
-        ("documentation/RELEASE-0.4.1.md", (ROOT / "documentation/RELEASE-0.4.1.md").read_bytes()),
         ("documentation/MISES-A-JOUR.md", (ROOT / "documentation/MISES-A-JOUR.md").read_bytes()),
         ("documentation/VISIONNEUSE.md", (ROOT / "documentation/VISIONNEUSE.md").read_bytes()),
         ("documentation/VALIDATION-MATERIELLE.md", (ROOT / "documentation/VALIDATION-MATERIELLE.md").read_bytes()),
@@ -102,6 +98,9 @@ def shared_files() -> list[tuple[str, bytes]]:
         ("helpers/linux/README.md", (ROOT / "helpers/linux/README.md").read_bytes()),
         ("helpers/linux/de400_button_bridge.py", (ROOT / "helpers/linux/de400_button_bridge.py").read_bytes()),
         ("helpers/linux/iriscope-button.service", (ROOT / "helpers/linux/iriscope-button.service").read_bytes()),
+    ] + [
+        (f"documentation/{path.name}", path.read_bytes())
+        for path in sorted((ROOT / "documentation").glob("RELEASE-*.md"))
     ] + [
         (f"licenses/{path.name}", path.read_bytes()) for path in FONT_LICENSES
     ]
