@@ -41,6 +41,46 @@ fn only_the_trusted_signature_can_authorize_update_metadata() {
 }
 
 #[test]
+fn release_notes_preserve_signed_bytes_and_reject_malformed_metadata() {
+    let key = SigningKey::from_bytes(&[37; 32]);
+    let bytes = serde_json::to_vec(&manifest()).unwrap();
+    let signature = key.sign(&bytes).to_bytes();
+    let encode = |bytes: &[u8]| {
+        use std::fmt::Write as _;
+        bytes.iter().fold(String::new(), |mut text, byte| {
+            write!(text, "{byte:02x}").unwrap();
+            text
+        })
+    };
+    let envelope = serde_json::json!({"manifest": encode(&bytes), "signature": encode(&signature)});
+    let block = format!("<!-- iriscope-update-v1\n{envelope}\n-->");
+    let body = format!("Notes de version\n\n{block}\n");
+    let (decoded, decoded_signature) = release_metadata(&body).unwrap().unwrap();
+    assert_eq!(decoded, bytes);
+    assert_eq!(decoded_signature, signature);
+    assert!(
+        verify_manifest_with_key(
+            &decoded,
+            &decoded_signature,
+            &key.verifying_key().to_bytes()
+        )
+        .is_ok()
+    );
+    assert!(
+        release_metadata("Ancienne release sans métadonnées")
+            .unwrap()
+            .is_none()
+    );
+    assert!(release_metadata(&format!("{block}\n{block}")).is_err());
+    for encoded in ["f", "gg", "é", &"aa".repeat(65_537)] {
+        let bad = serde_json::json!({"manifest": encoded, "signature": encode(&signature)});
+        assert!(release_metadata(&format!("<!-- iriscope-update-v1\n{bad}\n-->")).is_err());
+    }
+    assert!(release_metadata("<!-- iriscope-update-v1\n{}").is_err());
+    assert!(verify_manifest_with_key(&decoded, &[0; 64], &key.verifying_key().to_bytes()).is_err());
+}
+
+#[test]
 fn signed_manifest_rejects_unsafe_names_and_unbounded_downloads() {
     let key = SigningKey::from_bytes(&[37; 32]);
     for name in ["../archive.tar.gz", "/archive", "archive?token=x", "..", ""] {

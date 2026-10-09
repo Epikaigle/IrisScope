@@ -14,6 +14,8 @@ use std::sync::Arc;
 /// Returns interface initialization or event-loop errors.
 pub fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     let main_window = MainWindow::new()?;
+    #[cfg(target_os = "linux")]
+    slint::set_xdg_app_id("iriscope")?;
     let (settings, settings_path) = settings_controller::load_settings(&main_window)?;
     let mut runtime = AppRuntime::new(settings, settings_path);
     runtime.start_workers(&main_window);

@@ -17,14 +17,22 @@ approuver le nouveau paquet USB. Elle n’est pas demandée à chaque ouverture.
 Le paquet reste signé ad hoc gratuitement, sans notarisation Apple.
 
 Sur Linux, le `.deb` utilise `pkexec` et `dpkg` pour installer après la demande
-d’authentification du système. L’archive portable peut se mettre à jour sans
-administrateur dans un dossier personnel ; elle nécessite `curl`. Windows
-et Apple Silicon ne sont pas proposés par cette première release.
+d’authentification du système. Depuis la 0.4.3, seuls deux installateurs sont
+publiés : le `.dmg` Mac Intel et le `.deb` Linux amd64. Windows et Apple Silicon
+seront ajoutés après leurs essais. L’archive portable Linux n’est plus distribuée.
+
+Les installations 0.4.1 et 0.4.2 doivent passer une fois manuellement à la 0.4.3.
+Ensuite, les mises à jour intégrées utilisent les mêmes installateurs que les
+téléchargements manuels. Les métadonnées signées sont incluses dans un commentaire
+non affiché des notes de release, accessible par l’API GitHub : il n’y a plus de
+fichiers de manifeste, de signature ou de contrôle à télécharger séparément.
 
 Le manifeste et chaque fichier sont vérifiés avec la clé publique intégrée.
 Une signature invalide, un fichier tronqué, un autre système, un autre tag ou
 une version plus ancienne ne peut pas devenir une mise à jour. Les archives
-refusent les liens et les chemins sortant du dossier temporaire.
+refusent les liens et les chemins sortant du dossier temporaire. Le disque Mac
+est monté en lecture seule ; seul le paquet `IrisScope.app` est copié puis vérifié,
+et le disque est éjecté avant de remplacer l’application.
 
 ## Publier une nouvelle version
 

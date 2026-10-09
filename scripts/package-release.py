@@ -179,6 +179,7 @@ def stage_macos(stage: Path, binary: Path, version: str, ffmpeg: Path | None = N
         "CFBundleIdentifier": "app.iriscope.IrisScope",
         "CFBundleInfoDictionaryVersion": "6.0",
         "CFBundleName": "Iriscope",
+        "CFBundleIconFile": "IrisScope.icns",
         "CFBundlePackageType": "APPL",
         "CFBundleShortVersionString": version,
         "CFBundleVersion": version,
@@ -187,6 +188,7 @@ def stage_macos(stage: Path, binary: Path, version: str, ffmpeg: Path | None = N
         "NSHighResolutionCapable": True,
     }
     (contents / "Info.plist").write_bytes(plistlib.dumps(info))
+    shutil.copy2(ROOT / "assets/icons/IrisScope.icns", resources / "IrisScope.icns")
     shutil.copy2(binary, macos / ("IrisScopeGui" if usb_dir else "IrisScope"))
     shutil.copy2(updater_binary(), macos / "iriscope-updater")
     if usb_dir:

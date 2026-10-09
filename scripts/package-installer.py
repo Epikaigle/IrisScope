@@ -16,7 +16,6 @@ import tempfile
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
-SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128"><rect width="128" height="128" rx="28" fill="#174e64"/><path d="M12 64Q64 12 116 64Q64 116 12 64" fill="#fff"/><circle cx="64" cy="64" r="26" fill="#4bb3c4"/><circle cx="64" cy="64" r="13" fill="#103747"/></svg>'
 
 
 def run(*args):
@@ -65,10 +64,10 @@ def install_linux(stage, binary, output, version, ffmpeg=None, license_path=None
         executables.add(encoder)
     applications = stage / "usr/share/applications"
     applications.mkdir(parents=True)
-    (applications / "iriscope.desktop").write_text("[Desktop Entry]\nType=Application\nName=Iriscope\nComment=Capture et consultation des images de l’iris\nExec=iriscope\nIcon=iriscope\nTerminal=false\nCategories=Graphics;Photography;\n", encoding="utf-8")
+    (applications / "iriscope.desktop").write_text("[Desktop Entry]\nType=Application\nName=Iriscope\nComment=Capture et consultation des images de l’iris\nExec=iriscope\nIcon=iriscope\nStartupWMClass=iriscope\nTerminal=false\nCategories=Graphics;Photography;\n", encoding="utf-8")
     icons = stage / "usr/share/icons/hicolor/scalable/apps"
     icons.mkdir(parents=True)
-    (icons / "iriscope.svg").write_text(SVG, encoding="utf-8")
+    shutil.copy2(ROOT / "assets/icons/iriscope.svg", icons / "iriscope.svg")
     docs = stage / "usr/share/doc/iriscope"
     docs.mkdir(parents=True)
     stage_resources(docs, binary, "linux", version, ffmpeg, license_path)
@@ -141,7 +140,7 @@ def install_macos(stage, binary, output, version, identity, notary_profile, ffmp
         run("spctl", "--assess", "--type", "execute", "--verbose", bundle)
         notarize_zip.unlink()
     (stage / "Applications").symlink_to("/Applications")
-    artifact = output / f"IrisScope-{version}-macOS.dmg"
+    artifact = output / f"IrisScope-{version}-macOS-Intel.dmg"
     run("hdiutil", "create", "-volname", "IrisScope", "-srcfolder", stage, "-ov", "-format", "UDZO", artifact)
     return artifact
 

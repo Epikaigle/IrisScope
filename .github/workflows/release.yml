@@ -62,20 +62,10 @@ jobs:
       - name: Préparer le composant USB Mac
         if: matrix.platform == 'macos' && !inputs.reuse_macos
         run: python scripts/macos/build-usb-experiment.py
-      - name: Préparer l’archive et l’installateur
+      - name: Préparer l’installateur
         if: matrix.platform != 'macos' || !inputs.reuse_macos
         run: |
-          python scripts/package-release.py
           python scripts/package-installer.py
-      - name: Préparer la mise à jour Mac
-        if: matrix.platform == 'macos' && !inputs.reuse_macos
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          import subprocess
-          archive = next(Path('dist').glob('IrisScope-*-macos-x86_64.zip'))
-          subprocess.run(['python', 'scripts/package-update.py', '--macos-archive', str(archive)], check=True)
-          PY
       - uses: actions/upload-artifact@v7
         with:
           name: iriscope-${{ matrix.platform }}

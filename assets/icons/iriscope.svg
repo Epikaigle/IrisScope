@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Iris mark from ui/main.slint, using the light-theme brass and white. -->
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="#ffffff"/>
+  <circle cx="512" cy="512" r="294" fill="#805e28"/>
+  <circle cx="512" cy="512" r="246" fill="#ffffff"/>
+  <circle cx="464" cy="464" r="96" fill="#805e28"/>
+</svg>

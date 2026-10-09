@@ -2636,7 +2636,7 @@ dependencies = [
 
 [[package]]
 name = "iriscope-app"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "chrono",
  "image",
@@ -2655,7 +2655,7 @@ dependencies = [
 
 [[package]]
 name = "iriscope-camera-linux"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "iriscope-core",
  "v4l",
@@ -2663,7 +2663,7 @@ dependencies = [
 
 [[package]]
 name = "iriscope-camera-macos"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "av-foundation",
  "core-foundation 0.10.1",
@@ -2678,7 +2678,7 @@ dependencies = [
 
 [[package]]
 name = "iriscope-camera-windows"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "iriscope-core",
  "windows 0.62.2",
@@ -2686,7 +2686,7 @@ dependencies = [
 
 [[package]]
 name = "iriscope-core"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "chrono",
  "fs2",
@@ -2699,7 +2699,7 @@ dependencies = [
 
 [[package]]
 name = "iriscope-imaging"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "image",
  "zune-jpeg",
@@ -2707,7 +2707,7 @@ dependencies = [
 
 [[package]]
 name = "iriscope-updater"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "ed25519-dalek",
  "flate2",

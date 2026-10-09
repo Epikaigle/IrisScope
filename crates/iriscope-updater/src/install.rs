@@ -231,6 +231,69 @@ pub(crate) fn unpack(archive: &Path, destination: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
+fn unpack_disk_image(archive: &Path, destination: &Path) -> Result<()> {
+    let mount = tempfile::Builder::new().prefix("iriscope-dmg-").tempdir()?;
+    let attached = Command::new("/usr/bin/hdiutil")
+        .args([
+            "attach",
+            "-readonly",
+            "-nobrowse",
+            "-noautoopen",
+            "-mountpoint",
+        ])
+        .arg(mount.path())
+        .arg(archive)
+        .output()?;
+    if !attached.status.success() {
+        return Err("Impossible d’ouvrir le disque d’installation macOS".into());
+    }
+    let result = (|| -> Result<()> {
+        let source = mount.path().join("IrisScope.app");
+        // Only copy the bundle, never the DMG's Applications shortcut.
+        let mut pending = vec![source.clone()];
+        let mut count = 0;
+        let mut total = 0_u64;
+        while let Some(path) = pending.pop() {
+            count += 1;
+            let metadata = std::fs::symlink_metadata(&path)?;
+            if count > 20_000 || (!metadata.is_file() && !metadata.is_dir()) {
+                return Err("Paquet macOS invalide".into());
+            }
+            total = total
+                .checked_add(metadata.len())
+                .ok_or("Paquet trop volumineux")?;
+            if total > 1024 * 1024 * 1024 {
+                return Err("Paquet trop volumineux".into());
+            }
+            if metadata.is_dir() {
+                for entry in std::fs::read_dir(path)? {
+                    pending.push(entry?.path());
+                }
+            }
+        }
+        if !Command::new("/usr/bin/ditto")
+            .arg("--noqtn")
+            .arg(source)
+            .arg(destination.join("IrisScope.app"))
+            .status()?
+            .success()
+        {
+            return Err("Impossible de préparer l’application macOS".into());
+        }
+        Ok(())
+    })();
+    let detached = Command::new("/usr/bin/hdiutil")
+        .args(["detach", "-force"])
+        .arg(mount.path())
+        .output()?;
+    result?;
+    if !detached.status.success() {
+        return Err("Impossible de fermer le disque d’installation macOS".into());
+    }
+    Ok(())
+}
+
 fn replace_and_launch(
     source: &Path,
     target: &Path,
@@ -411,7 +474,18 @@ pub fn apply_plan(plan_path: &Path) -> Result<()> {
             .ok_or("Dossier d’installation introuvable")?;
         let stage = tempfile::Builder::new().prefix(".iriscope-install-").tempdir_in(parent)
             .map_err(|_| "IrisScope ne peut pas écrire dans son dossier. Déplacez l’application dans un dossier personnel puis réessayez.")?;
-        unpack(&archive, stage.path())?;
+        if plan.target.kind == "macos-bundle"
+            && archive
+                .extension()
+                .is_some_and(|extension| extension == "dmg")
+        {
+            #[cfg(target_os = "macos")]
+            unpack_disk_image(&archive, stage.path())?;
+            #[cfg(not(target_os = "macos"))]
+            return Err("Disque macOS incompatible avec ce système".into());
+        } else {
+            unpack(&archive, stage.path())?;
+        }
         let name = if plan.target.kind == "macos-bundle" {
             "IrisScope.app".to_owned()
         } else if plan.target.kind == "linux-portable" {

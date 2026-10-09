@@ -141,6 +141,45 @@ struct GitHubRelease {
     tag_name: String,
     draft: bool,
     prerelease: bool,
+    #[serde(default)]
+    body: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct SignedReleaseMetadata {
+    manifest: String,
+    signature: String,
+}
+
+fn release_metadata(body: &str) -> Result<Option<(Vec<u8>, Vec<u8>)>> {
+    const MARKER: &str = "<!-- iriscope-update-v1\n";
+    let Some((_, remaining)) = body.split_once(MARKER) else {
+        return Ok(None);
+    };
+    if remaining.contains(MARKER) {
+        return Err("Métadonnées de mise à jour dupliquées".into());
+    }
+    let (envelope, _) = remaining
+        .split_once("\n-->")
+        .ok_or("Métadonnées incomplètes")?;
+    if envelope.len() > 132 * 1024 {
+        return Err("Métadonnées trop volumineuses".into());
+    }
+    let metadata: SignedReleaseMetadata = serde_json::from_str(envelope)?;
+    if metadata.manifest.len() > 128 * 1024
+        || metadata.manifest.len() % 2 != 0
+        || !metadata.manifest.is_ascii()
+    {
+        return Err("Manifeste encodé invalide".into());
+    }
+    let bytes = metadata
+        .manifest
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| -> Result<u8> { Ok(u8::from_str_radix(std::str::from_utf8(pair)?, 16)?) })
+        .collect::<Result<Vec<_>>>()?;
+    let signature = hex_bytes::<64>(&metadata.signature)?.to_vec();
+    Ok(Some((bytes, signature)))
 }
 
 /// Queries only stable releases; an offline check does not affect capture.
@@ -174,7 +213,12 @@ pub fn check(
         .strip_prefix('v')
         .ok_or("Tag de version invalide")?;
     // Do not construct a URL from arbitrary remote text.
-    semver::Version::parse(version)?;
+    if semver::Version::parse(version)? <= semver::Version::parse(current)? {
+        return Ok(None);
+    }
+    if let Some((bytes, signature)) = release_metadata(release.body.as_deref().unwrap_or(""))? {
+        return select_release(bytes, signature, current, &release.tag_name, target);
+    }
     let manifest_path = directory.path().join("manifest.json");
     let signature_path = directory.path().join("manifest.sig");
     for (name, path, maximum) in [

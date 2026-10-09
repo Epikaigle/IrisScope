@@ -565,7 +565,7 @@ l’empreinte du binaire fourni et la disponibilité du moteur MP4. Les scripts
 refusent un binaire dont `--version` ne correspond pas au manifeste. Les paramètres
 et captures restent hors des fichiers installés ; les identifiants des installateurs
 restent constants lors d’une mise à jour. Les instructions sont dans
-[documentation/RELEASE-0.4.2.md](documentation/RELEASE-0.4.2.md).
+[documentation/RELEASE-0.4.3.md](documentation/RELEASE-0.4.3.md).
 
 Pour inclure un FFmpeg autonome construit pour le système cible, les deux scripts
 acceptent `--ffmpeg chemin/ffmpeg` et `--ffmpeg-license chemin/COPYING.txt`.
@@ -614,7 +614,9 @@ job par défaut pour limiter la mémoire.
 
 Un seul workflow [Release macOS Intel et Linux](https://github.com/Epikaigle/iriscope-app/actions/workflows/release.yml)
 fabrique les paquets optimisés, signe le manifeste de mise à jour et publie une
-release complète. Les tests sont exécutés localement avant publication ; les
+release complète avec deux téléchargements : `.dmg` Mac Intel et `.deb` Linux.
+Les signatures de mise à jour sont incluses dans les notes de release et les
+mises à jour utilisent ces mêmes installateurs. Les tests sont exécutés localement avant publication ; les
 pushs de code sur `main` ne lancent plus de suites de tests ni de compilations.
 Un tag `vX.Y.Z` correspondant à `Cargo.toml` lance la publication. Le lancement
 manuel permet aussi de réutiliser des paquets Mac déjà testés localement et

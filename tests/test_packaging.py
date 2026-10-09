@@ -83,6 +83,9 @@ class PackageTests(unittest.TestCase):
             self.assertEqual(info["CFBundleIdentifier"], "app.iriscope.IrisScope")
             self.assertEqual(info["CFBundleShortVersionString"], self.version)
             self.assertTrue(info["NSCameraUsageDescription"])
+            self.assertEqual(info["CFBundleIconFile"], "IrisScope.icns")
+            self.assertEqual(package.read("IrisScope.app/Contents/Resources/IrisScope.icns"),
+                             (ROOT / "assets/icons/IrisScope.icns").read_bytes())
             self.assertEqual(package.getinfo("IrisScope.app/Contents/MacOS/ffmpeg").external_attr >> 16 & 0o777, 0o755)
 
     def test_windows_installer_only_manages_the_application_directory(self):
@@ -161,6 +164,11 @@ class PackageTests(unittest.TestCase):
         self.assertEqual((stage / "usr/lib/iriscope/ffmpeg").read_bytes(), self.engine.read_bytes())
         control = (stage / "DEBIAN/control").read_text()
         self.assertIn("curl, pkexec", control)
+        desktop = (stage / "usr/share/applications/iriscope.desktop").read_text()
+        self.assertIn("Icon=iriscope\n", desktop)
+        self.assertIn("StartupWMClass=iriscope\n", desktop)
+        self.assertEqual((stage / "usr/share/icons/hicolor/scalable/apps/iriscope.svg").read_bytes(),
+                         (ROOT / "assets/icons/iriscope.svg").read_bytes())
         self.assertEqual(sorted(path.name for path in stage.iterdir()), ["DEBIAN", "usr"])
 
     @unittest.skipUnless(shutil.which("dpkg-deb"), "Debian packaging tools required")

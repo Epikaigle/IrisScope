@@ -46,8 +46,7 @@ def create_manifest(directory: Path, version: str, key_text: str):
     if public != expected:
         raise SystemExit("Update key does not match the public key embedded in IrisScope")
     definitions = [
-        ("macos", "x86_64", "macos-bundle", f"IrisScope-{version}-macos-x86_64-update.tar.gz"),
-        ("linux", "x86_64", "linux-portable", f"IrisScope-{version}-linux-x86_64.tar.gz"),
+        ("macos", "x86_64", "macos-bundle", f"IrisScope-{version}-macOS-Intel.dmg"),
         ("linux", "x86_64", "linux-deb", f"IrisScope-{version}-amd64.deb"),
     ]
     assets = []

@@ -25,6 +25,7 @@ export component MainWindow inherits Window {
     changed library-page => { HelpState.text = ""; }
     changed library-loading => { HelpState.text = ""; }
     title: "Iriscope";
+    icon: @image-url("../assets/icons/iriscope-256.png");
     full-screen: root.iris-fullscreen || AppState.viewer-fullscreen;
     min-width: 800px;
     min-height: 600px;

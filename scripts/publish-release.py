@@ -72,9 +72,15 @@ def draft(version, commit):
 
 
 def macos_names(version):
-    names = [f"IrisScope-{version}-macos-x86_64.zip", f"IrisScope-{version}-macOS.dmg",
-             f"IrisScope-{version}-macos-x86_64-update.tar.gz"]
+    names = [f"IrisScope-{version}-macOS-Intel.dmg"]
     return [entry for name in names for entry in (name, name + ".sha256")]
+
+
+def signed_release_body(notes, directory):
+    # HTML comments stay out of the rendered notes; the updater reads the API body.
+    envelope = dict(manifest=(directory / "update-manifest.json").read_bytes().hex(),
+                    signature=(directory / "update-manifest.sig").read_bytes().hex())
+    return notes.rstrip() + "\n\n<!-- iriscope-update-v1\n" + json.dumps(envelope) + "\n-->\n"
 
 
 def verify_checksums(directory, names):
@@ -129,14 +135,22 @@ def main():
         spec = importlib.util.spec_from_file_location("updater_package", ROOT / "scripts/package-update.py")
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        linux_names = [entry for name in (f"IrisScope-{version}-linux-x86_64.tar.gz", f"IrisScope-{version}-amd64.deb")
+        linux_names = [entry for name in (f"IrisScope-{version}-amd64.deb",)
                        for entry in (name, name + ".sha256")]
         names = macos_names(version) + linux_names
         verify_checksums(args.directory, names)
         module.create_manifest(args.directory, version, os.environ["IRISCOPE_UPDATE_PRIVATE_KEY"])
-        for name in names + ["update-manifest.json", "update-manifest.sig"]:
+        public_names = [name for name in names if not name.endswith(".sha256")]
+        for name in public_names:
             upload(release, args.directory / name)
-        release = request(f"/releases/{release['id']}", "PATCH", dict(draft=False, make_latest="true"))
+        # Draft checksums are only for transferring locally tested packages to CI.
+        release = request(f"/releases/{release['id']}")
+        for asset in release["assets"]:
+            if asset["name"] not in public_names:
+                request(f"/releases/assets/{asset['id']}", "DELETE")
+        notes = (ROOT / f"documentation/RELEASE-{version}.md").read_text()
+        body = signed_release_body(notes, args.directory)
+        release = request(f"/releases/{release['id']}", "PATCH", dict(body=body, draft=False, make_latest="true"))
         print(release["html_url"])
     else:
         parser.error("Choose --reuse-macos, --upload-macos or --publish")
