@@ -60,3 +60,29 @@ L’export MP4 reste non testé sans le FFmpeg optionnel.
 L’essai de l’installation intégrée Debian via Polkit/dpkg reste à faire sur
 Linux, lors d’un essai séparé sur ce système. Windows et Apple Silicon restent
 hors release.
+
+## Confirmation de la publication
+
+La [release stable 0.4.2](https://github.com/Epikaigle/iriscope-app/releases/tag/v0.4.2)
+contient les douze fichiers attendus. Le
+[workflow de publication](https://github.com/Epikaigle/iriscope-app/actions/runs/37933195597)
+réussit pour les deux systèmes. Le tag pointe sur le commit testé
+`21fde6ffe6135c2f7543acd94970a1a3daa4a804`. Les paquets Mac du workflow
+sont ceux testés localement, sans reconstruction. Le site affiche la 0.4.2.
+
+La sonde liée à la bibliothèque de production sélectionne la nouvelle version
+depuis une installation 0.4.1, télécharge l’archive Mac publique complète,
+vérifie signature et empreinte puis nettoie son cache. L’application installée
+confirme qu’elle est à jour, y compris après la vérification manuelle dans
+les Paramètres.
+
+La signature publique Ed25519 et les trois tailles/empreintes du manifeste sont
+valides. Les paquets Mac correspondent aux fichiers locaux. Les vrais paquets
+Linux téléchargés contiennent les ELF x86_64, les modes exécutables et les
+métadonnées 0.4.2 attendus. Le Debian contient les mêmes binaires que l’archive
+portable, les dépendances curl/pkexec et des fichiers appartenant à root,
+sans données utilisateur ni hook de suppression. Ces lectures ne remplacent
+pas l’essai de Polkit/dpkg sur Linux.
+
+Les réglages et les quatre médias existants restent inchangés après les derniers
+contrôles. La version optimisée 0.4.2 reste ouverte avec le DE400 connecté.
