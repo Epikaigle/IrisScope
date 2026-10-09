@@ -40,6 +40,15 @@ class PackageTests(unittest.TestCase):
         self.output = self.root / "dist"
         self.output.mkdir()
         self.version = PORTABLE.release_version()
+        updater = patch.object(PORTABLE, "updater_binary", return_value=self.binary)
+        updater.start()
+        self.addCleanup(updater.stop)
+        native_portable = INSTALLER.portable_module()
+        # Installer loads its helper module per invocation; inject the same fixture.
+        native_portable.updater_binary = lambda: self.binary
+        module = patch.object(INSTALLER, "portable_module", return_value=native_portable)
+        module.start()
+        self.addCleanup(module.stop)
 
     def test_archives_contain_versioned_resources_and_encoder_permissions(self):
         archive = self.output / "linux.tar.gz"
@@ -47,6 +56,7 @@ class PackageTests(unittest.TestCase):
         with tarfile.open(archive) as package:
             self.assertEqual(package.getmember("IrisScope/ffmpeg").mode, 0o755)
             self.assertEqual(package.getmember("IrisScope/iriscope-app").mode, 0o755)
+            self.assertEqual(package.getmember("IrisScope/iriscope-updater").mode, 0o755)
             self.assertEqual(package.extractfile("IrisScope/VERSION.txt").read().decode().strip(), self.version)
             info = json.load(package.extractfile("IrisScope/release-info.json"))
             self.assertEqual(info["input_executable_sha256"], hashlib.sha256(self.binary.read_bytes()).hexdigest())
@@ -135,6 +145,19 @@ class PackageTests(unittest.TestCase):
         self.assertEqual([Path(command[-1]).name for command in calls],
                          ["IrisScopeGui", "de400-usb-helper", "iriscope-usb-service", "IrisScope.app", "IrisScope.app"])
         self.assertEqual(calls[-1][1:5], ["--verify", "--deep", "--strict", str(bundle)])
+
+    def test_linux_staging_contains_updater_encoder_and_runtime_dependencies(self):
+        stage = self.root / "linux-staged"
+        stage.mkdir()
+        with patch.object(INSTALLER, "run") as packager:
+            INSTALLER.install_linux(stage, self.binary, self.output, self.version, self.engine, self.license)
+        packager.assert_called_once()
+        self.assertEqual(packager.call_args.args[0], "dpkg-deb")
+        self.assertEqual((stage / "usr/lib/iriscope/iriscope-updater").stat().st_mode & 0o777, 0o755)
+        self.assertEqual((stage / "usr/lib/iriscope/ffmpeg").read_bytes(), self.engine.read_bytes())
+        control = (stage / "DEBIAN/control").read_text()
+        self.assertIn("curl, pkexec", control)
+        self.assertEqual(sorted(path.name for path in stage.iterdir()), ["DEBIAN", "usr"])
 
     @unittest.skipUnless(shutil.which("dpkg-deb"), "Debian packaging tools required")
     def test_real_debian_package_has_no_user_data_or_removal_hooks(self):

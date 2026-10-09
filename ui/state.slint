@@ -1,6 +1,17 @@
 import { DiagnosticData, LibraryItemData, CameraControlUiData, PatientCandidateData, AnnotationData, ComparisonCandidateData, CalendarDayData, ConsultationDayData, SessionPhotoData } from "./models.slint";
 
 export global AppState {
+    in-out property <bool> update-supported: false;
+    in-out property <bool> update-available: false;
+    in-out property <bool> update-ready: false;
+    in-out property <bool> update-busy: false;
+    in-out property <int> update-progress: 0;
+    in-out property <string> update-version: "";
+    in-out property <string> update-message: "Vérification automatique au démarrage. L’installation attend votre clic.";
+    callback check-update;
+    callback download-update;
+    callback cancel-update;
+    callback install-update;
     in-out property <int> session-left-count: 0;
     in-out property <int> session-right-count: 0;
     in-out property <bool> viewer-retained: false;

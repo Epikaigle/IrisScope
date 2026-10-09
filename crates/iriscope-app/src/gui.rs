@@ -18,6 +18,7 @@ pub fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     let mut runtime = AppRuntime::new(settings, settings_path);
     runtime.start_workers(&main_window);
     install_controllers(&main_window, &runtime);
+    let updates = crate::update_controller::UpdateController::install(&main_window);
     main_window.set_library_loading(true);
     refresh_library_in_background(
         &runtime.library_mailbox,
@@ -30,9 +31,20 @@ pub fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         &runtime.background_jobs,
     );
     runtime.start_references(&main_window);
+    main_window.show()?;
+    if let Err(error) = iriscope_updater::acknowledge_start(env!("CARGO_PKG_VERSION")) {
+        eprintln!("[IrisScope] Confirmation de mise à jour : {error}");
+    }
     let result = main_window.run();
     runtime.shutdown();
     result?;
+    if let Err(error) = updates.finish() {
+        rfd::MessageDialog::new()
+            .set_title("Mise à jour IrisScope")
+            .set_description(error.to_string())
+            .set_level(rfd::MessageLevel::Error)
+            .show();
+    }
     Ok(())
 }
 

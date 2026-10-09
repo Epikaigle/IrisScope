@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build portable IrisScope archives from a native release executable.
 
-Run on each target operating system after `cargo build --release -p iriscope-app`.
+Run after `cargo build --release -p iriscope-app -p iriscope-updater --locked`.
 Only Python's standard library is required.
 """
 
@@ -83,6 +83,8 @@ def shared_files() -> list[tuple[str, bytes]]:
         ("documentation/RELEASE-0.2.0.md", (ROOT / "documentation/RELEASE-0.2.0.md").read_bytes()),
         ("documentation/RELEASE-0.3.0.md", (ROOT / "documentation/RELEASE-0.3.0.md").read_bytes()),
         ("documentation/RELEASE-0.4.0.md", (ROOT / "documentation/RELEASE-0.4.0.md").read_bytes()),
+        ("documentation/RELEASE-0.4.1.md", (ROOT / "documentation/RELEASE-0.4.1.md").read_bytes()),
+        ("documentation/MISES-A-JOUR.md", (ROOT / "documentation/MISES-A-JOUR.md").read_bytes()),
         ("documentation/VISIONNEUSE.md", (ROOT / "documentation/VISIONNEUSE.md").read_bytes()),
         ("documentation/VALIDATION-MATERIELLE.md", (ROOT / "documentation/VALIDATION-MATERIELLE.md").read_bytes()),
         ("documentation/VALIDATION-LINUX-2026-10-06.md", (ROOT / "documentation/VALIDATION-LINUX-2026-10-06.md").read_bytes()),
@@ -107,6 +109,14 @@ def shared_files() -> list[tuple[str, bytes]]:
 
 def release_version() -> str:
     return tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"]
+
+
+def updater_binary() -> Path:
+    path = ROOT / "target/release/iriscope-updater"
+    if not path.is_file():
+        raise SystemExit("Build the updater first: cargo build --release -p iriscope-updater --locked")
+    validate_binary_version(path, release_version())
+    return path
 
 
 def validate_binary_version(binary: Path, version: str) -> None:
@@ -146,6 +156,7 @@ def package_windows(output: Path, binary: Path, folder: str, ffmpeg: Path | None
 def package_linux(output: Path, binary: Path, folder: str, ffmpeg: Path | None = None, license_path: Path | None = None) -> None:
     with tarfile.open(output, "w:gz") as archive:
         add_tar_file(archive, f"{folder}/iriscope-app", binary)
+        add_tar_file(archive, f"{folder}/iriscope-updater", updater_binary())
         for name, data in shared_files():
             add_tar_bytes(archive, f"{folder}/{name}", data)
         add_tar_bytes(archive, f"{folder}/release-info.json", release_info(binary, "linux", release_version(), ffmpeg))
@@ -178,6 +189,7 @@ def stage_macos(stage: Path, binary: Path, version: str, ffmpeg: Path | None = N
     }
     (contents / "Info.plist").write_bytes(plistlib.dumps(info))
     shutil.copy2(binary, macos / ("IrisScopeGui" if usb_dir else "IrisScope"))
+    shutil.copy2(updater_binary(), macos / "iriscope-updater")
     if usb_dir:
         # The USB libraries/reader target macOS 15; the XPC API alone needs 13.
         info["LSMinimumSystemVersion"] = "15.0"

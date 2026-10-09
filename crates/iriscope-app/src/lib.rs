@@ -40,6 +40,7 @@ mod storage_controller;
 #[doc(hidden)]
 pub mod test_support;
 pub mod ui;
+mod update_controller;
 mod video_export;
 mod viewer_controller;
 mod workflow_controller;

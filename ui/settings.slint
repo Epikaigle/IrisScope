@@ -135,6 +135,40 @@ export component SettingsPage inherits Rectangle {
                         text: AppState.app-version == "" ? "Iriscope" : "Iriscope · version " + AppState.app-version;
                         color: Design.text-muted; font-size: 12px; vertical-stretch: 0;
                     }
+                    Text {
+                        text: AppState.update-message;
+                        color: Design.text-secondary; font-size: 12px; wrap: word-wrap; vertical-stretch: 0;
+                    }
+                    HorizontalLayout {
+                        spacing: 8px; alignment: start; vertical-stretch: 0;
+                        AppButton {
+                            compact: true; text: "Rechercher une mise à jour";
+                            enabled: AppState.update-supported && !AppState.update-busy && !AppState.update-ready;
+                            clicked => { AppState.check-update(); }
+                        }
+                        if AppState.update-available && !AppState.update-ready: AppButton {
+                            compact: true; text: "Télécharger " + AppState.update-version;
+                            enabled: !AppState.update-busy;
+                            clicked => { AppState.download-update(); }
+                        }
+                        if AppState.update-ready: AppButton {
+                            compact: true; text: "Installer et redémarrer";
+                            enabled: !AppState.recording-busy && !AppState.storage-busy && !AppState.export-busy
+                                && !AppState.patient-action-pending && !AppState.file-dialog-pending
+                                && !AppState.viewer-review-dirty && !AppState.viewer-review-busy
+                                && !AppState.consultation-dirty && !AppState.consultation-saving;
+                            tooltip: "L’installation attend la fin des enregistrements et des sauvegardes.";
+                            clicked => { AppState.install-update(); }
+                        }
+                        if AppState.update-busy: AppButton {
+                            compact: true; quiet: true; text: "Annuler";
+                            clicked => { AppState.cancel-update(); }
+                        }
+                        if AppState.update-busy && AppState.update-progress > 0: Text {
+                            text: AppState.update-progress + " %";
+                            font-size: 12px; color: Design.text-muted; vertical-alignment: center;
+                        }
+                    }
                 }
 
                 GridLayout {

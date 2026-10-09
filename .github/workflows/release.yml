@@ -1,0 +1,124 @@
+name: Release macOS Intel et Linux
+
+'on':
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths: ['docs/**']
+  workflow_dispatch:
+    inputs:
+      reuse_macos:
+        description: 'Réutiliser les paquets Mac déjà testés et joints au brouillon'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: iriscope-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Paquet ${{ matrix.platform }}
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            platform: linux
+          - os: macos-15-intel
+            platform: macos
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO_BUILD_JOBS: 2
+      SLINT_STYLE: fluent
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - run: python scripts/publish-release.py --check-version
+      - name: Récupérer les paquets Mac vérifiés localement
+        if: matrix.platform == 'macos' && inputs.reuse_macos
+        run: python scripts/publish-release.py --reuse-macos
+      - uses: dtolnay/rust-toolchain@stable
+        if: matrix.platform != 'macos' || !inputs.reuse_macos
+        with:
+          toolchain: 1.89.0
+      - uses: Swatinem/rust-cache@v2
+        if: matrix.platform != 'macos' || !inputs.reuse_macos
+        with:
+          key: native-${{ matrix.os }}
+      - name: Dépendances Linux
+        if: matrix.platform == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev libfontconfig1-dev libxkbcommon-x11-dev
+      - name: Compiler les programmes optimisés
+        if: matrix.platform != 'macos' || !inputs.reuse_macos
+        run: cargo build --release -p iriscope-app -p iriscope-updater --locked
+      - name: Préparer le composant USB Mac
+        if: matrix.platform == 'macos' && !inputs.reuse_macos
+        run: python scripts/macos/build-usb-experiment.py
+      - name: Préparer l’archive et l’installateur
+        if: matrix.platform != 'macos' || !inputs.reuse_macos
+        run: |
+          python scripts/package-release.py
+          python scripts/package-installer.py
+      - name: Préparer la mise à jour Mac
+        if: matrix.platform == 'macos' && !inputs.reuse_macos
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import subprocess
+          archive = next(Path('dist').glob('IrisScope-*-macos-x86_64.zip'))
+          subprocess.run(['python', 'scripts/package-update.py', '--macos-archive', str(archive)], check=True)
+          PY
+      - uses: actions/upload-artifact@v7
+        with:
+          name: iriscope-${{ matrix.platform }}
+          path: dist/*
+          retention-days: 7
+          if-no-files-found: error
+
+  publish:
+    name: Signer et publier la release complète
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: iriscope-*
+          path: dist
+          merge-multiple: true
+      - run: python -m pip install 'cryptography>=46,<50'
+      - name: Signer le manifeste et publier
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IRISCOPE_UPDATE_PRIVATE_KEY: ${{ secrets.IRISCOPE_UPDATE_PRIVATE_KEY }}
+        run: python scripts/publish-release.py --publish
+
+  website:
+    name: Publier le site
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: docs
+      - id: deployment
+        uses: actions/deploy-pages@v5

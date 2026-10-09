@@ -76,6 +76,9 @@ fn main() {
         "library-assignment",
         "library-error",
         "settings",
+        "settings-update-available",
+        "settings-update-ready",
+        "settings-update-offline",
         "settings-bottom",
         "settings-backup",
         "settings-reminder",
@@ -154,6 +157,21 @@ fn main() {
                 window
                     .set_settings_filename_template("{prenom}_{nom}_{oeil}_{date}_{heure}".into());
                 let state = window.global::<AppState>();
+                state.set_update_supported(true);
+                if scenario == "settings-update-available" {
+                    state.set_update_available(true);
+                    state.set_update_version("0.4.2".into());
+                    state.set_update_message("Version 0.4.2 disponible.".into());
+                }
+                if scenario == "settings-update-ready" {
+                    state.set_update_ready(true);
+                    state.set_update_message(
+                        "Mise à jour vérifiée. Prête à installer et redémarrer.".into(),
+                    );
+                }
+                if scenario == "settings-update-offline" {
+                    state.set_update_message("Vérification impossible : connexion Internet indisponible. Réessayez plus tard.".into());
+                }
                 let selected_patient = Rc::new(Cell::new(false));
                 let image = fixture_image();
                 if scenario != "camera-idle"
@@ -262,7 +280,13 @@ fn main() {
                             },
                         ])));
                     }
-                    "settings" | "settings-bottom" | "settings-backup" | "settings-reminder"
+                    "settings"
+                    | "settings-bottom"
+                    | "settings-backup"
+                    | "settings-reminder"
+                    | "settings-update-available"
+                    | "settings-update-ready"
+                    | "settings-update-offline"
                     | "settings-advanced" => {
                         window.set_current_tab(4);
                         window.set_diagnostics(DiagnosticData {

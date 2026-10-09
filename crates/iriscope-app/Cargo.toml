@@ -8,6 +8,7 @@ build = "build.rs"
 [dependencies]
 iriscope-core = { path = "../iriscope-core" }
 iriscope-imaging = { path = "../iriscope-imaging" }
+iriscope-updater = { path = "../iriscope-updater" }
 slint = "=1.16.1"
 rfd = "0.15.4"
 chrono = "0.4"

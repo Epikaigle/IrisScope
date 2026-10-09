@@ -412,7 +412,7 @@ Le backend AVFoundation sait :
 - participer au suivi connexion / déconnexion ;
 - alimenter le même pipeline photo, vidéo et bibliothèque que les autres plateformes.
 
-Le paquet Mac (macOS 15+) inclut un lanceur natif et un service USB pour le DE400 `21cd:603b`. Au premier lancement, une authentification administrateur installe le service protégé ; les ouvertures suivantes réutilisent cette autorisation. Le lecteur reçoit ensemble vidéo, bouton et réglages ; l'interface et les captures restent sous le compte utilisateur. Sur le Mac Intel testé, les huit contrôles réels sont disponibles : luminosité, contraste, saturation, teinte, netteté, gamma, balance des blancs et anti-scintillement. Ce chemin utilise le mode 1280 × 1024 YUYV à 8 fps, sans limite de durée de session. Fermer l'application rend le périphérique au pilote Apple ; le service installé ne prend pas la caméra pendant l'inactivité. Les mises à jour des composants USB peuvent demander une nouvelle authentification. Voir [Autorisation USB conservée](documentation/ACCES-USB-MACOS.md).
+Le paquet Mac (macOS 15+) inclut un lanceur natif et un service USB pour le DE400 `21cd:603b`. Au premier lancement, une authentification administrateur installe le service protégé ; les ouvertures suivantes réutilisent cette autorisation. Le lecteur reçoit ensemble vidéo, bouton et réglages ; l'interface et les captures restent sous le compte utilisateur. Sur le Mac Intel testé, les neuf entrées sont disponibles : luminosité, contraste, saturation, teinte, netteté, gamma, température des blancs, balance des blancs automatique et anti-scintillement. Ce chemin utilise le mode 1280 × 1024 YUYV à 8 fps, sans limite de durée de session. Fermer l'application rend le périphérique au pilote Apple ; le service installé ne prend pas la caméra pendant l'inactivité. Les mises à jour des composants USB peuvent demander une nouvelle authentification. Voir [Autorisation USB conservée](documentation/ACCES-USB-MACOS.md).
 
 Le chemin AVFoundation reste accessible avec `--avfoundation`. Ses contrôles se limitent aux modes automatiques de balance des blancs et d'exposition annoncés par le pilote. L'ouverture USB ordinaire du bouton est refusée sur le Mac testé (`0xe00002c5`) ; une permission caméra seule ne résout pas ce conflit. Les autres modèles de Mac et Windows nécessitent toujours un essai matériel. Voir [Bouton multiplateforme](documentation/BOUTON-MULTIPLATEFORME.md).
 
@@ -510,7 +510,7 @@ outils photo : notes, références, affichage, choix de comparaison, zoom et lou
 ainsi que les dossiers de consultation, le calendrier et l’export photo séparé.
 Le script rend 1 824 vues, dont les réglages de rotation ouverts, la bibliothèque, les références et la visionneuse photo.
 Une modification visuelle volontaire se valide avec `--update`, puis une revue
-des PNG ; la validation complète de CI compare sans réécrire les références. `--compare-only` permet de
+des PNG ; le contrôle local compare sans réécrire les références. `--compare-only` permet de
 comparer les captures déjà générées, sans relancer le rendu.
 `--release` utilise les scénarios compilés avec optimisation pour accélérer les
 grandes matrices, avec les mêmes comparaisons d’images.
@@ -526,7 +526,7 @@ Sur Mac, les scripts appliquent par défaut une signature locale **ad hoc** grat
 Sur chaque système cible, construire puis empaqueter le binaire natif :
 
 ```text
-cargo build --release -p iriscope-app --locked
+cargo build --release -p iriscope-app -p iriscope-updater --locked
 python scripts/package-release.py
 ```
 
@@ -545,18 +545,17 @@ l'archive `.tar.gz` contient le programme `iriscope-app` à exécuter après
 extraction. Sous Windows, l'archive `.zip` contient `IrisScope.exe`. Sous
 macOS, le `.zip` contient `IrisScope.app` avec la déclaration d'autorisation
 caméra nécessaire à AVFoundation. Les licences des polices embarquées sont
-jointes à chaque archive. La validation complète de CI produit ces trois formats sur leurs systèmes
-respectifs et les conserve comme artefacts téléchargeables.
+jointes à chaque archive. Le workflow de release prépare macOS Intel et Linux sur leurs systèmes natifs, puis publie les fichiers téléchargeables.
 
-Ces archives sont portables : elles ne créent pas de raccourci ni de mise à jour automatique. `python scripts/package-installer.py` produit aussi un paquet Debian avec entrée de menu, un installateur Windows par utilisateur et un DMG macOS avec accès au dossier Applications. La validation complète de CI prépare les installateurs avec leurs empreintes, en plus des archives portables. Sous Windows, Inno Setup 6 est requis ; sous macOS, `hdiutil` est requis.
+Les paquets macOS et Linux incluent les mises à jour signées depuis **Paramètres** : vérification au démarrage, téléchargement puis installation avec redémarrage. Les archives portables ne créent pas de raccourci. `python scripts/package-installer.py` produit aussi un paquet Debian avec entrée de menu, un installateur Windows par utilisateur et un DMG macOS avec accès au dossier Applications. Le workflow de release prépare les installateurs macOS Intel/Linux avec leurs empreintes, en plus des archives portables. Sous Windows, Inno Setup 6 est requis ; sous macOS, `hdiutil` est requis.
 
-La validation complète de CI produit des paquets Mac Apple Silicon **et Intel**, ainsi que Windows x64.
+Le workflow de release publie seulement macOS Intel et Linux x86_64. Windows et Apple Silicon restent en attente d’un essai matériel.
 Le guide [Essayer sur Windows et macOS](documentation/ESSAIS-WINDOWS-MACOS.md) indique
 quel paquet choisir et comment vérifier la caméra et le bouton sans environnement
 de développement. L’absence de FFmpeg est distinguée d’un échec de capture dans
 les rapports d’essai matériel.
 
-Les paquets Windows créés sans certificat restent non signés ; les paquets Mac reçoivent la signature ad hoc locale. Pour une distribution publique, le script accepte `--windows-certificate` (empreinte d’un certificat déjà installé), ou `--signing-identity` et `--notary-profile` sous macOS (identité Developer ID et profil de trousseau existants). La notarisation exige une véritable identité Developer ID : elle est refusée avec la signature ad hoc. Aucun certificat ni mot de passe n’est inclus dans le dépôt. Aucune inscription payante ni notarisation n'a été réalisée pour cet usage personnel. Les mises à jour restent manuelles. Le
+Les paquets Windows créés sans certificat restent non signés ; les paquets Mac reçoivent la signature ad hoc locale. Pour une distribution publique, le script accepte `--windows-certificate` (empreinte d’un certificat déjà installé), ou `--signing-identity` et `--notary-profile` sous macOS (identité Developer ID et profil de trousseau existants). La notarisation exige une véritable identité Developer ID : elle est refusée avec la signature ad hoc. Aucun certificat ni mot de passe n’est inclus dans le dépôt. Aucune inscription payante ni notarisation n'a été réalisée pour cet usage personnel. Les mises à jour intégrées utilisent une clé Ed25519 gratuite et distincte de la signature Apple. Voir [Mises à jour](documentation/MISES-A-JOUR.md). Le
 paquet Linux est construit sur Ubuntu 24.04 et dépend des bibliothèques système
 requises par Slint et V4L2 ; sa compatibilité avec d'autres distributions doit
 être vérifiée séparément.
@@ -566,7 +565,7 @@ l’empreinte du binaire fourni et la disponibilité du moteur MP4. Les scripts
 refusent un binaire dont `--version` ne correspond pas au manifeste. Les paramètres
 et captures restent hors des fichiers installés ; les identifiants des installateurs
 restent constants lors d’une mise à jour. Les instructions sont dans
-[documentation/RELEASE-0.4.0.md](documentation/RELEASE-0.4.0.md).
+[documentation/RELEASE-0.4.1.md](documentation/RELEASE-0.4.1.md).
 
 Pour inclure un FFmpeg autonome construit pour le système cible, les deux scripts
 acceptent `--ffmpeg chemin/ffmpeg` et `--ffmpeg-license chemin/COPYING.txt`.
@@ -611,27 +610,20 @@ Clippy compile tous les targets en même temps qu'il les analyse ; une seconde
 passe `cargo check` identique n'est donc pas lancée. Le script utilise un seul
 job par défaut pour limiter la mémoire.
 
-### Vérifications GitHub
+### Publication GitHub
 
-Un seul workflow [**CI**](https://github.com/Epikaigle/iriscope-app/actions/workflows/ci.yml)
-gère les contrôles. Lors d’un push sur `main`, il sélectionne uniquement ce qui
-est concerné : formatage, Clippy, tests Rust et Python sous Linux pour le code ;
-contrôle des ressources et du JavaScript pour le site dans `docs/`. Un changement
-limité au README ne lance pas de CI. La documentation incluse dans les paquets déclenche leur contrôle. Les modifications du backend Mac ou de `scripts/macos/` déclenchent automatiquement la validation native complète des quatre plateformes. Les autres passages légers ne génèrent ni captures visuelles ni installateurs.
+Un seul workflow [Release macOS Intel et Linux](https://github.com/Epikaigle/iriscope-app/actions/workflows/release.yml)
+fabrique les paquets optimisés, signe le manifeste de mise à jour et publie une
+release complète. Les tests sont exécutés localement avant publication ; les
+pushs de code sur `main` ne lancent plus de suites de tests ni de compilations.
+Un tag `vX.Y.Z` correspondant à `Cargo.toml` lance la publication. Le lancement
+manuel permet aussi de réutiliser des paquets Mac déjà testés localement et
+joints au brouillon, sans les recompiler. Un échec laisse la release en brouillon.
 
-Pour préparer des paquets ou vérifier une modification avant diffusion, ouvrir
-**Actions → CI → Run workflow**, sélectionner `main` et laisser
-**full_validation** cochée. Un tag de version `v*` lance également cette
-validation complète : tests et analyse statique natifs sous Linux, Windows,
-macOS Apple Silicon et Intel, comparaisons visuelles sous Linux, puis archives et
-installateurs avec leurs empreintes SHA-256. Les trois anciens contrôles de
-compilation croisée GitHub sont supprimés, puisque ces validations natives
-couvrent déjà les systèmes cibles. La compilation croisée reste disponible
-localement avec `scripts/ci-local.sh`.
-
-Les paquets d’essai sont dans **Artifacts** d’une validation complète réussie.
-Ces vérifications ne remplacent pas les essais avec un DE400 branché sur chaque
-système. Le déploiement du site depuis **main /docs**, une fois Pages activé,
-apparaît séparément dans Actions : il est géré par GitHub Pages.
+Le même workflow publie le site uniquement lorsque `docs/` change sur `main`.
+Windows et Apple Silicon ne font pas partie des paquets de cette release. Les
+paquets Linux ciblent Ubuntu 24.04 ou une distribution compatible. Les essais
+avec le DE400 restent nécessaires sur chaque système. Voir
+[Mises à jour et publication](documentation/MISES-A-JOUR.md).
 
 Les mesures reproductibles sont décrites dans [documentation/PERFORMANCE.md](documentation/PERFORMANCE.md), et les essais avec le DE400 dans [documentation/VALIDATION-MATERIELLE.md](documentation/VALIDATION-MATERIELLE.md).

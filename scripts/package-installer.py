@@ -54,9 +54,13 @@ def install_linux(stage, binary, output, version, ffmpeg=None, license_path=None
     shutil.copy2(binary, executable)
     executable.chmod(0o755)
     executables = {executable}
+    updater = stage / "usr/lib/iriscope/iriscope-updater"
+    updater.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(portable_module().updater_binary(), updater)
+    executables.add(updater)
     if ffmpeg:
         encoder = stage / "usr/lib/iriscope/ffmpeg"
-        encoder.parent.mkdir(parents=True)
+        encoder.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ffmpeg, encoder)
         executables.add(encoder)
     applications = stage / "usr/share/applications"
@@ -70,7 +74,7 @@ def install_linux(stage, binary, output, version, ffmpeg=None, license_path=None
     stage_resources(docs, binary, "linux", version, ffmpeg, license_path)
     control = stage / "DEBIAN"
     control.mkdir()
-    (control / "control").write_text(f"Package: iriscope\nVersion: {version}\nArchitecture: {architecture}\nMaintainer: IrisScope contributors\nSection: graphics\nPriority: optional\nDepends: libc6 (>= 2.39), libgcc-s1, libudev1, libfontconfig1, libx11-6, libx11-xcb1, libxcb1, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libgl1\nRecommends: xdg-desktop-portal | zenity, ffmpeg\nDescription: Capture et consultation des images de l’iris\n Application locale pour la caméra Firefly DE400.\n", encoding="utf-8")
+    (control / "control").write_text(f"Package: iriscope\nVersion: {version}\nArchitecture: {architecture}\nMaintainer: IrisScope contributors\nSection: graphics\nPriority: optional\nDepends: libc6 (>= 2.39), libgcc-s1, libudev1, libfontconfig1, libx11-6, libx11-xcb1, libxcb1, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libgl1, curl, pkexec\nRecommends: xdg-desktop-portal | zenity, ffmpeg\nDescription: Capture et consultation des images de l’iris\n Application locale pour la caméra Firefly DE400.\n", encoding="utf-8")
     # Package modes must be independent of the developer's restrictive umask.
     stage.chmod(0o755)
     for path in stage.rglob("*"):

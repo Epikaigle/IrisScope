@@ -2,7 +2,7 @@
 """Render deterministic Linux UI fixtures at four scale factors and compare baselines.
 
 Run under Xvfb with a 4096x2304 screen. --update is an explicit developer action;
-CI only compares reviewed baselines and uploads new captures on failure.
+Checks run locally before publishing a release.
 """
 import argparse
 import os
@@ -14,6 +14,7 @@ from PIL import Image, ImageChops
 ROOT = Path(__file__).resolve().parents[1]
 BASELINES = ROOT / "tests" / "visual-baselines"
 SCENES = {
+    "settings-update-available", "settings-update-ready", "settings-update-offline",
     "camera-dossier-created", "library-large-scrolled",
     "viewer-tools-menu", "viewer-view-menu", "library-sparse",
     "camera-angle-popup", "viewer-angle-popup", "references-loaded", "references-empty",
