@@ -62,3 +62,30 @@ Le flux caméra reste visible après l’installation du paquet blanc final.
 
 L’export MP4 avec FFmpeg optionnel et l’authentification/installation Debian réelle
 sur Linux restent hors de cet essai. Windows et Apple Silicon ne sont pas publiés.
+
+## Publication vérifiée
+
+La [release 0.4.3](https://github.com/Epikaigle/iriscope-app/releases/tag/v0.4.3)
+est stable et contient exactement deux installateurs : `IrisScope-0.4.3-macOS-Intel.dmg`
+et `IrisScope-0.4.3-amd64.deb`. Le
+[workflow existant](https://github.com/Epikaigle/iriscope-app/actions/runs/37938958584)
+réussit pour les deux systèmes. Le tag pointe sur le commit testé de `main`,
+`01fffc02469eed8cebb7b787e7f52a0e80ae1075`. Le DMG publié correspond exactement
+au paquet installé et contrôlé sur le Mac.
+
+Les métadonnées lues dans les notes publiques passent la vérification Ed25519.
+Les tailles et empreintes des deux installateurs correspondent au manifeste signé.
+La sonde liée à la bibliothèque de production télécharge et vérifie le DMG public
+complet en simulant une version installée plus ancienne. L’application installée
+confirme ensuite qu’elle est à jour.
+
+Le Debian réel téléchargé contient les exécutables ELF x86_64, les permissions,
+les métadonnées, la nouvelle icône et les notes attendues. L’empreinte du programme
+correspond à `release-info.json`, avec les dépendances curl/pkexec, des fichiers
+appartenant à root et aucune donnée utilisateur ni hook de suppression.
+Ces contrôles ne remplacent pas une installation Polkit/dpkg sur Linux.
+
+Après ces vérifications, les releases 0.4.1 et 0.4.2 sont supprimées à la demande
+de l’utilisateur ; seule la 0.4.3 reste dans la liste des releases. Les deux liens
+automatiques GitHub vers les archives du code source s’ajoutent aux installateurs.
+L’application optimisée 0.4.3 reste ouverte avec son icône blanche et le DE400 connecté.
