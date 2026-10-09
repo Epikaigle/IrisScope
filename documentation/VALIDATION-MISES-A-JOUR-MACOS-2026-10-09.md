@@ -80,3 +80,33 @@ et publie la release seulement lorsque tous les fichiers et le manifeste signé
 sont prêts. Aucun test ni lint n’est exécuté sur GitHub. Windows et Apple Silicon
 ne sont pas publiés. L’installation réelle via Polkit/dpkg sur Linux reste à
 valider sur ce système ; sa compilation ne constitue pas cet essai.
+
+## Confirmation après publication
+
+La [release 0.4.1](https://github.com/Epikaigle/iriscope-app/releases/tag/v0.4.1)
+est publiée avec douze fichiers : paquets Mac Intel/Linux, empreintes et manifeste
+signé. Le [workflow de publication](https://github.com/Epikaigle/iriscope-app/actions/runs/37927845782)
+réussit. Le tag pointe sur les sources testées, commit
+`d78bbb4e7f7fde98601db05f9e984b4c57a587f4`. Les paquets Mac récupérés dans
+GitHub sont ceux validés localement, sans nouvelle compilation.
+
+Une sonde légère liée à la bibliothèque de production vérifie la dernière
+release depuis l'ancienne version 0.4.0, sélectionne le paquet compatible,
+télécharge l'archive publique complète, vérifie sa signature et son SHA-256,
+puis nettoie le cache sans installer. L'updater inclus dans l'application
+installée confirme ensuite que la 0.4.1 est à jour. Le bouton de vérification
+est aussi actionné dans les Paramètres de l'application ordinaire.
+
+Le manifeste public a une signature Ed25519 valide et contient les trois
+formats prévus. Les empreintes publiques des paquets Mac correspondent aux
+fichiers testés. L'archive Linux téléchargée contient bien les deux ELF x86_64,
+la bonne version, le binaire décrit par ses métadonnées et un updater exécutable.
+Le vrai `.deb` est lu sur Mac sans installation : version, architecture,
+dépendances, propriétaires root, permissions et binaires identiques à l'archive
+portable sont confirmés. Aucun fichier utilisateur ni hook de suppression n'est
+inclus. Cela ne remplace pas un essai de Polkit/dpkg sur un poste Linux.
+
+Le site est publié par le même fichier de workflow. L'ancienne entrée dynamique
+Pages, gérée par GitHub, peut rester dans son historique : GitHub refuse sa
+désactivation par l'API. La configuration Pages utilise désormais le workflow
+personnalisé, et le dépôt ne contient qu'un seul fichier de workflow.
